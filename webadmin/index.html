@@ -556,6 +556,14 @@
   .pkg input[type=checkbox]{width:18px;height:18px;accent-color:var(--primary);cursor:pointer}
   .pkg .core{color:var(--ink-3);font-size:11px}
   #login-topbar{display:none}
+  /* Indicador de refresco automático (vista en vivo) */
+  .live-btn{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--ink-3);background:transparent;border:1px solid var(--line);border-radius:999px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+  .live-btn:hover{color:var(--ink);border-color:var(--line-2)}
+  .live-btn .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 rgba(15,157,91,.5);animation:live-pulse 2.4s infinite}
+  .live-btn.busy .dot{background:var(--signal);animation:live-spin 1s linear infinite}
+  @keyframes live-pulse{0%{box-shadow:0 0 0 0 rgba(15,157,91,.45)}70%{box-shadow:0 0 0 6px rgba(15,157,91,0)}100%{box-shadow:0 0 0 0 rgba(15,157,91,0)}}
+  @keyframes live-spin{to{transform:rotate(360deg)}}
+  @media(max-width:1560px){.live-btn .lbl{display:none}.live-btn{padding:6px 7px}}
 </style>
 <link rel="stylesheet" href="./mobile.css">
 </head>
@@ -640,6 +648,7 @@
     <div class="topbar">
       <div><h2 id="pg-title">Dashboard</h2><div class="sub" id="pg-sub">Resumen operativo</div></div>
       <button class="nt-topbtn hide" id="nt-topbtn" title="Tutorial guiado de esta sección"><span class="pl">▶</span><span class="lbl">Tutorial</span></button>
+      <button class="live-btn hidden" id="live-btn" type="button"><span class="dot"></span><span class="lbl">al día</span></button>
       <div class="sp"></div>
       <div class="gsearch"><span class="i">⌕</span><input id="gq" placeholder="Buscar SKU, orden, ubicación…" autocomplete="off"><div class="res" id="gres"></div></div>
       <div class="sel" id="sess-wrap"><label>Sesión</label>

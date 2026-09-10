@@ -24,7 +24,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#activity', title:'Actividad reciente del ledger', text:'Cada movimiento de inventario queda registrado en un <b>ledger inmutable</b>: quién hizo qué, con qué SKU, en qué ubicación y cuánto. Nada se borra; todo es auditable.'},
       {el:'#nt-topbtn', place:'bottom', title:'Vuelve al tutorial cuando quieras', text:'Cada sección tiene su propio tutorial. Este botón lo abre en cualquier momento, y el <b>Centro de aprendizaje</b> del menú reúne todos los tutoriales y videos.'}
     ],
-    tips:['Usa el selector de cliente para revisar la operación de un seller en particular.','El buscador global acepta SKU, número de orden o código de ubicación.','El ledger de actividad es tu fuente de verdad ante cualquier diferencia de stock.']
+    tips:['El panel se actualiza solo cada 30 segundos mientras esté visible (punto verde junto al título); tócalo para refrescar al instante.','Usa el selector de cliente para revisar la operación de un seller en particular.','El buscador global acepta SKU, número de orden o código de ubicación.','El ledger de actividad es tu fuente de verdad ante cualquier diferencia de stock.']
   },
 
   copilot: {
@@ -218,7 +218,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#bill-manage .card:first-child', place:'right', title:'Tarifario del cliente', text:'Seis conceptos: <b>cuota fija</b> mensual, <b>almacenamiento</b> por unidad-mes, <b>recepción</b> por unidad, <b>despacho</b> por pedido, <b>picking</b> por unidad y <b>armado</b> por kit. Guarda y quedan vigentes para las próximas facturas.',
         before:function(h){ h.click('[data-billtab=inv]'); }},
       {el:'#rt-approval', place:'right', title:'Aprobación del cliente', text:'Si lo activas, cada factura queda <b>pendiente</b> hasta que el cliente la apruebe desde su portal, registrando quién y cuándo. Si no, se emite directamente.'},
-      {el:'#bill-manage .card:last-child', place:'left', title:'Generar la factura', text:'Elige año y mes. <b>Vista previa</b> te muestra el cálculo concepto por concepto antes de emitir: el almacenamiento integra las unidades físicas en el tiempo (unidad-mes), el resto sale de los movimientos reales.'},
+      {el:'#bill-manage .card:last-child', place:'left', title:'Generar la factura', text:'Elige año y mes. <b>Vista previa</b> te muestra el cálculo concepto por concepto antes de emitir. El almacenamiento integra las unidades físicas en el tiempo (unidad-mes); <b>despacho, picking y embalaje se cobran por las órdenes despachadas dentro del mes</b>, así un pedido nunca se factura a medias entre dos períodos.'},
       {el:'#bill-invoices', place:'top', title:'Facturas emitidas', text:'Cada factura tiene período, fecha, emisor, estado y total. Ábrela para ver el detalle y descargar el <b>PDF imprimible</b>.'},
       {el:'#bd-kpis', title:'Dashboard de facturación', text:'De vuelta en Resumen: ingresos del período, composición por concepto, tendencia mensual y apertura por cliente. Es la mirada comercial de la operación.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN'],
         before:function(h){ h.click('[data-billtab=dash]'); return function(){ h.click('[data-billtab=inv]'); }; }},

@@ -282,7 +282,7 @@
       api('/sellers/'+seller+'/skus').catch(function(){return [];}),
       api('/sellers/'+seller+'/receipts').catch(function(){return [];}),
       api('/sellers/'+seller+'/returns').catch(function(){return [];})
-    ]).then(function(r){D.inv=r[0];D.ord=r[1];D.mov=r[2];D.plan=r[3];D.skus=r[4];D.receipts=r[5];D.ret=r[6]||[];ordSig=ordSigOf(D.ord);renderAll();}).catch(err);
+    ]).then(function(r){D.inv=r[0];D.ord=r[1];D.mov=r[2];D.plan=r[3];D.skus=r[4];D.receipts=r[5];D.ret=r[6]||[];ordSig=ordSigOf(D.ord);renderAll();if(typeof liveLast!=='undefined'){liveLast=Date.now();paintLive();}}).catch(err);
   }
 
   // ===== Vista consolidada de TODOS los clientes ("Todos los clientes") =====
@@ -467,6 +467,39 @@
   }
   setInterval(pollOrders,6000);
   setInterval(function(){agtPoll();},30000);
+
+  // ---- Refresco automático de la vista activa ("en vivo" por sondeo) -------------
+  // Cada sección operativa se vuelve a cargar sola mientras esté visible. Se pausa si la
+  // pestaña está en segundo plano, si hay un formulario/panel abierto o un tutorial corriendo.
+  // El Dashboard recarga la operación completa (stock por zona + kardex + datos del cliente).
+  var LIVE_PAGES={dashboard:30000,multicliente:30000,inventory:30000,inbound:20000,returns:30000,putaway:20000,movements:30000,counts:60000,reports:60000,locations:60000,products:60000,assembly:60000,packaging:60000,billing:60000};
+  var liveLast=Date.now(), liveBusy=false;
+  function activePg(){ if(mcMode)return 'multicliente'; var p=document.querySelector('.page.on'); return p?p.getAttribute('data-pg'):null; }
+  function liveRefresh(force){
+    if(!token||!op||liveBusy)return Promise.resolve();
+    var pg=activePg(), iv=LIVE_PAGES[pg]; if(!iv)return Promise.resolve();
+    if(!force){
+      if(document.hidden||Date.now()-liveLast<iv)return Promise.resolve();
+      if(document.querySelector('#modal.on,#drawer.on'))return Promise.resolve();
+      if(window.NinjaTour&&NinjaTour.isRunning())return Promise.resolve();
+      if(document.activeElement&&/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)&&document.activeElement.closest('.content'))return Promise.resolve();
+    }
+    liveBusy=true; paintLive();
+    var p= pg==='multicliente' ? Promise.resolve(renderMultiCliente()) : (pg==='dashboard'||pg==='locations') ? loadOp() : loadSeller();
+    if(pg==='billing'&&typeof renderBilling==='function')p=Promise.resolve(p).then(function(){renderBilling();});
+    return Promise.resolve(p).catch(function(){}).then(function(){ liveBusy=false; liveLast=Date.now(); paintLive(); });
+  }
+  function paintLive(){
+    var b=$("#live-btn"); if(!b)return;
+    var pg=activePg(); if(!LIVE_PAGES[pg]){ b.classList.add('hidden'); return; }
+    b.classList.remove('hidden'); b.classList.toggle('busy',liveBusy);
+    var s=Math.max(0,Math.round((Date.now()-liveLast)/1000));
+    b.querySelector('.lbl').textContent=liveBusy?'actualizando…':(s<5?'al día':'hace '+(s<60?s+' s':Math.round(s/60)+' min'));
+    b.title='Se actualiza solo cada '+Math.round(LIVE_PAGES[pg]/1000)+' s mientras la pestaña esté visible. Clic para actualizar ahora.';
+  }
+  setInterval(function(){ liveRefresh(false); paintLive(); },5000);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden&&Date.now()-liveLast>8000)liveRefresh(true); });
+  if($("#live-btn"))$("#live-btn").addEventListener('click',function(){ liveRefresh(true); });
 
   // ---- Render ---------------------------------------------------------------
   function renderAll(){ renderOpMetrics();renderAlerts();renderKpis();renderZone();renderOrderChart();renderActivity();renderMovements();renderInv();renderProducts();renderPackaging();renderOrdFilters();renderOrders();renderPickQueue();renderInbound();renderReturns();renderPutaway();renderAssembly();renderLocations();renderCounts();renderReports();renderBilling();renderClients();renderUsers();renderOps();chatPoll();pollAnnouncement();syncWebhookNav();injectTableExporters();renderOnboarding(); }
@@ -4881,7 +4914,7 @@
   var TITLES={dashboard:["Dashboard","Resumen operativo"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],reports:["Reportes","KPIs del cliente"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Mensajes","Chat interno con clientes"],voicechannel:["Canal de voz","Mensajes de voz operador ↔ administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Reglas","Agente proactivo: reglas y alertas que necesitan tu atención"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
-    if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);}
+    if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});

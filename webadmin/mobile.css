@@ -46,6 +46,8 @@
   .topbar .sub { display: none; }
   .m-menu { order: 1; width: 40px; height: 40px; flex: none; border-radius: 11px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 18px; display: inline-flex; align-items: center; justify-content: center; }
   .nt-topbtn { order: 3; padding: 5px; border-radius: 50%; }
+  .live-btn { order: 3; padding: 6px 7px; }
+  .live-btn .lbl { display: none; }
   .nt-topbtn .lbl { display: none; }
   .nt-topbtn .pl { width: 26px; height: 26px; }
   .m-ctx { order: 4; flex: none; display: inline-flex; align-items: center; gap: 7px; max-width: 44vw; height: 40px; padding: 0 8px 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font-size: 12.5px; font-weight: 700; }
