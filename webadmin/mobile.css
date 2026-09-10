@@ -1,0 +1,158 @@
+/* Ninja WMS — Panel responsivo para teléfonos y tablets (≤ 860 px).
+ * Se carga después del CSS base y solo actúa dentro de la media query, así que el
+ * escritorio queda exactamente igual. Estrategia:
+ *   - Menú lateral → cajón deslizante (hamburguesa ☰) con fondo oscurecido.
+ *   - Barra superior compacta: título + ☰ + Tutorial + botón de contexto que despliega
+ *     buscador, operación, cliente y sesión.
+ *   - Tablas → tarjetas apiladas (mobile.js etiqueta cada celda con su cabecera).
+ *   - Paneles laterales y modales a pantalla completa (hoja inferior).
+ *   - Grillas a 1–2 columnas, controles táctiles más grandes, sin zoom de iOS en inputs.
+ */
+@media (max-width: 860px) {
+  html { -webkit-text-size-adjust: 100%; }
+  body { background-attachment: scroll; }
+  input, select, textarea { font-size: 16px !important; } /* evita el auto-zoom de iOS al enfocar */
+
+  /* ---- Cajón de navegación ------------------------------------------------ */
+  .layout { grid-template-columns: 1fr; }
+  .side {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 80;
+    width: min(300px, 86vw); height: 100dvh; overflow-y: auto;
+    display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch;
+    padding: 12px 12px 24px; gap: 3px;
+    background: var(--surface); border-right: 1px solid var(--line);
+    box-shadow: 30px 0 60px -30px rgba(0,0,0,.45);
+    transform: translateX(-104%); transition: transform .28s cubic-bezier(.2,.8,.2,1);
+    -webkit-overflow-scrolling: touch;
+  }
+  body.nav-open .side { transform: none; }
+  .side .spacer { display: block; flex: 1; }
+  .side .navgroup { display: block; }
+  .nav { width: 100%; padding: 12px 12px; font-size: 15px; }
+  .nav.sub { padding-left: 36px; font-size: 14.5px; }
+  .navcat-h { padding: 12px 12px; font-size: 15px; }
+  .poweredby { display: flex; }
+  .m-backdrop { position: fixed; inset: 0; z-index: 79; background: rgba(6,14,18,.5); opacity: 0; pointer-events: none; transition: opacity .25s; backdrop-filter: blur(2px); }
+  body.nav-open .m-backdrop { opacity: 1; pointer-events: auto; }
+  body.nav-open { overflow: hidden; }
+  .m-side-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 10px; }
+  .m-side-head .brand { padding: 4px 4px; }
+  .m-close { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font-size: 16px; }
+
+  /* ---- Barra superior compacta ------------------------------------------- */
+  .topbar { padding: 10px 12px; gap: 8px; flex-wrap: wrap; row-gap: 10px; }
+  .topbar > div:first-of-type { flex: 1 1 auto; min-width: 0; order: 2; }
+  .topbar h2 { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar .sub { display: none; }
+  .m-menu { order: 1; width: 40px; height: 40px; flex: none; border-radius: 11px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 18px; display: inline-flex; align-items: center; justify-content: center; }
+  .nt-topbtn { order: 3; padding: 5px; border-radius: 50%; }
+  .nt-topbtn .lbl { display: none; }
+  .nt-topbtn .pl { width: 26px; height: 26px; }
+  .m-ctx { order: 4; flex: none; display: inline-flex; align-items: center; gap: 7px; max-width: 44vw; height: 40px; padding: 0 8px 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font-size: 12.5px; font-weight: 700; }
+  .m-ctx .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-ctx .av { width: 26px; height: 26px; border-radius: 50%; background: var(--aurora); color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700; flex: none; }
+  .m-ctx .car { font-size: 10px; opacity: .6; transition: transform .2s; }
+  .topbar.ctx-open .m-ctx .car { transform: rotate(180deg); }
+  .topbar .sp { display: none; }
+  /* Panel de contexto: buscador, operación, cliente, sesión, contraseña, salir */
+  .topbar .gsearch, .topbar .sel, .topbar .who, .topbar #btn-mypass, .topbar #btn-logout { display: none; order: 10; }
+  .topbar.ctx-open .gsearch { display: block; flex: 1 1 100%; }
+  .topbar.ctx-open .sel { display: flex; flex-direction: column; align-items: stretch; gap: 4px; flex: 1 1 calc(50% - 4px); min-width: 0; }
+  .topbar.ctx-open .sel select { width: 100%; }
+  .topbar.ctx-open #sess-wrap { display: none; }
+  .topbar.ctx-open .who { display: flex; flex: 1 1 auto; }
+  .topbar.ctx-open #btn-mypass, .topbar.ctx-open #btn-logout { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; }
+  .gsearch .res { top: 46px; }
+  .ann-bar { flex-wrap: nowrap; padding: 7px 10px; gap: 8px; font-size: 12.5px; }
+  .ann-bar .ann-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ann-bar .ann-link { padding: 5px 9px; font-size: 12px; white-space: nowrap; }
+  .ann-bar .ann-ic { display: none; }
+  .verifybar { flex-wrap: wrap; }
+
+  /* ---- Contenido ---------------------------------------------------------- */
+  .content { padding: 14px 12px 60px; max-width: none; }
+  .card .h { flex-wrap: wrap; padding: 13px 14px; row-gap: 6px; }
+  .card .b { padding: 13px 14px; }
+  .toolbar { gap: 8px; }
+  .toolbar .btn { flex: 1 1 auto; text-align: center; }
+  .btn { min-height: 40px; padding: 9px 13px; }
+  .mini { padding: 8px 12px; font-size: 12.5px; }
+  .billtabs { display: flex; flex-wrap: wrap; max-width: 100%; }
+  .segbtn { flex: 1 1 auto; padding: 8px 10px; }
+  .kpis { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .kpi { padding: 13px 14px; }
+  .kpi .v { font-size: 22px; }
+  .metricrow { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .opm-head .billtabs { width: 100%; }
+  .grid2, .sectionrow, .voz-wrap, .tiers { grid-template-columns: 1fr !important; }
+  .mvbar { grid-template-columns: 1fr 1fr; padding: 12px; }
+  .locs { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .dbar-row { grid-template-columns: 1fr; gap: 4px; margin-bottom: 12px; }
+  .dbar-val { text-align: left; }
+  .chatwrap { grid-template-columns: 1fr; height: auto; min-height: 0; }
+  .chat-inbox-pane { max-height: 32vh; overflow: auto; }
+  .chat-msgs { max-height: 48vh; }
+  .voz-stage { min-height: 300px; }
+  .chart { overflow-x: auto; }
+  .onb { padding: 16px 14px; }
+  .onb-prog { min-width: 0; width: 100%; }
+
+  /* ---- Tablas como tarjetas (mobile.js agrega data-label a cada celda) ----- */
+  .tablewrap { overflow-x: auto; }
+  table.m-cards { border-collapse: separate; }
+  table.m-cards thead { display: none; }
+  table.m-cards, table.m-cards tbody { display: block; width: 100%; }
+  table.m-cards tfoot { display: block; }
+  table.m-cards tr { display: block; margin: 10px 10px; padding: 6px 12px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 13px; box-shadow: var(--shadow); }
+  table.m-cards tr.click { cursor: pointer; }
+  table.m-cards td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px dashed var(--line); text-align: right; font-size: 13.5px; white-space: normal; }
+  table.m-cards td:last-child { border-bottom: 0; }
+  table.m-cards td::before { content: attr(data-label); flex: 0 0 38%; text-align: left; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
+  table.m-cards td[data-label=""]::before, table.m-cards td[colspan]::before { display: none; }
+  table.m-cards td[colspan] { justify-content: center; }
+  table.m-cards td.m-first { font-weight: 700; font-size: 15px; justify-content: flex-start; text-align: left; gap: 8px; }
+  table.m-cards td.m-first::before { display: none; }
+  table.m-cards td.m-actions { justify-content: flex-start; padding-top: 10px; }
+  table.m-cards td.m-actions .rowacts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-start; }
+  table.m-cards td .rowacts { flex-wrap: wrap; justify-content: flex-end; }
+  table.m-cards td.num, table.m-cards td[style*="text-align:right"] { text-align: right; }
+  table.m-cards tfoot tr { background: var(--surface-2); }
+  table.m-cards tfoot td { font-weight: 700; }
+  .tablewrap .m-export, .tablewrap > .exportbar { padding: 8px 12px 0; }
+
+  /* ---- Paneles y modales: hoja a pantalla completa -------------------------- */
+  .drawer .panel { width: 100vw; max-width: 100vw; }
+  .modal { align-items: flex-end; }
+  .modal .panel, .modal .panel.wide { width: 100vw; max-width: 100vw; border-radius: 18px 18px 0 0; max-height: 94dvh; display: flex; flex-direction: column; }
+  .modal .db, .drawer .db { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .dh { padding: 14px 16px; }
+  .db { padding: 14px 16px 28px; }
+  .db .grid2, .db [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+
+  /* ---- Tutoriales ------------------------------------------------------------ */
+  .nt-card { left: 10px !important; right: 10px; width: auto; top: auto !important; bottom: 10px; max-height: 60vh; overflow: auto; }
+  .nt-card .nt-arrow { display: none; }
+  .nt-card.center { left: 10px !important; right: 10px; width: auto; top: 50% !important; bottom: auto; transform: translateY(-50%) !important; max-height: 88vh; }
+  .nt-hint { display: none; }
+  .nt-cpanel { max-height: 96vh; border-radius: 16px; }
+  .nt-chead { padding: 14px 16px 10px; }
+  .nt-cbody { padding: 12px 14px 20px; }
+  .nt-hero { padding: 12px 14px; gap: 12px; }
+  .nt-vbar { padding: 10px 12px; }
+  .nt-nudge { right: 10px; left: 10px; width: auto; bottom: 10px; }
+
+  /* ---- Login ------------------------------------------------------------------ */
+  .loginbox { width: 100%; max-width: 100vw; min-height: 100dvh; border-radius: 0; border: 0; display: flex; flex-direction: column; justify-content: center; padding: 28px 22px; }
+}
+
+/* Tablets en horizontal / pantallas medianas: menú siempre visible pero más angosto. */
+@media (min-width: 861px) and (max-width: 1100px) {
+  .layout { grid-template-columns: 200px 1fr; }
+  .side { padding: 14px 10px; }
+  .brand .brandlogo-svg, .brand .brandlogo img { width: 136px; }
+  .content { padding: 18px 16px 46px; }
+  .kpis { grid-template-columns: repeat(3, 1fr); }
+  .metricrow { grid-template-columns: repeat(3, 1fr); }
+  .mvbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tiers { grid-template-columns: repeat(2, 1fr); }
+}

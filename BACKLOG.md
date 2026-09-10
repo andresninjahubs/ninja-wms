@@ -4,6 +4,7 @@ Estado del walking skeleton y pendientes priorizados. Actualizado al avanzar cad
 
 ## ✅ Construido y probado (52 tests)
 
+- **Panel responsivo para móviles (v81)** — `webadmin/mobile.css` + `mobile.js`: menú en cajón deslizante (☰), barra superior compacta con botón de contexto (buscador, operación, cliente, sesión), tablas como tarjetas apiladas, paneles/modales a pantalla completa, controles táctiles; sin cambios en escritorio. Probado en iPhone, Android e iPad (vertical y horizontal).
 - **Módulos ocultos por versión (v81)** — `GET /ui-config` + env `HIDDEN_MODULES` (default: voz, costos, plan, aiaudit, asignaciones, agente): se quitan del menú, de la navegación directa y del Centro de aprendizaje; el super-admin de plataforma los sigue viendo.
 - **Tutoriales guiados por sección (v81)** — tour interactivo con narración por voz sobre la interfaz real (foco por elemento, auto-avance, pausa, atajos), auto-ofrecido la primera vez y siempre disponible desde «▶ Tutorial» y el Centro de aprendizaje; más videos MP4 grabados automáticamente (`scripts/record-tutorials.js`). Ver `TUTORIALES.md`.
 - **Multi-operación (multi-administrador)** — `Operation` como tenant de más alto nivel: cada operación tiene sus propias bodegas, ubicaciones, sellers, usuarios e inventario, aisladas entre sí. Rol `PLATFORM_ADMIN` (Ninja Hubs) por encima que crea operaciones y ve todas. Enforcement: un admin de una operación no puede ver ni actuar sobre otra; invariante de que una ubicación pertenece a la misma operación del seller. Dos niveles de aislamiento: operación → seller.

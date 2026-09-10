@@ -10,6 +10,8 @@ sobre el que se construyen las fases siguientes.
 
 ## Qué ya funciona
 
+El panel `/admin/` es **responsivo** (teléfonos y tablets: menú deslizante, tablas en tarjetas; ver `webadmin/mobile.css`).
+
 Onboarding — **tutoriales guiados por sección** (tour interactivo con voz + video MP4), ver [`TUTORIALES.md`](TUTORIALES.md).
 
 Fase 1 — inventario:
@@ -242,7 +244,7 @@ Para verlo con datos de demostración:
 npm run build
 SEED_DEMO=true PERSISTENCE=memory AUTH_REQUIRED=true AUTH_SECRET=mi-secreto node dist/src/main.js
 # Abre http://localhost:3000/admin/  e inicia sesión con EMAIL + CONTRASEÑA (auth real):
-#   root@ninjahubs.cl / admin1234  -> PLATFORM_ADMIN (ve todas las operaciones)
+#   admin@ninjahubs.cl / admin1234  -> PLATFORM_ADMIN (ve todas las operaciones)
 #   ana@ninjahubs.cl  / demo1234   -> ADMIN  op-ninja
 #   pedro@ninjahubs.cl/ demo1234   -> OPERATOR op-ninja
 #   carla@acme.cl     / demo1234   -> CLIENT  (seller acme)
