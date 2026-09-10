@@ -1,0 +1,868 @@
+// Esquema Prisma del WMS — walking skeleton.
+// Multi-tenant: TODA tabla operativa lleva sellerId. El aislamiento se refuerza
+// a nivel de aplicación (repositorios siempre filtran por seller) y, en producción,
+// con Row-Level Security (RLS) de PostgreSQL sobre estas mismas tablas.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Usuarios del WMS: staff del operador 3PL (sellerId null) o usuarios de un seller (CLIENT).
+// El id del usuario queda como `actor` en cada movimiento del ledger (auditoría).
+// Operación: el tenant de más alto nivel. Cada una es un mundo aislado.
+model Operation {
+  id          String    @id
+  name        String
+  active      Boolean   @default(true)
+  track       String? // 'brand' | 'operator' (self-serve); null si la creó el super-admin
+  selfServe   Boolean   @default(false)
+  planId      String? // plan del SaaS; null = 'internal' (sin límites)
+  trialPlan   String? // plan del reverse-trial (mientras trialEndsAt esté vigente)
+  trialEndsAt DateTime?
+  assignmentMode String? // 'advisory' | 'strict' (Camino B); null = advisory
+  autoBalance Boolean  @default(false) // auto-balanceo continuo
+  createdAt   DateTime  @default(now())
+
+  packagingMaterials PackagingMaterial[] // FK PackagingMaterial → Operation (G8)
+}
+
+// Asignación de tareas a operarios (balanceo de carga, Camino B).
+model WorkAssignment {
+  id            String    @id // `${type}:${entityId}`
+  operationId   String
+  sellerId      String?
+  type          String // PICK | PUTAWAY | COUNT
+  entityId      String
+  entityRef     String?
+  operator      String
+  status        String // assigned | in_progress | done | released
+  unitsEstimate Int       @default(0)
+  assignedBy    String
+  assignedAt    DateTime
+  completedAt   DateTime?
+  completedBy   String?
+  note          String?
+
+  @@index([operationId, status])
+  @@index([operationId, operator, status])
+  @@index([operationId, type, status])
+}
+
+// Agente proactivo: configuración de reglas por operación.
+model AgentRuleConfig {
+  operationId String
+  ruleKey     String
+  enabled     Boolean  @default(true)
+  threshold   Int      @default(0)
+  cooldownMin Int      @default(60)
+  severity    String   @default("warn") // info | warn | crit
+  sellerId    String?
+  actionType  String   @default("alert") // alert | execute
+  actionMode  String   @default("confirmar") // confirmar | directo
+  updatedAt   DateTime
+  updatedBy   String?
+
+  @@id([operationId, ruleKey])
+  @@index([operationId])
+}
+
+// Agente proactivo: alertas generadas (notificaciones in-app de la Fase 1).
+model AgentAlert {
+  id          String    @id @default(uuid())
+  operationId String
+  sellerId    String?
+  ruleKey     String
+  severity    String // info | warn | crit
+  title       String
+  detail      String
+  action      String?
+  link        String?
+  entityRef   String?
+  dedupeKey   String
+  status      String    @default("open") // open | ack
+  actionTool   String?
+  actionLabel  String?
+  actionStatus String   @default("none") // none | proposed | done | error
+  actionResult String?
+  createdAt   DateTime
+  ackAt       DateTime?
+  ackBy       String?
+
+  @@index([operationId, status])
+  @@index([operationId, dedupeKey])
+}
+
+// Registro de tareas (task ledger): cada etapa de una orden/recepción como tarea con id.
+model WorkTask {
+  seq           Int       @id @default(autoincrement()) // id interno secuencial → "t-${seq}"
+  operationId   String
+  sellerId      String?
+  type          String // RESERVE | PICK | PACK | SHIP | PUTAWAY | RECEIVE | COUNT | RESLOT
+  orderId       String?
+  orderRef      String?
+  entityId      String
+  entityRef     String?
+  state         String // pending | assigned | in_progress | done | cancelled
+  unitsEstimate Int       @default(0)
+  assignmentId  String?
+  operator      String?
+  createdAt     DateTime
+  createdBy     String
+  startedAt     DateTime?
+  completedAt   DateTime?
+  completedBy   String?
+  note          String?
+
+  @@index([operationId, orderId])
+  @@index([operationId, type, state])
+  @@index([operationId, state])
+}
+
+model User {
+  id            String   @id
+  name          String
+  email         String   @unique
+  role          String // PLATFORM_ADMIN | ADMIN | SUPERVISOR | OPERATOR | CLIENT
+  operationId   String? // null solo para PLATFORM_ADMIN
+  sellerId      String? // fijo para CLIENT; null para staff/plataforma
+  active        Boolean  @default(true)
+  emailVerified Boolean  @default(true)
+  passwordHash  String? // bcrypt; null = invitación pendiente
+  createdAt     DateTime @default(now())
+
+  @@index([operationId])
+  @@index([sellerId])
+}
+
+model PlanConfig {
+  planId    String   @id
+  data      Json // { name, blurb, prices:{usd,clp}, limits:{...}, features:[...] }
+  updatedAt DateTime @default(now()) @updatedAt
+}
+
+model CountVariance {
+  id               String   @id
+  operationId      String
+  sellerId         String
+  locationId       String
+  at               DateTime
+  linesCounted     Int
+  linesAccurate    Int
+  unitsExpected    Int
+  absVarianceUnits Int
+  accuracyPct      Float
+  variances        Json // detalle [{ sku, lot, locationId, expected, counted, delta }]
+
+  @@index([operationId, at])
+  @@index([sellerId, at])
+}
+
+// Event store consultable (G2+G6): el stream de eventos de negocio, desnormalizado
+// a filas indexables. Fuente-espejo del JSON `events` de cada orden/recepción/devolución.
+model DomainEvent {
+  id         String   @id // `${entityType}:${entityId}:${seq}` — idempotente
+  entityType String // ORDER | RECEIPT | RETURN
+  entityId   String
+  entityRef  String?
+  sellerId   String
+  seq        Int
+  type       String
+  at         DateTime
+  actor      String
+  detail     String?
+
+  @@index([entityId, seq])
+  @@index([sellerId, entityType, at])
+  @@index([type, at])
+}
+
+// Rollups diarios (G3): métricas O(1) y series limpias para forecasting.
+model DailyInventorySnapshot {
+  id         String @id // `${sellerId}:${sku}:${date}`
+  sellerId   String
+  sku        String
+  date       String // YYYY-MM-DD
+  available  Int
+  reserved   Int
+  quarantine Int
+  damaged    Int
+  inTransit  Int
+  total      Int
+
+  @@index([sellerId, date])
+  @@index([sellerId, sku, date])
+}
+
+model DailyDemand {
+  id           String @id // `${sellerId}:${sku}:${date}`
+  sellerId     String
+  sku          String
+  date         String // YYYY-MM-DD
+  unitsShipped Int
+  orders       Int
+
+  @@index([sellerId, date])
+  @@index([sellerId, sku, date])
+}
+
+model DailyMetricRollup {
+  id             String @id // `${sellerId}:${date}`
+  sellerId       String
+  date           String // YYYY-MM-DD
+  ordersPrepared Int
+  unitsPrepared  Int
+  ordersReceived Int
+  unitsReceived  Int
+  movements      Int
+
+  @@index([sellerId, date])
+}
+
+// Productividad de mano de obra (G4).
+model LaborTask {
+  id          String   @id
+  operationId String
+  sellerId    String?
+  operator    String
+  type        String // PICK | PUTAWAY | PACK | RECEIVE | COUNT | OTHER
+  startAt     DateTime
+  endAt       DateTime
+  units       Int
+  orderRef    String?
+  locationId  String?
+  source      String // ledger | captured
+
+  @@index([operationId, startAt])
+  @@index([operationId, operator, startAt])
+  @@index([operationId, type, startAt])
+}
+
+// Persistencia + auditoría de IA (G5).
+model AiRecommendation {
+  id          String   @id
+  operationId String
+  sellerId    String?
+  type        String
+  input       String
+  output      String
+  score       Float?
+  taken       Boolean?
+  outcome     String?
+  actor       String?
+  at          DateTime
+
+  @@index([operationId, at])
+  @@index([operationId, type, at])
+}
+
+model AgentAction {
+  id               String   @id
+  operationId      String
+  sellerId         String?
+  agent            String
+  decision         String
+  actor            String
+  orderRef         String?
+  result           String
+  recommendationId String?
+  at               DateTime
+
+  @@index([operationId, at])
+  @@index([operationId, agent, at])
+}
+
+model AuthToken {
+  id        String    @id
+  userId    String
+  kind      String // 'verify' | 'reset'
+  token     String    @unique
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  @@index([userId])
+}
+
+model Seller {
+  id                 String   @id
+  operationId        String // operación dueña del seller
+  name               String
+  pickingStrategy    String   @default("FIFO") // FIFO | FEFO | LOT_DIRECTED
+  cycleCountStrategy String   @default("ABC") // ABC | LOCATION | RANDOM
+  consolidateByLocation Boolean @default(false) // preferir una sola ubicación al reservar
+  courierPriority    Json     @default("[]") // orden de prioridad de courier para la cola de preparación
+  autoAllocateOnIngest Boolean @default(false) // reservar stock apenas ingresa la orden (sin revisión)
+  active             Boolean  @default(true)
+  // ¿El admin habilitó a este cliente para ver/usar el panel de webhooks?
+  webhooksClientEnabled Boolean @default(false)
+  createdAt          DateTime @default(now())
+
+  @@index([operationId])
+
+  skus          Sku[]
+  movements     StockMovement[]
+  orders        SalesOrder[]
+  receiptOrders ReceiptOrder[]
+  returnOrders  ReturnOrder[]
+  productLogs   ProductLog[]
+  assemblyLogs  AssemblyLog[]
+  billingRate   BillingRate?
+  billingInvoices BillingInvoice[]
+  chatMessages  ChatMessage[]
+  chatReadState ChatReadState?
+  lots          Lot[]
+  serials       Serial[] // FK Serial → Seller (G8)
+}
+
+// Metadata de lote/serie por seller: habilita FIFO (receivedAt) y FEFO (expiryDate).
+model Lot {
+  sellerId   String
+  sku        String
+  lot        String
+  receivedAt DateTime
+  expiryDate DateTime?
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  @@id([sellerId, sku, lot])
+  @@index([sellerId, sku])
+}
+
+// Registro de número de serie individual (trazabilidad unidad-a-unidad).
+// Sin relación FK a Seller: tabla independiente, se llena en la recepción.
+model Serial {
+  sellerId   String
+  sku        String
+  serial     String
+  lot        String?
+  expiry     DateTime?
+  status     String   @default("IN_STOCK") // IN_STOCK | SHIPPED | RETURNED
+  receiptId  String?
+  locationId String?
+  receivedAt DateTime
+  actor      String
+
+  // Integridad referencial (G8): un serial pertenece a un seller.
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  @@id([sellerId, sku, serial])
+  @@index([sellerId, sku])
+}
+
+
+// Marca (white-label) por operación. Reemplaza la info/logo de Ninja en documentos hacia sellers.
+model OperationBranding {
+  operationId  String  @id
+  companyName  String?
+  legalName    String?
+  taxId        String?
+  address      String?
+  email        String?
+  phone        String?
+  website      String?
+  primaryColor String?
+  logoDataUri  String? // logo embebido (data URI)
+}
+
+// Insumo de embalaje (packaging) a nivel OPERACIÓN. Producto con SKU/EAN que se
+// consume al empacar y se cobra al seller. Sin relación FK; tabla independiente.
+model PackagingMaterial {
+  operationId  String
+  sku          String
+  barcode      String?
+  name         String
+  unitPrice    Int      @default(0) // precio de cobro por unidad (por defecto)
+  sellerPrices Json     @default("{}") // override de precio por seller { sellerId: precio }
+  active       Boolean  @default(true)
+
+  // Integridad referencial (G8): un insumo de embalaje pertenece a una operación.
+  operation Operation @relation(fields: [operationId], references: [id])
+
+  @@id([operationId, sku])
+  @@index([operationId])
+}
+
+// Ledger de stock de embalaje (nivel operación). Saldo = suma de qtyDelta.
+model PackagingMovement {
+  id          String   @id
+  operationId String
+  materialSku String
+  type        String // RECEIPT | CONSUMPTION | ADJUSTMENT
+  qtyDelta    Int
+  sellerId    String? // a qué cliente se carga el consumo
+  orderId     String?
+  unitPrice   Int? // precio efectivo aplicado al consumo
+  reference   String?
+  actor       String
+  occurredAt  DateTime
+
+  @@index([operationId, materialSku])
+  @@index([operationId, sellerId])
+}
+
+// Canal de voz/mensaje operador↔admin de la operación. Cada mensaje se clasifica
+// (categoría/tópico) por un agente IA (heurística o LLM). El audio va aparte (OpsAudioBlob).
+model OpsMessage {
+  id                 String   @id
+  operationId        String
+  threadUserId       String // operador dueño del hilo
+  senderId           String
+  senderName         String
+  senderRole         String
+  kind               String // voice | text
+  text               String? // texto o transcripción
+  note               String? // nota corta opcional
+  audioId            String? // id del OpsAudioBlob asociado
+  audioMime          String?
+  durationSec        Int?
+  category           String? // tópico clasificado
+  categoryConfidence Float?
+  categorySource     String? // ai | heuristic
+  at                 DateTime
+
+  @@index([operationId])
+  @@index([operationId, threadUserId])
+}
+
+// Estado de lectura de un hilo del canal (por operación + operador). "Visto" estilo WhatsApp.
+model OpsThreadRead {
+  operationId    String
+  threadUserId   String
+  adminReadAt    DateTime?
+  operatorReadAt DateTime?
+
+  @@id([operationId, threadUserId])
+}
+
+// Audio (base64) de un mensaje de voz, separado del mensaje para no inflar las consultas.
+model OpsAudioBlob {
+  id          String @id
+  operationId String
+  mime        String
+  dataBase64  String
+
+  @@index([operationId])
+}
+
+// SKU scoped al seller: la clave primaria es (sellerId, sku).
+// Dos sellers pueden usar el mismo código o barcode sin colisionar.
+model Sku {
+  sellerId      String
+  sku           String
+  description   String
+  barcode       String?
+  lotControlled Boolean @default(false)
+  serialControlled Boolean @default(false) // true = cada unidad lleva N° de serie único (captura en recepción)
+  expiryControlled Boolean @default(false) // true = exige vencimiento al recepcionar (perecibles/FEFO)
+  rotationClass String  @default("B") // A | B | C — guía el guardado caótico
+  active        Boolean @default(true)
+  isKit         Boolean @default(false) // true si es un kit/bundle
+  kitMode       String? // VIRTUAL | ASSEMBLED
+  components    Json    @default("[]") // [{ sku, qty }] — lista de materiales (BOM)
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  @@id([sellerId, sku])
+  @@unique([sellerId, barcode])
+  @@index([sellerId])
+}
+
+// Facturación 3PL — tarifario por cliente.
+model BillingRate {
+  sellerId            String @id
+  currency            String @default("CLP")
+  fixedMonthly        Int    @default(0)
+  storagePerUnitMonth Int    @default(0)
+  receiptPerUnit      Int    @default(0)
+  shipmentPerOrder    Int    @default(0)
+  pickPerUnit         Int    @default(0)
+  assemblyPerKit      Int    @default(0)
+  requiresApproval    Boolean @default(false)
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+}
+
+// Facturación 3PL — factura mensual generada.
+model BillingInvoice {
+  id         String   @id
+  number     String   @default("")
+  sellerId   String
+  periodFrom DateTime
+  periodTo   DateTime
+  currency   String   @default("CLP")
+  lines      Json // [{ concept, unit, qty, rate, amount }]
+  total      Int
+  createdAt  DateTime
+  createdBy  String
+  sends      Json     @default("[]") // [{ to, at, by, delivered }]
+  status     String   @default("ISSUED") // ISSUED | PENDING | APPROVED | INVOICED
+  approval   Json? // { by, at } cuando el cliente aprueba
+  taxDocument Json? // metadatos del documento tributario adjunto { fileName, mimeType, size, uploadedAt, uploadedBy }
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  @@index([sellerId])
+}
+
+// Bytes del documento tributario adjunto a una factura (la factura real en PDF u otro archivo).
+model InvoiceDocument {
+  invoiceId     String @id
+  sellerId      String
+  fileName      String
+  mimeType      String
+  contentBase64 String // contenido del archivo en base64
+
+  @@index([sellerId])
+}
+
+// Eventos de login (append-only): CADA inicio de sesión exitoso. Alimenta el
+// Panel de uso de la plataforma (logins, usuarios activos, última actividad).
+model LoginEvent {
+  id          String   @id
+  userId      String
+  operationId String? // null para el PLATFORM_ADMIN (transversal)
+  at          DateTime
+
+  @@index([at])
+  @@index([operationId])
+}
+
+// Anuncio de plataforma (barra superior on-demand) gestionado por el PLATFORM_ADMIN.
+model Announcement {
+  id        String   @id
+  title     String
+  linkUrl   String
+  linkLabel String   @default("Ver más")
+  active    Boolean  @default(true)
+  audience  String   @default("OPS") // OPS | ALL
+  createdAt DateTime
+  createdBy String
+
+  clicks AnnouncementClick[]
+
+  @@index([active, createdAt])
+}
+
+// Clic en un anuncio, con la identidad del usuario (y su operación/cliente).
+model AnnouncementClick {
+  id             String   @id
+  announcementId String
+  userId         String
+  userName       String
+  userRole       String
+  operationId    String?
+  sellerId       String?
+  at             DateTime
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@index([announcementId])
+}
+
+// Suscripción de webhook configurable por evento (scope SELLER/OPERATION/PLATFORM).
+model Webhook {
+  id        String   @id
+  scope     String // SELLER | OPERATION | PLATFORM
+  scopeId   String? // sellerId | operationId | null (PLATFORM)
+  url       String
+  secret    String
+  events    Json // WebhookEventType[]
+  active    Boolean  @default(true)
+  createdAt DateTime
+  createdBy String
+
+  deliveries WebhookDelivery[]
+
+  @@index([scope, scopeId])
+  @@index([active])
+}
+
+// Historial (auditable) de entregas de un evento a un webhook.
+model WebhookDelivery {
+  id             String   @id
+  webhookId      String
+  event          String // order.shipped | reception.received
+  status         String // DELIVERED | FAILED
+  httpStatus     Int?
+  error          String?
+  at             DateTime
+  payloadSummary String
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
+}
+
+// Chat interno cliente ↔ equipo de operaciones (una conversación por seller).
+model ChatMessage {
+  id         String   @id
+  sellerId   String
+  senderId   String
+  senderName String
+  senderRole String
+  side       String // CLIENT | OPS
+  body       String
+  at         DateTime
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  @@index([sellerId, at])
+}
+
+// Marcadores de "leído hasta" por lado (cliente / operaciones), por conversación.
+model ChatReadState {
+  sellerId    String    @id
+  opsReadAt   DateTime?
+  clientReadAt DateTime?
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+}
+
+// Historial auditable de armados de kit: qué kit, cuánto, destino y de qué
+// ubicaciones se extrajo cada componente, con usuario y momento.
+model AssemblyLog {
+  id           String   @id
+  sellerId     String
+  kitSku       String
+  qty          Int
+  toLocationId String
+  sources      Json // [{ sku, locationId, lot, qty }]
+  actor        String
+  at           DateTime
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  @@index([sellerId])
+}
+
+// Historial de cambios de productos (auditoría visible por cliente y operaciones).
+model ProductLog {
+  id       String   @id
+  sellerId String
+  sku      String
+  at       DateTime
+  actor    String
+  action   String // CREADO | EDITADO | ACTIVADO | DESACTIVADO | ARMADO | PACK
+  detail   String?
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  @@index([sellerId])
+  @@index([sellerId, sku])
+}
+
+// Niveles de empaque de un SKU: cada uno con su código de barras y su factor
+// (unidades base que representa). El inventario se lleva SIEMPRE en unidades base.
+model PackConfig {
+  sellerId String
+  sku      String
+  code     String // EA | CASE | PALLET | INNER | ...
+  label    String
+  barcode  String
+  factor   Int // unidades base por pack (EA = 1)
+  isBase   Boolean @default(false)
+
+  @@id([sellerId, sku, code])
+  @@unique([sellerId, barcode])
+  @@index([sellerId, barcode])
+}
+
+// Las ubicaciones físicas son COMPARTIDAS entre sellers (modelo caótico).
+// La propiedad del stock nunca se comparte: vive en StockMovement.sellerId.
+model Location {
+  id          String  @id
+  operationId String // las ubicaciones son propias de cada operación
+  warehouseId String
+  code        String
+  zoneType    String // RECEIVING | STORAGE | PICKING | SHIPPING | QUARANTINE
+  capacity    Int     @default(0) // unidades; 0 = sin límite definido
+  pickRank    Int     @default(1) // cercanía a picking: 1 = más cerca
+  active      Boolean @default(true)
+  x           Float? // coordenada (G7): geometría para distancia real
+  y           Float?
+
+  @@unique([operationId, code])
+  @@index([operationId])
+}
+
+// Ledger inmutable: append-only. Es la única fuente de verdad del stock.
+// El saldo de un bucket = SUM(qtyDelta) agrupado por (sellerId, sku, locationId, lot, state).
+model StockMovement {
+  id         String   @id
+  sellerId   String
+  sku        String
+  locationId String
+  lot        String?
+  state      String // AVAILABLE | RESERVED | QUARANTINE | DAMAGED | IN_TRANSIT
+  type       String // RECEIPT | PUTAWAY | TRANSFER | PICK | SHIP | ADJUSTMENT
+  qtyDelta   Int
+  uom        String   @default("each")
+  reference  String?
+  groupId    String? // agrupa las 2 patas de un traslado
+  actor      String   @default("system")
+  occurredAt DateTime
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  @@index([sellerId, sku, locationId])
+  @@index([sellerId, sku, state])
+  @@index([groupId])
+}
+
+// Órdenes de venta ingresadas desde el OMS (con seller y canal ya resueltos).
+model SalesOrder {
+  id               String   @id
+  sellerId         String
+  externalOrderId  String
+  salesChannel     String
+  orderType        String   @default("b2c")
+  purchaseOrderRef String?
+  documentType     String? // atributo seleccionable: boleta | factura | guia_despacho | orden_compra (no emite ante el SII)
+  carrier          String? // courier/transporte que trae la orden al ingresar
+  priority         String   @default("normal")
+  shipTo           Json
+  status           String // RECEIVED | ALLOCATED | PICKING | PICKED | PACKED | SHIPPED | CANCELLED
+  packing          Json? // { packedAt, bultos, trackingNumber, carrier, labelStatus, labels[] }
+  shipment         Json? // { mode, carrier, trackingNumber, shippedAt }
+  createdAt        DateTime
+
+  seller Seller      @relation(fields: [sellerId], references: [id])
+  lines  OrderLine[]
+
+  // Idempotencia (G1): un externalOrderId es único por seller — un reintento del
+  // webhook del OMS no puede crear una orden duplicada.
+  @@unique([sellerId, externalOrderId])
+  @@index([sellerId])
+  @@index([sellerId, status])
+}
+
+model ReturnOrder {
+  id               String   @id // legible: DEV-YYYYMMDD-XXXX
+  sellerId         String
+  originalOrderId  String? // id interno de la orden de salida enlazada
+  originalOrderRef String? // N° externo de la orden (etiqueta)
+  reason           String?
+  status           String // PENDING | PARTIAL | COMPLETED | CANCELLED
+  lines            Json // [{ lineNo, sku, expectedQty, toStock, toMerma, toQuarantine, note }] (compat)
+  events           Json     @default("[]") // auditoría [{ type, at, actor, detail }]
+  createdAt        DateTime
+
+  seller    Seller       @relation(fields: [sellerId], references: [id])
+  lineRows  ReturnLine[] // normalizado (G8): analytics por línea sin parsear JSON
+
+  @@index([sellerId])
+  @@index([sellerId, status])
+}
+
+/** Línea normalizada de una devolución (G8). */
+model ReturnLine {
+  id           String @id // "{returnId}:{lineNo}"
+  returnId     String
+  lineNo       Int
+  sku          String
+  expectedQty  Int
+  toStock      Int    @default(0)
+  toMerma      Int    @default(0)
+  toQuarantine Int    @default(0)
+  note         String?
+
+  order ReturnOrder @relation(fields: [returnId], references: [id], onDelete: Cascade)
+
+  @@index([returnId])
+  @@index([sku])
+}
+
+model OrderLine {
+  id          String  @id // sintético: "{orderId}:{lineNo}"
+  orderId     String
+  lineNo      Int
+  sku         String
+  qty         Int
+  uom         String  @default("each")
+  lot         String? // opcional: exige reservar de ese lote/serie
+  allocations Json // [{ locationId, lot, qty }] — guía el picking
+
+  order SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+// Orden de recepción (inbound): un ingreso de mercadería con varios SKUs.
+model ReceiptOrder {
+  id         String   @id // legible: OR-YYYYMMDD-XXXX
+  sellerId   String
+  supplier   String?
+  reference  String? // documento del proveedor (guía / factura / OC)
+  locationId String // ubicación de recepción destino
+  notes      String?
+  status     String // OPEN | CANCELLED
+  lines      Json // [{ lineNo, sku, qty, uom, lot, expiry }] (compat)
+  events     Json // auditoría [{ type, at, actor, detail }]
+  createdAt  DateTime
+  createdBy  String   @default("system")
+
+  seller   Seller        @relation(fields: [sellerId], references: [id])
+  lineRows ReceiptLine[] // normalizado (G8): analytics por línea sin parsear JSON
+
+  @@index([sellerId])
+  @@index([sellerId, status])
+}
+
+/** Línea normalizada de una recepción (G8). */
+model ReceiptLine {
+  id       String    @id // "{receiptId}:{lineNo}"
+  receiptId String
+  lineNo   Int
+  sku      String
+  qty      Int
+  uom      String    @default("EA")
+  lot      String?
+  expiry   DateTime?
+
+  order ReceiptOrder @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+
+  @@index([receiptId])
+  @@index([sku])
+}
+
+// Credenciales de LLM del tenant para el copiloto (por operación o por seller).
+// sellerKey = sellerId, o '*' para el nivel operación. apiKey nunca se expone al cliente.
+model AiCredential {
+  operationId String
+  sellerKey   String
+  provider    String
+  baseUrl     String
+  chatModel   String
+  apiKey      String
+  active      Boolean  @default(true)
+  updatedAt   DateTime
+
+  @@id([operationId, sellerKey])
+}
+
+// Ajustes del copiloto por operación (modo de acciones: confirm | direct).
+model CopilotSetting {
+  operationId String @id
+  actionMode  String @default("confirm")
+}
+
+// Tarjeta de costos por operación (costeo por actividad + estándar/real → rentabilidad).
+model CostRateCard {
+  operationId              String   @id
+  currency                 String   @default("CLP")
+  standardLaborRatePerHour Float    @default(4500)
+  laborCostByRole          Json     @default("{}") // { OPERATOR: 4500, SUPERVISOR: 7000, ... }
+  laborCostByOperator      Json     @default("{}") // override por operario { id|email: costo/hora }
+  standardUph              Json     @default("{}") // estándar u/h por tipo { PICK: 80, ... }
+  storageCostPerUnitMonth  Float    @default(0)
+  packagingCostRatio       Float    @default(0.6)
+  monthlyOverhead          Float    @default(0)
+  overheadDriver           String   @default("laborHours") // laborHours | unitMonths | orders
+  updatedAt                DateTime
+  updatedBy                String?
+}

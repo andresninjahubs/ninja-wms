@@ -1,0 +1,14 @@
+{
+  "name": "WMS Ninja Hubs — Operador",
+  "short_name": "WMS Operador",
+  "description": "App de bodega: recepción, guardado y picking con lector de código de barras.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0E141A",
+  "theme_color": "#0F6E78",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

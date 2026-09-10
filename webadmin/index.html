@@ -1,0 +1,1502 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#12B76A">
+<title>WMS · Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+  /* ============================================================
+     AURORA CLEAN — claro, luminoso, premium. Verde Ninja + acentos
+     aurora (verde → teal → violeta), vidrio esmerilado, sombras suaves.
+     ============================================================ */
+  :root{
+    --bg:#F4F8F8; --surface:#FFFFFF; --surface-2:#EFF4F5; --surface-3:#E5EDEE;
+    --ink:#0F1B17; --ink-2:#46565A; --ink-3:#7C8B90;
+    --line:#E7EEEE; --line-2:#D6E0E0;
+    --primary:#12B76A; --primary-ink:#0E8F55; --primary-wash:#E4F7EE;
+    --signal:#E38A17; --signal-wash:#FBEED6;
+    --good:#0F9D5B; --good-wash:#E3F5EB; --warn:#B7791F; --warn-wash:#FBF1DA; --crit:#D0574A; --crit-wash:#FBE7E3;
+    --shadow:0 1px 2px rgba(16,60,45,.05), 0 18px 40px -26px rgba(16,60,45,.30);
+    --shadow-lg:0 4px 12px -6px rgba(16,60,45,.10), 0 30px 60px -34px rgba(16,60,45,.40);
+    /* Firma Aurora: gradiente de acento y washes suaves para brillos ambientales */
+    --aurora:linear-gradient(120deg,#12B76A 0%,#0EA5A5 52%,#7C6BF0 118%);
+    --aurora-2:linear-gradient(135deg,#12B76A,#0EA5A5);
+    --glow-teal:rgba(14,165,165,.13); --glow-violet:rgba(124,107,240,.11);
+    --radius:16px;
+    /* Paleta categórica validada (data-viz) para conceptos de facturación — modo claro */
+    --cat-1:#2a78d6; --cat-2:#eb6834; --cat-3:#1baf7a; --cat-4:#eda100; --cat-5:#e87ba4; --cat-6:#008300; --cat-7:#4a3aa7; --cat-8:#e34948;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --bg:#0A1016; --surface:#111A1E; --surface-2:#18242A; --surface-3:#213038;
+    --ink:#EAF2F0; --ink-2:#AFBEC1; --ink-3:#7F9195;
+    --line:#22323A; --line-2:#31454E;
+    --primary:#2EE0A0; --primary-ink:#6DEEC0; --primary-wash:#0C2C24;
+    --signal:#F0A24A; --signal-wash:#3A2814;
+    --good:#4FD299; --good-wash:#0E2C22; --warn:#D9A947; --warn-wash:#332811; --crit:#E08072; --crit-wash:#33191A;
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 16px 38px -18px rgba(0,0,0,.6);
+    --shadow-lg:0 4px 14px -6px rgba(0,0,0,.5), 0 34px 70px -34px rgba(0,0,0,.7);
+    --aurora:linear-gradient(120deg,#16E0A0 0%,#22C8D6 52%,#9A8BFF 118%);
+    --aurora-2:linear-gradient(135deg,#16E0A0,#22C8D6);
+    --glow-teal:rgba(34,200,214,.14); --glow-violet:rgba(154,139,255,.12);
+    --cat-1:#3987e5; --cat-2:#d95926; --cat-3:#199e70; --cat-4:#c98500; --cat-5:#d55181; --cat-6:#00a300; --cat-7:#9085e9; --cat-8:#e66767;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#0A1016; --surface:#111A1E; --surface-2:#18242A; --surface-3:#213038;
+    --ink:#EAF2F0; --ink-2:#AFBEC1; --ink-3:#7F9195;
+    --line:#22323A; --line-2:#31454E;
+    --primary:#2EE0A0; --primary-ink:#6DEEC0; --primary-wash:#0C2C24;
+    --signal:#F0A24A; --signal-wash:#3A2814;
+    --good:#4FD299; --good-wash:#0E2C22; --warn:#D9A947; --warn-wash:#332811; --crit:#E08072; --crit-wash:#33191A;
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 16px 38px -18px rgba(0,0,0,.6);
+    --shadow-lg:0 4px 14px -6px rgba(0,0,0,.5), 0 34px 70px -34px rgba(0,0,0,.7);
+    --aurora:linear-gradient(120deg,#16E0A0 0%,#22C8D6 52%,#9A8BFF 118%);
+    --aurora-2:linear-gradient(135deg,#16E0A0,#22C8D6);
+    --glow-teal:rgba(34,200,214,.14); --glow-violet:rgba(154,139,255,.12);
+    --cat-1:#3987e5; --cat-2:#d95926; --cat-3:#199e70; --cat-4:#c98500; --cat-5:#d55181; --cat-6:#00a300; --cat-7:#9085e9; --cat-8:#e66767;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--ink);font-family:"Inter",system-ui,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(780px 420px at 100% -6%, var(--glow-violet), transparent 60%),
+      radial-gradient(720px 400px at -8% 108%, var(--glow-teal), transparent 60%),
+      var(--bg);
+    background-attachment:fixed;}
+  h1,h2,h3,h4{font-family:"Sora",sans-serif;letter-spacing:-.015em;margin:0}
+  .mono{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+  button{font-family:inherit;cursor:pointer}
+  .layout{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+  @media(max-width:860px){.layout{grid-template-columns:1fr}}
+
+  .side{background:color-mix(in srgb,var(--surface) 74%, transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:16px 14px;gap:3px;position:sticky;top:0;height:100vh;overflow-y:auto}
+  @media(max-width:860px){.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center}}
+  .brand{display:flex;align-items:center;gap:10px;padding:8px 8px 16px}
+  .brand .brandlogo{display:flex;align-items:center;line-height:0}
+  .brand .brandlogo-svg{width:158px;height:auto;display:block}
+  .brand .brandlogo img{width:158px;height:auto;display:block}
+  /* legado: mantenido por compatibilidad con otras vistas/estados */
+  .brand .logo{width:34px;height:34px;border-radius:10px;background:var(--aurora);display:grid;place-items:center;color:#fff;font-family:"Sora",sans-serif;font-weight:800;font-size:15px;box-shadow:0 6px 16px -6px rgba(14,165,165,.6)}
+  .brand .n{font-family:"Sora",sans-serif;font-weight:800;font-size:15px}.brand .s{font-size:11px;color:var(--ink-3);margin-top:-2px}
+  .nav{border:0;background:transparent;text-align:left;display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:9px;color:var(--ink-2);font-size:13.5px;font-weight:600;width:100%}
+  .nav.locked{opacity:.5}
+  .nav.locked:hover{opacity:.7}
+  .nav .navlock{margin-left:auto;font-size:11px}
+  .nav .ic{width:18px;text-align:center;opacity:.9}
+  .nav .badge{margin-left:auto;font-size:10px;font-weight:700;background:var(--crit);color:#fff;border-radius:999px;padding:1px 6px;min-width:18px;text-align:center}
+  .nav:hover{background:var(--surface-2);color:var(--ink)}
+  .nav.on{background:var(--primary-wash);color:var(--primary-ink);font-weight:700;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--primary) 22%, transparent)}
+  .nav.on .ic{opacity:1;color:var(--primary)}
+  .nav.hidden{display:none}
+  .hidden{display:none!important}
+  /* Categorías desplegables del sidebar (menús con submenús) */
+  .side .navcat{display:flex;flex-direction:column;gap:3px}
+  .navcat-h{border:0;background:transparent;text-align:left;display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:9px;color:var(--ink-2);font-size:13.5px;font-weight:700;width:100%;cursor:pointer}
+  .navcat-h .ic{width:18px;text-align:center;opacity:.9}
+  .navcat-h:hover{background:var(--surface-2);color:var(--ink)}
+  .navcat-h .navcat-arrow{margin-left:auto;transition:transform .15s ease;font-size:11px;opacity:.6}
+  .navcat.collapsed .navcat-arrow{transform:rotate(-90deg)}
+  .navcat.collapsed .navcat-body{display:none}
+  .navcat.has-active>.navcat-h{color:var(--ink)}
+  .navcat-body{display:flex;flex-direction:column;gap:3px;margin-top:1px}
+  .nav.sub{padding-left:34px;font-size:13px}
+  .navcat.hidden{display:none}
+  .side .navgroup{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);padding:12px 11px 4px}
+  .side .spacer{flex:1}
+  /* Sello "Tecnología · Ninja Hubs" (pie del sidebar, en todas las cuentas) */
+  .poweredby{padding:2px 11px 14px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+  .poweredby .pb-label{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-3);font-weight:700}
+  .poweredby .pb-chip{display:inline-flex;background:#fff;border:1px solid var(--line);border-radius:7px;padding:5px 9px;box-shadow:var(--shadow)}
+  .poweredby .pb-chip img{width:104px;max-width:100%;height:auto;display:block}
+  @media(max-width:860px){.poweredby{display:none}}
+  @media(max-width:860px){.side .spacer,.side .navgroup{display:none}.nav{width:auto}}
+
+  .main{min-width:0;display:flex;flex-direction:column}
+  .topbar{display:flex;align-items:center;gap:12px;padding:13px 24px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 80%, transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);position:sticky;top:0;z-index:8;flex-wrap:wrap}
+  .topbar h2{font-size:19px;font-weight:800}
+  .topbar .sub{font-size:12px;color:var(--ink-3)}
+  .topbar .sp{flex:1}
+  .gsearch{position:relative;min-width:150px;flex:0 1 170px}
+  .gsearch input{width:100%;font-size:13px;padding:8px 12px 8px 32px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);color:var(--ink)}
+  .gsearch .i{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--ink-3);font-size:13px}
+  .gsearch .res{position:absolute;top:40px;left:0;right:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);z-index:20;overflow:hidden;display:none}
+  .gsearch .res.on{display:block}
+  .gsearch .res a{display:flex;justify-content:space-between;gap:8px;padding:9px 12px;font-size:12.5px;color:var(--ink-2);border-bottom:1px solid var(--line)}
+  .gsearch .res a:last-child{border-bottom:0}.gsearch .res a:hover{background:var(--surface-2);color:var(--ink)}
+  .sel{display:flex;align-items:center;gap:7px}
+  .sel label{font-size:10px;color:var(--ink-3);font-weight:700;text-transform:uppercase;letter-spacing:.07em}
+  select{font-family:inherit;font-size:13px;font-weight:600;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:7px 10px}
+  select:disabled{opacity:.55}
+  .who{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:4px 6px 4px 12px}
+  .who .nm{font-size:12px;font-weight:600}.who .rl{font-size:10px;color:var(--ink-3)}
+  .who .av{width:28px;height:28px;border-radius:50%;background:var(--aurora);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700}
+
+  .content{padding:22px 24px 46px;max-width:1200px}
+  .page{display:none}.page.on{display:block}
+
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:13px;margin-bottom:18px}
+  @media(max-width:1000px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:520px){.kpis{grid-template-columns:1fr}}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 17px;box-shadow:var(--shadow);transition:transform .16s ease,box-shadow .16s ease;position:relative;overflow:hidden}
+  .kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--aurora);opacity:0;transition:opacity .16s ease}
+  .kpi:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+  .kpi:hover::before{opacity:1}
+  .kpi .l{font-size:11px;color:var(--ink-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+  .kpi .v{font-family:"Sora",sans-serif;font-weight:800;font-size:26px;margin-top:8px;line-height:1;letter-spacing:-.02em}
+  .kpi .d{font-size:11px;margin-top:6px;color:var(--ink-3)}
+  .kpi .d b.up{color:var(--good)} .kpi .d b.dn{color:var(--crit)}
+
+  .grid2{display:grid;grid-template-columns:1.35fr 1fr;gap:16px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+  .card .h{padding:15px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+  .card .h h3{font-size:14.5px;font-weight:700}.card .h .sp{flex:1}
+  .card .b{padding:15px 17px}
+  .sectionrow{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+  @media(max-width:900px){.sectionrow{grid-template-columns:1fr}}
+
+  /* Alerts */
+  .alerts{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:18px}
+  @media(max-width:1000px){.alerts{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:520px){.alerts{grid-template-columns:1fr}}
+  .alert{border:1px solid var(--line);border-radius:12px;padding:13px 15px;background:var(--surface);box-shadow:var(--shadow);border-left:4px solid var(--ink-3)}
+  .alert.good{border-left-color:var(--good)} .alert.warn{border-left-color:var(--warn)} .alert.crit{border-left-color:var(--crit)}
+  .alert .t{font-size:11.5px;color:var(--ink-3);font-weight:600;text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;gap:7px}
+  .alert .n{font-family:"Sora",sans-serif;font-weight:800;font-size:24px;margin-top:6px}
+  .alert.crit .n{color:var(--crit)} .alert.warn .n{color:var(--warn)} .alert.good .n{color:var(--good)}
+  .alert .x{font-size:11.5px;color:var(--ink-3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .chart{display:flex;flex-direction:column;gap:10px}
+  .bar-row{display:grid;grid-template-columns:118px 1fr 48px;align-items:center;gap:11px}
+  .bar-row .cap{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar-track{height:24px;background:var(--surface-2);border-radius:7px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:7px;background:var(--aurora-2)}
+  .bar-row .val{font-size:12.5px;text-align:right;color:var(--ink);font-weight:600}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  .tablewrap{overflow-x:auto}
+  thead th{text-align:left;font-family:"IBM Plex Mono";font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600;padding:10px 15px;border-bottom:1px solid var(--line);white-space:nowrap}
+  tbody td{padding:11px 15px;border-bottom:1px solid var(--line);color:var(--ink-2)}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr.click{cursor:pointer} tbody tr.click:hover{background:var(--surface-2)}
+  td.sku,td.mono2{font-family:"IBM Plex Mono";font-weight:600;color:var(--ink)}
+  td.num{text-align:right;font-family:"IBM Plex Mono";font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  .chip .dot{width:6px;height:6px;border-radius:50%}
+  .st-AVAILABLE,.st-ok{background:var(--good-wash);color:var(--good)} .st-AVAILABLE .dot,.st-ok .dot{background:var(--good)}
+  .st-RESERVED{background:var(--signal-wash);color:var(--signal)} .st-RESERVED .dot{background:var(--signal)}
+  .st-RECEIVED{background:var(--surface-3);color:var(--ink-2)} .st-RECEIVED .dot{background:var(--ink-3)}
+  .st-ALLOCATED{background:var(--good-wash);color:var(--good)} .st-ALLOCATED .dot{background:var(--good)}
+  .st-PICKED,.st-PICKING{background:var(--primary-wash);color:var(--primary-ink)} .st-PICKED .dot,.st-PICKING .dot{background:var(--primary)}
+  .st-PACKED{background:var(--signal-wash);color:var(--signal)} .st-PACKED .dot{background:var(--signal)}
+  .st-SHIPPED{background:var(--aurora);color:#fff} .st-SHIPPED .dot{background:#fff}
+  .pk-sum{display:grid;gap:2px;margin:2px 0 4px}
+  .ok-note{margin:0 0 6px;color:var(--good);font-weight:700}
+  .lbl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;margin:6px 0}
+  .lbl-card{margin:0;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center}
+  .lbl-card img{width:100%;height:auto;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:zoom-in}
+  .lbl-card figcaption{margin-top:6px;font-size:11px;color:var(--ink-2)}
+  .st-CANCELLED{background:var(--crit-wash);color:var(--crit)} .st-CANCELLED .dot{background:var(--crit)}
+  .loc-chip{font-family:"IBM Plex Mono";font-size:11px;background:var(--surface-2);border:1px solid var(--line);padding:2px 7px;border-radius:6px;color:var(--ink-2)}
+  .rolechip{font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px}
+  .r-PLATFORM_ADMIN{background:var(--signal);color:#fff}
+  .r-ADMIN{background:var(--primary-wash);color:var(--primary-ink)}
+  .r-SUPERVISOR{background:var(--signal-wash);color:var(--signal)}
+  .r-OPERATOR{background:var(--surface-3);color:var(--ink-2)}
+  .r-CLIENT{background:var(--good-wash);color:var(--good)}
+  .warnrow{color:var(--crit)!important;font-weight:600}
+
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+  .search{flex:1;min-width:170px;position:relative}
+  .search input{width:100%;font-size:13px;padding:9px 12px 9px 32px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)}
+  .search .i{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--ink-3);font-size:13px}
+  .filters{display:flex;gap:6px;flex-wrap:wrap}
+  .fchip{font-size:12px;font-weight:600;padding:6px 11px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2)}
+  .fchip.on{background:var(--aurora);color:#fff;border-color:transparent;box-shadow:0 6px 14px -8px rgba(14,165,165,.6)}
+  .mvbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:13px 15px;margin-bottom:14px}
+  @media(max-width:1100px){.mvbar{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:640px){.mvbar{grid-template-columns:repeat(2,1fr)}}
+  .field{display:flex;flex-direction:column;gap:5px;min-width:0}
+  .field label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)}
+  .field input,.field select{width:100%;font-family:inherit;font-size:13px;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .field.hidden{display:none}
+  .mvactions{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+  #mv-table.hide-cli .mv-col-cli{display:none}
+  /* Editor de líneas de recepción */
+  .reclines-head{display:grid;grid-template-columns:2fr .8fr 1fr 1.1fr 30px;gap:8px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);font-weight:700;padding:0 2px 4px}
+  .recline{display:grid;grid-template-columns:2fr .8fr 1fr 1.1fr 30px;gap:8px;align-items:center;margin-bottom:7px}
+  .recline .rc input,.recline .rc select{width:100%;font-size:13px;padding:8px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+  .recline .rc-del{width:30px;height:30px;padding:0;line-height:1}
+  /* Manifiesto (preview dentro del modal) */
+  .manifest{color:var(--ink);font-size:13px}
+  .manifest .mf-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid var(--primary);padding-bottom:12px;margin-bottom:16px}
+  .manifest .mf-brand{font-size:19px;font-weight:800;color:var(--primary)}
+  .manifest .mf-sub{font-size:12px;color:var(--ink-3);margin-top:2px}
+  .manifest .mf-id{text-align:right}
+  .manifest .mf-idn{font-family:"IBM Plex Mono",monospace;font-size:17px;font-weight:700}
+  .manifest .mf-st{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--primary);margin-top:2px}
+  .manifest .mf-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 22px;margin-bottom:14px}
+  .manifest .mf-grid>div{display:flex;justify-content:space-between;border-bottom:1px dotted var(--line);padding:4px 0}
+  .manifest .mf-grid span{color:var(--ink-3)}.manifest .mf-grid b{font-weight:700}
+  .manifest .mf-tbl{width:100%;border-collapse:collapse;margin-top:4px}
+  .manifest .mf-tbl th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);border-bottom:2px solid var(--primary);padding:6px 8px}
+  .manifest .mf-tbl td{padding:6px 8px;border-bottom:1px solid var(--line)}
+  .manifest .mf-tbl td.m{font-family:"IBM Plex Mono",monospace;font-weight:600}
+  .manifest .mf-tbl .r{text-align:right}
+  .manifest .mf-tbl tfoot td{border-top:2px solid var(--primary);border-bottom:none;padding-top:8px}
+  .manifest .mf-notes{margin-top:12px;font-size:12px;color:var(--ink-2);background:var(--surface-2);border-left:3px solid var(--primary);padding:8px 12px}
+  .manifest .mf-notes span{font-weight:700}
+  .manifest .mf-sign{display:flex;gap:36px;margin-top:34px}
+  .manifest .mf-sign>div{flex:1;text-align:center;font-size:11px;color:var(--ink-3)}
+  .manifest .mf-line{border-top:1px solid var(--ink);margin-bottom:6px;height:0}
+  /* Tabla de cotejo (esperado vs recibido) */
+  .cotejo-tbl{width:100%;border-collapse:collapse;font-size:13px}
+  .cotejo-tbl th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);border-bottom:1px solid var(--line);padding:7px 9px;white-space:nowrap}
+  .cotejo-tbl td{padding:7px 9px;border-bottom:1px solid var(--line)}
+  .cotejo-tbl td.num,.cotejo-tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .cotejo-in{font-size:13px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+  .btn{font-size:12.5px;font-weight:600;padding:9px 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);transition:transform .12s ease,box-shadow .12s ease,background .12s ease}
+  .btn:hover{background:var(--surface-2)}
+  .btn.pri{background:var(--aurora);color:#fff;border-color:transparent;box-shadow:0 8px 18px -8px rgba(14,165,165,.55)}
+  .btn.pri:hover{background:var(--aurora);transform:translateY(-1px);box-shadow:0 12px 24px -8px rgba(14,165,165,.65)}
+  .btn.danger{color:var(--crit);border-color:var(--crit-wash)}
+  .mini{font-size:11.5px;font-weight:600;padding:5px 10px;border-radius:7px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2)}
+  .mini:hover{background:var(--surface-2);color:var(--ink)}
+  .mini.danger{color:var(--crit)}
+
+  .locs{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:13px}
+  .locc{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:13px 15px;box-shadow:var(--shadow)}
+  .locc .code{font-family:"IBM Plex Mono";font-weight:700;font-size:15px}
+  .locc .zone{font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+  .occ{height:8px;background:var(--surface-2);border-radius:5px;overflow:hidden;margin-top:11px}
+  .occ i{display:block;height:100%;background:var(--primary);border-radius:5px}
+  .occ i.hi{background:var(--warn)} .occ i.full{background:var(--crit)}
+  .locc .u{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-3);margin-top:6px}
+
+  .opcard{display:flex;align-items:center;gap:14px;padding:15px 17px}
+  .opcard .oi{width:42px;height:42px;border-radius:11px;background:var(--primary-wash);color:var(--primary-ink);display:grid;place-items:center;font-family:"Sora",sans-serif;font-weight:800;font-size:16px}
+  .opcard .on{font-family:"Sora",sans-serif;font-weight:700;font-size:15px}
+  .opcard .om{font-size:12px;color:var(--ink-3)}
+
+  /* Drawer + modal */
+  .drawer,.modal{position:fixed;inset:0;background:rgba(10,16,20,.5);display:none;z-index:40}
+  .drawer.on,.modal.on{display:flex}
+  .drawer{align-items:stretch;justify-content:flex-end}
+  .drawer .panel{width:440px;max-width:94vw;background:var(--surface);border-left:1px solid var(--line);display:flex;flex-direction:column;box-shadow:-20px 0 60px -20px rgba(0,0,0,.5)}
+  .modal{align-items:center;justify-content:center}
+  .modal .panel{width:460px;max-width:94vw;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px -20px rgba(0,0,0,.5)}
+  .modal .panel.wide{width:780px}
+  .dh{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+  .dh h3{font-size:16px}
+  .db{padding:18px 20px;overflow-y:auto}
+  .x{margin-left:auto;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;width:34px;height:34px;font-size:16px;color:var(--ink-2)}
+  .kv{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line);font-size:13px}
+  .kv:last-child{border-bottom:0}.kv span{color:var(--ink-3)}.kv b{color:var(--ink)}
+  .muted{color:var(--ink-3);font-size:12.5px}
+  .sec-t{font-size:12px;font-weight:700;color:var(--ink-2);margin:0 0 8px;text-transform:uppercase;letter-spacing:.05em}
+  textarea,input.txt{width:100%;font-family:"IBM Plex Mono";font-size:12px;border:1px solid var(--line);border-radius:9px;padding:10px;background:var(--surface-2);color:var(--ink)}
+  input.txt{font-family:inherit;font-size:14px}
+  .form{display:flex;flex-direction:column;gap:13px}
+  .form .fld{display:flex;flex-direction:column;gap:5px}
+  .form .fld label{font-size:11.5px;font-weight:700;color:var(--ink-2);text-transform:uppercase;letter-spacing:.04em}
+  .form .fld select,.form .fld input{width:100%;font-family:inherit;font-size:14px;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:9px 11px}
+  .form .fld .hint{font-size:11.5px;color:var(--ink-3);font-weight:500}
+  .inp{font-family:inherit;font-size:14px;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:9px 11px}
+  .inpmini{width:64px;padding:5px 7px;font-size:12.5px}
+  .fld{display:flex;flex-direction:column;gap:5px}
+  .fld>span{font-size:11.5px;font-weight:700;color:var(--ink-2);text-transform:uppercase;letter-spacing:.04em}
+  .chipin{display:inline-flex;align-items:center;gap:5px;margin:4px 10px 4px 0;font-size:11.5px;font-weight:700;color:var(--ink-2)}
+  /* Copiloto de voz */
+  .voz-wrap{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:stretch}
+  @media(max-width:1000px){.voz-wrap{grid-template-columns:1fr}}
+  .voz-stage{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:34px 24px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:420px;text-align:center}
+  .voz-orb{width:150px;height:150px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,rgba(31,157,85,.16),rgba(31,157,85,.02));transition:transform .3s}
+  .voz-orb-core{width:96px;height:96px;border-radius:50%;background:linear-gradient(145deg,#1f9d55,#12683a);box-shadow:0 10px 34px rgba(31,157,85,.35);transition:transform .2s}
+  .voz-orb.listening{animation:vozpulse 1.4s ease-in-out infinite}
+  .voz-orb.thinking .voz-orb-core{animation:vozspin 1s linear infinite;background:linear-gradient(145deg,#c77700,#8a5300)}
+  .voz-orb.speaking .voz-orb-core{animation:vozpulse 0.7s ease-in-out infinite;background:linear-gradient(145deg,#2b7de0,#1a4f96)}
+  @keyframes vozpulse{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+  @keyframes vozspin{to{transform:rotate(360deg)}}
+  .voz-state{margin-top:20px;font-size:15px;font-weight:700;color:var(--ink-2)}
+  .voz-mic{margin-top:18px;width:66px;height:66px;border-radius:50%;border:none;background:var(--surface-2);border:1px solid var(--line);font-size:26px;cursor:pointer;transition:all .18s}
+  .voz-mic:hover{background:var(--surface)}
+  .voz-mic.on{background:#c0392b;color:#fff;border-color:#c0392b;box-shadow:0 6px 20px rgba(192,57,43,.4)}
+  .voz-live{margin-top:16px;min-height:22px;font-size:14px;color:var(--ink-3);font-style:italic;max-width:90%}
+  .voz-side{display:flex;flex-direction:column;gap:12px}
+  .voz-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .voz-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+  .voz-hint{font-size:12.5px;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;line-height:1.5}
+  .voz-convo{flex:1;overflow-y:auto;max-height:52vh;display:flex;flex-direction:column;gap:10px;padding-right:4px}
+  .voz-msg{padding:10px 13px;border-radius:12px;font-size:14px;line-height:1.45;max-width:92%}
+  .voz-msg.user{align-self:flex-end;background:var(--surface-2);border:1px solid var(--line)}
+  .voz-msg.ai{align-self:flex-start;background:rgba(31,157,85,.08);border:1px solid rgba(31,157,85,.2)}
+  .voz-msg .who{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);margin-bottom:3px}
+  .voz-act{margin-top:6px;font-size:12px;font-weight:700;color:#c77700}
+  .voz-act.done{color:var(--good,#1f9d55)}
+  .form .row2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+  .form .acts{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:6px}
+  .form .ferr{color:var(--crit);font-size:12.5px;font-weight:600;min-height:16px}
+  .card-actions{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+  /* Timeline de historial de orden */
+  .tl{list-style:none;margin:6px 0 0;padding:0}
+  .tl li{position:relative;padding:0 0 14px 20px;border-left:2px solid var(--line)}
+  .tl li:last-child{border-left-color:transparent;padding-bottom:0}
+  .tl li::before{content:"";position:absolute;left:-6px;top:2px;width:10px;height:10px;border-radius:50%;background:var(--primary);border:2px solid var(--surface)}
+  .tl .te{font-weight:700;font-size:13px;color:var(--ink)}
+  .tl .tw{font-size:11.5px;color:var(--ink-3);margin-top:1px}
+  .tl .td{font-size:12px;color:var(--ink-2);margin-top:2px}
+  td .rowacts{display:flex;gap:6px;justify-content:flex-end}
+  .tooltip{position:fixed;pointer-events:none;background:var(--ink);color:var(--surface);font-size:12px;padding:6px 10px;border-radius:7px;opacity:0;transition:opacity .12s;z-index:60;font-weight:600}
+  .empty{padding:24px;text-align:center;color:var(--ink-3);font-size:13px}
+  /* Utilidades genéricas (fuera de .form) usadas en modales de facturación */
+  .hint{font-size:11.5px;color:var(--ink-3);font-weight:500}
+  .ferr{color:var(--crit);font-size:12.5px;font-weight:600}
+  .pill{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--surface-3);color:var(--ink-2);vertical-align:middle}
+  .pill.ok{background:var(--good-wash);color:var(--good)}
+  .pill.warn{background:var(--warn-wash);color:var(--warn)}
+  .pill.neutral{background:var(--surface-3);color:var(--ink-2)}
+  .apprv-box{margin-top:16px;padding:12px 16px;border-radius:11px}
+  .apprv-box.ok{background:var(--good-wash);border:1px solid var(--good)}
+  .apprv-box.warn{background:var(--warn-wash);border:1px solid var(--warn)}
+  .apprv-box .apprv-t{font-weight:700;font-size:13px;margin-bottom:3px}
+  /* Dashboard de facturación */
+  .billtabs{display:inline-flex;gap:3px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:3px;margin-bottom:16px}
+  .segbtn{font-size:12.5px;font-weight:600;padding:7px 16px;border-radius:7px;border:0;background:transparent;color:var(--ink-2)}
+  .segbtn.on{background:var(--surface);color:var(--primary-ink);box-shadow:var(--shadow);font-weight:700}
+  .billview{display:none} .billview.on{display:block}
+  .dbar-row{display:grid;grid-template-columns:150px 1fr 160px;align-items:center;gap:12px;margin-bottom:9px}
+  .dbar-row .dcap{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dbar-row .dcap .sw{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+  .dbar-track{height:22px;background:var(--surface-2);border-radius:6px;overflow:hidden}
+  .dbar-fill{height:100%;border-radius:6px;min-width:3px;transition:width .3s}
+  .dbar-val{font-size:12.5px;text-align:right;color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+  .dbar-val .pct{color:var(--ink-3);font-weight:500;margin-left:6px}
+  .stackbar{display:flex;height:30px;border-radius:8px;overflow:hidden;background:var(--surface-2);gap:2px;margin-bottom:12px}
+  .stackseg{height:100%;min-width:2px}
+  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:4px}
+  .legend-item{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2)}
+  .legend-item .sw{width:11px;height:11px;border-radius:3px}
+  table.matrix{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.matrix th,table.matrix td{padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  table.matrix thead th{text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)}
+  table.matrix thead th:first-child,table.matrix tbody td:first-child,table.matrix tfoot td:first-child{text-align:left}
+  table.matrix td.num,table.matrix th.num{text-align:right;font-variant-numeric:tabular-nums}
+  table.matrix thead th .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  table.matrix tfoot td{font-weight:700;border-top:2px solid var(--line-2);border-bottom:0}
+  table.matrix tbody tr:hover{background:var(--surface-2)}
+  table.matrix td.z{color:var(--ink-3)}
+  .udelta{font-size:10px;font-weight:700;margin-top:2px;white-space:nowrap}
+  .udelta.up{color:var(--good)} .udelta.down{color:var(--crit)} .udelta.flat,.udelta.none{color:var(--ink-3)}
+  /* Métricas operativas del dashboard (24h/7d/30d/90d con comparativo) */
+  .opmetrics{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:16px 18px;margin-bottom:18px}
+  .opm-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .metricrow{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+  @media(max-width:1000px){.metricrow{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:520px){.metricrow{grid-template-columns:1fr}}
+  .mtile{border:1px solid var(--line);border-radius:11px;padding:12px 14px;background:var(--surface-2)}
+  .mtile .ml{font-size:10.5px;color:var(--ink-3);font-weight:700;text-transform:uppercase;letter-spacing:.04em;line-height:1.3;min-height:26px}
+  .mtile .mv{font-family:"Sora",sans-serif;font-weight:800;font-size:26px;margin-top:8px;line-height:1;font-variant-numeric:tabular-nums}
+  .mtile .mdelta{display:flex;align-items:center;gap:6px;margin-top:9px;font-size:11.5px;font-weight:600}
+  .mtile .mdelta .chg{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px}
+  .mtile .mdelta .chg.up{background:var(--good-wash);color:var(--good)}
+  .mtile .mdelta .chg.down{background:var(--crit-wash);color:var(--crit)}
+  .mtile .mdelta .chg.flat{background:var(--surface-3);color:var(--ink-3)}
+  .mtile .mdelta .chg.none{background:var(--surface-3);color:var(--ink-3)}
+  .mtile .mdelta .prev{color:var(--ink-3);font-weight:500}
+  /* Chat interno */
+  .chatwrap{display:grid;grid-template-columns:320px 1fr;gap:16px;height:calc(100vh - 150px);min-height:460px}
+  .chatwrap.solo{grid-template-columns:1fr;max-width:820px}
+  .chat-inbox-pane{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+  .chat-inbox-head{padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;font-size:13px;display:flex;justify-content:space-between;align-items:center}
+  .chat-inbox{overflow-y:auto;flex:1}
+  .chat-irow{padding:12px 16px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;flex-direction:column;gap:3px}
+  .chat-irow:hover{background:var(--surface-2)}
+  .chat-irow.on{background:var(--primary-wash)}
+  .chat-irow .cli{font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .chat-irow .prev{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chat-irow .who{font-size:11px;color:var(--ink-3)}
+  .chat-unread{background:var(--crit);color:#fff;font-size:10px;font-weight:700;border-radius:999px;padding:1px 7px;min-width:18px;text-align:center}
+  .chat-thread-pane{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+  .chat-thread-head{padding:13px 16px;border-bottom:1px solid var(--line)}
+  .chat-th-title{font-weight:700;font-size:14px}
+  .chat-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;background:var(--bg)}
+  .chat-empty{margin:auto;color:var(--ink-3);font-size:13px;text-align:center}
+  .cbub{max-width:74%;padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.45;box-shadow:var(--shadow);word-wrap:break-word;white-space:pre-wrap}
+  .cbub .cmeta{font-size:10.5px;font-weight:700;margin-bottom:3px;opacity:.85}
+  .cbub .ctime{font-size:10px;color:var(--ink-3);margin-top:4px;text-align:right}
+  .cbub.mine{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:4px}
+  .cbub.mine .ctime{color:rgba(255,255,255,.8)}
+  .cbub.theirs{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .chat-composer{display:flex;gap:10px;padding:12px 14px;border-top:1px solid var(--line);align-items:flex-end}
+  .chat-composer textarea{flex:1;resize:none;max-height:120px;font-family:inherit;font-size:13px;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  @media(max-width:820px){.chatwrap{grid-template-columns:1fr;height:auto}.chat-inbox-pane{max-height:240px}}
+  /* Barra de anuncios de plataforma */
+  .ann-bar{display:flex;align-items:center;gap:12px;padding:11px 20px;background:var(--aurora);color:#fff;position:sticky;top:0;z-index:12;box-shadow:0 6px 18px -8px rgba(14,165,165,.5)}
+  .ann-bar .ann-ic{font-size:16px;flex:0 0 auto}
+  .ann-bar .ann-text{font-weight:600;font-size:13.5px;flex:1;min-width:0}
+  .ann-bar .ann-link{flex:0 0 auto;background:#fff;color:var(--primary-ink);font-weight:700;font-size:12.5px;border:0;border-radius:8px;padding:7px 14px}
+  .ann-bar .ann-link:hover{opacity:.92}
+  .ann-bar .ann-x{flex:0 0 auto;background:transparent;border:0;color:rgba(255,255,255,.85);font-size:15px;padding:4px 8px;border-radius:6px}
+  .ann-bar .ann-x:hover{background:rgba(255,255,255,.15);color:#fff}
+  .ann-clickrow{display:grid;grid-template-columns:1.3fr .8fr 1fr .9fr;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .ann-clickrow.head{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);font-weight:700}
+  .rolechip{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--surface-3);color:var(--ink-2)}
+  .fgrid{display:flex;flex-direction:column;gap:5px}
+  .fgrid label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--ink-2)}
+  .fgrid input{font-size:13px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);color:var(--ink)}
+  #ei-tbl input{font-size:13px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);width:100%}
+  #ei-tbl input.num{text-align:right;font-variant-numeric:tabular-nums}
+  .sendbox{margin-top:16px;padding:14px 16px;border:1px solid var(--line);border-radius:11px;background:var(--surface-2)}
+  .sendbox-t,.mailog-t{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);font-weight:700;margin-bottom:9px}
+  .sendrow{display:flex;gap:9px;align-items:center}
+  .sendrow input{flex:1;font-size:13px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)}
+  .sendbox .hint{margin-top:8px}
+  .maillog{margin-top:16px;padding:12px 16px;border:1px solid var(--line);border-radius:11px;background:var(--surface-2)}
+  .mailog-r{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px dashed var(--line);font-size:12.5px;color:var(--ink-2)}
+  .mailog-r:last-child{border-bottom:0}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(16px);opacity:0;transition:.25s;z-index:70}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast .i{padding:12px 18px;border-radius:11px;font-weight:600;font-size:13.5px;box-shadow:0 10px 30px rgba(0,0,0,.4);background:var(--good);color:#fff}
+
+  .loginov{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:100;
+    background:
+      radial-gradient(760px 520px at 82% 8%, var(--glow-violet), transparent 62%),
+      radial-gradient(760px 520px at 12% 96%, var(--glow-teal), transparent 60%),
+      var(--bg);}
+  .loginov.off{display:none}
+  .loginov::after{content:"";position:absolute;top:-1px;left:0;right:0;height:4px;background:var(--aurora)}
+  .loginbox{width:360px;max-width:92vw;background:color-mix(in srgb,var(--surface) 88%, transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lg);padding:28px}
+  .loginbox h1{font-family:"Sora",system-ui,sans-serif;font-size:23px;margin:0 0 4px;letter-spacing:-.02em}
+  .loginbox p{color:var(--ink-3);font-size:13px;margin:0 0 18px}
+  .loginbox label{font-size:12.5px;color:var(--ink-2);font-weight:600;display:block;margin:0 0 6px}
+  .loginbox input{width:100%;font-size:15px;padding:12px;border:1px solid var(--line-2);border-radius:11px;background:var(--surface);color:var(--ink);margin-bottom:12px}
+  .loginbox .b{width:100%;border:0;border-radius:12px;background:var(--aurora);color:#fff;font-weight:700;font-size:15px;padding:13px;box-shadow:0 10px 22px -10px rgba(14,165,165,.6)}
+  .loginbox .hint{margin-top:14px;font-size:12px;color:var(--ink-3)}
+  .loginbox .err{color:var(--crit);font-size:12.5px;margin-bottom:10px;min-height:16px}
+  .loginbox .ok{color:var(--good,#127a3d);background:var(--good-wash,#e7f6ec);border:1px solid var(--good,#127a3d);border-radius:9px;padding:9px 11px;font-size:12.5px;margin-bottom:12px}
+  .loginbox select{width:100%;font-size:13.5px;padding:12px;border:1px solid var(--line-2);border-radius:11px;background:var(--surface);color:var(--ink);margin-bottom:12px}
+  .loginbox .lgrow{margin-top:-4px;margin-bottom:2px;text-align:right}
+  .lg-link{background:none;border:0;color:var(--primary);font-weight:600;font-size:12px;cursor:pointer;padding:0;font-family:inherit}
+  .lg-link:hover{text-decoration:underline}
+  .lgview h1{font-family:"Sora",sans-serif;font-size:22px;margin:0 0 4px}
+  /* Aviso de verificación de email dentro del panel */
+  .verifybar{background:var(--warn-wash,#fff8e6);border-bottom:1px solid var(--warn,#c78a00);color:var(--ink);padding:9px 16px;font-size:13px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .verifybar.off{display:none}
+  .verifybar .vb-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .verifybar .vb-btn{background:var(--primary);color:#fff;border:0;border-radius:7px;padding:5px 11px;font-size:12px;font-weight:600;cursor:pointer}
+  .verifybar .vb-x{background:none;border:0;color:var(--ink-2);cursor:pointer;font-size:15px;line-height:1}
+  /* Plan (PLG) */
+  .plan-hero{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .plan-hero .nm{font-family:"Sora",sans-serif;font-weight:800;font-size:26px}
+  .plan-hero .pr{color:var(--ink-2);font-size:14px}
+  .plan-badge{display:inline-flex;align-items:center;gap:6px;background:var(--primary-wash);color:var(--primary-ink);padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700}
+  .meter{margin:12px 0}
+  .meter .lbl{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px}
+  .meter .lbl b{font-weight:600}
+  .meter .track{height:8px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+  .meter .fill{height:100%;border-radius:999px;background:var(--primary);transition:width .3s}
+  .meter .fill.warn{background:var(--warn,#c78a00)}
+  .meter .fill.crit{background:var(--crit,#c0392b)}
+  .plan-trialbar{background:var(--primary-wash);border:1px solid var(--primary);color:var(--primary-ink);border-radius:12px;padding:13px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:14px}
+  .plan-trialbar b{font-weight:700}
+  .featchips{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+  .featchip{font-size:11.5px;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:3px 9px}
+  .tiers{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  @media (max-width:860px){.tiers{grid-template-columns:1fr 1fr}}
+  @media (max-width:480px){.tiers{grid-template-columns:1fr}}
+  .ptier{border:1px solid var(--line);border-radius:11px;padding:16px;display:flex;flex-direction:column;gap:10px;background:var(--surface)}
+  .ptier.cur{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+  .ptier .tn{font-family:"Sora",sans-serif;font-weight:700;font-size:16px}
+  .ptier .tp{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--ink-2)}
+  .ptier ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px}
+  .ptier li{font-size:12.5px;display:flex;gap:7px}
+  .ptier li::before{content:"›";color:var(--primary);font-weight:700}
+  .ptier .tbtn{margin-top:auto;border:1px solid var(--line-2);background:var(--surface);color:var(--ink);border-radius:9px;padding:8px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .ptier .tbtn.pri{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .ptier .tbtn.cur{opacity:.6;cursor:default}
+  /* Onboarding */
+  .onb{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--primary);border-radius:14px;box-shadow:var(--shadow);padding:20px 22px;margin-bottom:16px}
+  .onb.done{border-left-color:var(--good,#127a3d)}
+  .onb-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .onb-head h3{font-family:"Sora",sans-serif;font-weight:800;font-size:19px;margin:0}
+  .onb-head .sp{flex:1}
+  .onb-prog{display:flex;align-items:center;gap:10px;min-width:180px}
+  .onb-prog .track{flex:1;height:8px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+  .onb-prog .fill{height:100%;background:var(--primary);border-radius:999px;transition:width .35s}
+  .onb-prog .pct{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-2)}
+  .onb-steps{display:flex;flex-direction:column;gap:2px;margin-top:14px}
+  .onb-step{display:flex;align-items:center;gap:12px;padding:9px 4px;border-top:1px solid var(--line)}
+  .onb-step:first-child{border-top:0}
+  .onb-tick{width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;border:1.5px solid var(--line-2);color:var(--ink-3)}
+  .onb-tick.on{background:var(--good,#127a3d);border-color:var(--good,#127a3d);color:#fff}
+  .onb-step .lbl{font-size:14px}
+  .onb-step.done .lbl{color:var(--ink-2);text-decoration:line-through}
+  .onb-step .sp{flex:1}
+  .onb-step .go{border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:8px;padding:5px 12px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .onb-actions{margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .onb-sample{border:1px solid var(--line-2);background:var(--surface);color:var(--ink);border-radius:9px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer}
+  .onb-x{background:none;border:0;color:var(--ink-3);cursor:pointer;font-size:12.5px}
+  .onb-celebrate{font-size:14px;color:var(--good,#127a3d);font-weight:600}
+  /* Matriz de empaquetado */
+  .pkg{border-collapse:separate;border-spacing:0;width:100%;min-width:640px}
+  .pkg th,.pkg td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:center;vertical-align:middle}
+  .pkg thead th{background:var(--surface-2);border-bottom:2px solid var(--line-2);position:sticky;top:0}
+  .pkg .rowlbl{text-align:left;font-size:13.5px}
+  .pkg .rowlbl .d{font-size:11.5px;color:var(--ink-3);font-weight:400}
+  .pkg .secrow td{background:var(--sunken,var(--surface-2));font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);text-align:left;font-weight:600}
+  .pkg .pname{width:100%;border:1px solid var(--line-2);border-radius:7px;padding:6px 8px;font-weight:700;font-family:"Sora",sans-serif;font-size:14px;text-align:center;background:var(--surface);color:var(--ink)}
+  .pkg .pricegrid{display:grid;grid-template-columns:auto 1fr;gap:4px 6px;align-items:center;margin-top:6px}
+  .pkg .pricegrid label{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--ink-3);text-align:right}
+  .pkg .pprice{width:100%;border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:11.5px;text-align:right;background:var(--surface);color:var(--ink);font-family:"IBM Plex Mono",monospace}
+  .pkg .pcount{font-size:10.5px;color:var(--ink-3);margin-top:4px}
+  .pkg .lim{width:74px;border:1px solid var(--line-2);border-radius:6px;padding:6px;text-align:center;background:var(--surface);color:var(--ink);font-family:"IBM Plex Mono",monospace}
+  .pkg input[type=checkbox]{width:18px;height:18px;accent-color:var(--primary);cursor:pointer}
+  .pkg .core{color:var(--ink-3);font-size:11px}
+  #login-topbar{display:none}
+</style>
+</head>
+<body>
+
+
+<div class="layout">
+  <aside class="side">
+    <div class="brand"><div class="brandlogo" id="brandLogo" title="Ninja WMS"><svg class="brandlogo-svg" viewBox="0 0 208 46" role="img" aria-label="Ninja WMS" xmlns="http://www.w3.org/2000/svg"><text x="0" y="35" font-family="Sora, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.5"><tspan fill="var(--primary)">Ninja</tspan><tspan fill="var(--ink)" dx="8">WMS</tspan></text></svg></div></div>
+    <button class="nav on" data-pg="dashboard"><span class="ic">◧</span> Dashboard</button>
+    <button class="nav" data-pg="copilot"><span class="ic">✨</span> Copiloto</button>
+    <button class="nav" data-pg="voz"><span class="ic">🎧</span> Copiloto de voz</button>
+
+    <div class="navcat" data-cat="workflows">
+      <button class="navcat-h" data-cat-toggle="workflows"><span class="ic">⚙</span> Workflows <span class="navcat-arrow">▾</span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="orders"><span class="ic">🗎</span> Órdenes</button>
+        <button class="nav sub" data-pg="pickqueue"><span class="ic">▶</span> Cola de preparación</button>
+        <button class="nav sub" data-pg="inbound"><span class="ic">▼</span> Recepción</button>
+        <button class="nav sub" data-pg="returns"><span class="ic">↩</span> Devoluciones</button>
+        <button class="nav sub" data-pg="putaway"><span class="ic">⇲</span> Almacenado</button>
+        <button class="nav sub" data-pg="assembly"><span class="ic">⊞</span> Armado de kit</button>
+        <button class="nav sub" data-pg="movements"><span class="ic">↹</span> Movimientos</button>
+        <button class="nav sub" data-pg="counts"><span class="ic">◎</span> Conteo cíclico <span class="badge" id="nav-counts"></span></button>
+      </div>
+    </div>
+
+    <div class="navcat" data-cat="invloc">
+      <button class="navcat-h" data-cat-toggle="invloc"><span class="ic">▦</span> Inventario y ubicaciones <span class="navcat-arrow">▾</span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="inventory"><span class="ic">▦</span> Inventario</button>
+        <button class="nav sub" data-pg="products"><span class="ic">◲</span> Productos</button>
+        <button class="nav sub" data-pg="packaging"><span class="ic">▧</span> Embalajes</button>
+        <button class="nav sub" data-pg="locations"><span class="ic">▤</span> Ubicaciones</button>
+      </div>
+    </div>
+
+    <button class="nav" data-pg="reports"><span class="ic">▧</span> Reportes</button>
+    <button class="nav" data-pg="billing"><span class="ic">$</span> Facturación</button>
+    <button class="nav" data-pg="costos"><span class="ic">📊</span> Rentabilidad</button>
+    <button class="nav" data-pg="chat"><span class="ic">💬</span> Mensajes <span class="badge" id="nav-chat"></span></button>
+    <button class="nav" data-pg="voicechannel"><span class="ic">🎙️</span> Canal de voz</button>
+    <button class="nav" data-pg="webhooks"><span class="ic">🔗</span> Webhooks</button>
+    <div class="navgroup" data-admin>Administración</div>
+    <button class="nav" data-pg="plan"><span class="ic">◆</span> Plan</button>
+    <button class="nav" data-pg="activity"><span class="ic">📋</span> Actividad</button>
+    <button class="nav" data-pg="aiaudit"><span class="ic">🧠</span> Auditoría IA</button>
+    <button class="nav" data-pg="asignaciones"><span class="ic">🧑‍🏭</span> Asignaciones</button>
+    <button class="nav" data-pg="agente"><span class="ic">🛰️</span> Reglas <span class="badge" id="nav-agente"></span></button>
+    <button class="nav" data-pg="branding"><span class="ic">🎨</span> Marca</button>
+    <button class="nav" data-pg="clients"><span class="ic">🏢</span> Clientes</button>
+    <button class="nav" data-pg="users"><span class="ic">◍</span> Usuarios</button>
+    <button class="nav" data-pg="pkgmatrix" data-platform><span class="ic">▦</span> Empaquetado</button>
+    <button class="nav" data-pg="operations" data-platform><span class="ic">◈</span> Operaciones</button>
+    <button class="nav" data-pg="usage" data-platform><span class="ic">📈</span> Uso</button>
+    <button class="nav" data-pg="announcements" data-platform><span class="ic">📣</span> Anuncios</button>
+    <div class="spacer"></div>
+    <button class="navlearn" id="nt-navcenter" title="Tutoriales y videos de cada sección"><span class="ic">🎓</span> Centro de aprendizaje <span class="cnt"></span></button>
+    <div class="muted" style="padding:8px 11px 6px;font-size:11px">Vista previa · datos de demostración</div>
+    <div class="poweredby" id="poweredby">
+      <span class="pb-label">Tecnología</span>
+      <span class="pb-chip"><img src="brand/ninjahubs.png" alt="Ninja Hubs"></span>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="ann-bar" id="ann-bar" style="display:none">
+      <span class="ann-ic">📣</span>
+      <span class="ann-text" id="ann-text"></span>
+      <button class="ann-link" id="ann-link">Ver más</button>
+      <button class="ann-x" id="ann-x" title="Ocultar">✕</button>
+    </div>
+    <div class="verifybar off" id="verifybar">
+      <span>✉️ Verifica tu email para asegurar tu cuenta. Te enviamos un enlace a <b id="vb-email"></b>.</span>
+      <div class="vb-actions">
+        <span class="hint" id="vb-status" style="font-size:12px"></span>
+        <button class="vb-btn" id="vb-devverify" hidden title="Solo en local: verifica sin salir de aquí">Verificar ahora</button>
+        <button class="vb-btn" id="vb-resend">Reenviar</button>
+        <button class="vb-x" id="vb-x" title="Ocultar">✕</button>
+      </div>
+    </div>
+    <div class="topbar">
+      <div><h2 id="pg-title">Dashboard</h2><div class="sub" id="pg-sub">Resumen operativo</div></div>
+      <button class="nt-topbtn hide" id="nt-topbtn" title="Tutorial guiado de esta sección"><span class="pl">▶</span><span class="lbl">Tutorial</span></button>
+      <div class="sp"></div>
+      <div class="gsearch"><span class="i">⌕</span><input id="gq" placeholder="Buscar SKU, orden, ubicación…" autocomplete="off"><div class="res" id="gres"></div></div>
+      <div class="sel" id="sess-wrap"><label>Sesión</label>
+        <select id="session">
+          <option value="root">Ninja Hubs · Plataforma</option>
+          <option value="ana">Ana · Admin (Ninja Hubs)</option>
+          <option value="nora">Nora · Admin (Andes)</option>
+          <option value="carla">Carla · Cliente (ACME)</option>
+        </select>
+      </div>
+      <div class="sel" id="op-wrap"><label>Operación</label><select id="op"></select></div>
+      <div class="sel" id="seller-wrap"><label>Cliente</label><select id="seller"></select></div>
+      <div class="who"><div><div class="nm" id="who-nm">—</div><div class="rl" id="who-rl">—</div></div><span class="av" id="who-av">A</span></div>
+      <button class="btn" id="btn-mypass" title="Cambiar mi contraseña">🔑</button>
+      <button class="btn" id="btn-logout" title="Cerrar sesión">Salir</button>
+    </div>
+
+    <div class="content">
+      <!-- Dashboard -->
+      <section class="page on" data-pg="dashboard">
+        <div id="onboard-card"></div>
+        <div class="opmetrics" id="opmetrics">
+          <div class="opm-head">
+            <div><h3 style="margin:0">Actividad operativa</h3><span class="muted" id="opm-sub">Últimas 24 horas · comparado con el período anterior</span></div>
+            <div class="sp" style="flex:1"></div>
+            <div class="billtabs" id="opm-toggle" style="margin:0">
+              <button class="segbtn on" data-mw="24h">24 h</button>
+              <button class="segbtn" data-mw="7d">7 días</button>
+              <button class="segbtn" data-mw="30d">30 días</button>
+              <button class="segbtn" data-mw="90d">90 días</button>
+              <button class="segbtn" data-mw="custom">Personalizado</button>
+            </div>
+          </div>
+          <div id="opm-range" class="hidden" style="display:flex;gap:8px;align-items:flex-end;margin:0 0 12px;flex-wrap:wrap">
+            <div class="fld" style="margin:0"><label>Desde</label><input id="opm-from" type="date"></div>
+            <div class="fld" style="margin:0"><label>Hasta</label><input id="opm-to" type="date"></div>
+            <button class="btn pri" id="opm-apply" style="padding:8px 14px">Aplicar</button>
+          </div>
+          <div class="metricrow" id="opm-tiles"></div>
+        </div>
+        <div class="kpis" id="kpis"></div>
+        <div class="grid2">
+          <div class="card"><div class="h"><h3>Unidades por zona</h3><div class="sp"></div><span class="muted" id="zone-total"></span></div><div class="b"><div class="chart" id="zone-chart"></div></div></div>
+          <div class="card"><div class="h"><h3>Órdenes por estado</h3></div><div class="b"><div class="chart" id="order-chart"></div></div></div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="h"><h3>Actividad reciente</h3><div class="sp"></div><span class="muted">Ledger inmutable</span></div>
+          <div class="tablewrap"><table><thead><tr><th>Movimiento</th><th>SKU</th><th>Ubicación</th><th>Usuario</th><th style="text-align:right">Cantidad</th></tr></thead><tbody id="activity"></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- Copiloto del WMS -->
+      <section class="page" data-pg="copilot">
+        <div class="card" style="margin-bottom:14px">
+          <div class="h"><h3>✨ Copiloto · qué necesita tu atención</h3><div class="sp" style="flex:1"></div><button class="btn" id="cop-refresh" style="padding:6px 12px">Actualizar</button></div>
+          <div class="b" id="cop-insights"><div class="muted">Analizando tu operación…</div></div>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Pregúntale a tu WMS</h3><div class="sp" style="flex:1"></div><span id="cop-ai-status" class="muted" style="display:flex;align-items:center;gap:8px">Respuestas con datos en vivo</span></div>
+          <div class="b" style="display:flex;flex-direction:column;height:62vh;min-height:380px">
+            <div id="cop-answer" style="flex:1;overflow-y:auto;padding-top:2px"></div>
+            <div id="cop-chips" style="display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 8px"></div>
+            <div id="cop-settings" style="display:none;margin-bottom:8px;align-items:center;gap:8px;font-size:12px" class="muted"></div>
+            <div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:10px">
+              <input id="cop-q" placeholder="Escribe tu pregunta…  Ej: ¿qué SKUs están por quebrar stock?" style="flex:1;padding:12px 14px;border:1px solid var(--line);border-radius:22px;font-size:14px;background:var(--surface-2)">
+              <button class="btn pri" id="cop-ask" style="padding:11px 18px;border-radius:22px">Enviar</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Vista consolidada de TODOS los clientes (filtro "Todos los clientes") -->
+      <section class="page" data-pg="multicliente">
+        <div class="toolbar">
+          <span class="muted">Todos tus clientes en una pantalla — operación y negocio. Haz clic en un cliente para ver su detalle.</span>
+          <div class="sp" style="flex:1"></div>
+          <input type="month" id="mc-month" class="inp" style="padding:7px 10px" />
+          <button class="btn" id="mc-refresh" style="padding:8px 14px">Actualizar</button>
+        </div>
+        <div class="kpis" id="mc-kpis"></div>
+        <div class="card">
+          <div class="h"><h3>Clientes de la operación</h3><div class="sp" style="flex:1"></div><span class="muted" id="mc-sub"></span></div>
+          <div class="tablewrap"><table class="matrix" id="mc-table">
+            <thead><tr>
+              <th data-mcsort="nombre">Cliente</th>
+              <th class="num" data-mcsort="ordenesAbiertas">Órdenes abiertas</th>
+              <th class="num" data-mcsort="enProceso">En proceso</th>
+              <th class="num" data-mcsort="porDespachar">Por despachar</th>
+              <th class="num" data-mcsort="enRiesgo">En riesgo</th>
+              <th class="num" data-mcsort="recepcionesPendientes">Recep. pend.</th>
+              <th class="num" data-mcsort="quiebres">Quiebres</th>
+              <th class="num" data-mcsort="stockOnHand">Stock</th>
+              <th class="num" data-mcsort="facturacionMes">Facturación mes</th>
+            </tr></thead>
+            <tbody id="mc-body"></tbody>
+            <tfoot id="mc-foot"></tfoot>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- Copiloto de voz: conversación natural manos libres -->
+      <section class="page" data-pg="voz">
+        <div class="voz-wrap">
+          <div class="voz-stage">
+            <div class="voz-orb" id="voz-orb"><div class="voz-orb-core"></div></div>
+            <div class="voz-state" id="voz-state">Toca para hablar con tu operación</div>
+            <button class="voz-mic" id="voz-mic" title="Iniciar / detener conversación">🎙️</button>
+            <div class="voz-live" id="voz-live"></div>
+          </div>
+          <div class="voz-side">
+            <div class="voz-controls">
+              <div class="billtabs" id="voz-mode" style="margin:0">
+                <button class="segbtn on" data-vmode="confirm">Confirmar acciones</button>
+                <button class="segbtn" data-vmode="direct">Ejecución directa</button>
+              </div>
+              <label class="voz-toggle"><input type="checkbox" id="voz-handsfree" checked> Manos libres</label>
+              <label class="voz-toggle"><input type="checkbox" id="voz-speak" checked> Voz de respuesta</label>
+              <button class="btn" id="voz-clear" style="padding:7px 12px">Reiniciar conversación</button>
+            </div>
+            <div class="voz-hint" id="voz-hint">
+              Habla natural: <i>"¿cómo viene la operación hoy?"</i>, <i>"despacha las órdenes listas"</i>, <i>"mantén el equipo balanceado solo"</i>, <i>"que nadie quede ocioso"</i>. La IA te responde por voz y te pregunta de vuelta cuando necesita una directriz.
+            </div>
+            <div class="voz-convo" id="voz-convo"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Inventario -->
+      <section class="page" data-pg="inventory">
+        <div class="toolbar">
+          <div class="search"><span class="i">⌕</span><input id="inv-q" placeholder="Buscar SKU o ubicación…"></div>
+          <div id="inv-views" style="display:flex;gap:6px"></div>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn pri hidden" id="inv-move">⇄ Guardar / mover</button>
+          <button class="btn" id="inv-export">Exportar</button>
+          <span class="muted" id="inv-count"></span>
+        </div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead id="inv-head"></thead>
+          <tbody id="inv-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Órdenes -->
+      <section class="page" data-pg="orders">
+        <div class="toolbar">
+          <div class="filters" id="ord-filters"></div>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn hidden" id="ord-reserve-all">⚡ Reserva masiva</button>
+          <button class="btn hidden" id="ord-import">⇪ Carga masiva</button>
+          <button class="btn pri hidden" id="ord-new">＋ Nueva orden</button>
+          <button class="btn" id="ord-export">Exportar</button>
+        </div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th data-tk="orders" data-sk="orden">Orden</th><th data-tk="orders" data-sk="fecha">Fecha</th><th data-tk="orders" data-sk="canal">Canal</th><th data-tk="orders" data-sk="tipo">Tipo</th><th data-tk="orders" data-sk="lineas">Líneas</th><th data-tk="orders" data-sk="estado">Estado</th><th data-action></th></tr></thead>
+          <tbody id="ord-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Embalajes (insumos, nivel bodega) -->
+      <section class="page" data-pg="packaging">
+        <div class="toolbar"><div class="sp" style="flex:1"></div><button class="btn pri hidden" id="pkg-new">＋ Nuevo insumo</button></div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th>SKU</th><th>EAN</th><th>Nombre</th><th style="text-align:right">Precio</th><th style="text-align:right">Saldo</th><th>Estado</th><th data-action></th></tr></thead>
+          <tbody id="pkg-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Cola de preparación (picking en orden forzado) -->
+      <section class="page" data-pg="pickqueue">
+        <div class="card"><div class="b" id="pq-body"></div></div>
+      </section>
+
+      <!-- Recepción -->
+      <section class="page" data-pg="inbound">
+        <div class="toolbar"><div class="filters" id="inb-filters"></div><div class="sp" style="flex:1"></div><button class="btn hidden" id="inb-import">⇪ Carga masiva</button><button class="btn pri hidden" id="inb-new">＋ Nueva orden de recepción</button></div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th data-tk="inbound" data-sk="orden">Orden</th><th data-tk="inbound" data-sk="prov">Proveedor</th><th data-tk="inbound" data-sk="ref">Referencia</th><th data-tk="inbound" data-sk="fecha">Fecha</th><th>Ubicación</th><th data-tk="inbound" data-sk="lineas">Líneas</th><th data-tk="inbound" data-sk="estado">Estado</th><th style="text-align:right">Unidades</th><th data-action></th></tr></thead>
+          <tbody id="inb-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Devoluciones (logística reversa) -->
+      <section class="page" data-pg="returns">
+        <div class="toolbar"><span class="muted">Devoluciones enlazadas a la orden de salida. En el QA se dispone cada unidad a stock, merma o cuarentena.</span><div class="sp" style="flex:1"></div><button class="btn pri hidden" id="ret-new">＋ Nueva devolución</button></div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th data-tk="returns" data-sk="dev">Devolución</th><th data-tk="returns" data-sk="orden">Orden original</th><th data-tk="returns" data-sk="fecha">Fecha</th><th data-tk="returns" data-sk="lineas">Líneas</th><th>Dispuesto (stock/merma/cuar.)</th><th data-tk="returns" data-sk="estado">Estado</th><th data-action></th></tr></thead>
+          <tbody id="ret-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Ubicaciones -->
+      <section class="page" data-pg="locations">
+        <div class="toolbar"><span class="muted">Ocupación de la bodega por ubicación.</span><div class="sp" style="flex:1"></div><button class="btn pri hidden" id="loc-new">＋ Nueva ubicación</button></div>
+        <div class="locs" id="loc-grid"></div>
+      </section>
+
+      <!-- Productos (mantenedor de SKUs + kits) -->
+      <section class="page" data-pg="products">
+        <div class="toolbar">
+          <div class="search"><span class="i">⌕</span><input id="pr-q" placeholder="Buscar SKU o descripción…"></div>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn" id="pr-export">Exportar</button>
+          <button class="btn hidden" id="pr-import">⇪ Carga masiva</button>
+          <button class="btn" id="pr-log">Historial</button>
+          <button class="btn pri hidden" id="pr-new">＋ Nuevo producto</button>
+        </div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th>SKU</th><th>Descripción</th><th>Tipo</th><th>EAN</th><th>Estado</th><th data-action></th></tr></thead>
+          <tbody id="pr-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Almacenado (putaway asistido) -->
+      <section class="page" data-pg="putaway">
+        <div class="toolbar"><span class="muted">Stock recibido en zona de recepción, pendiente de guardar en almacenaje. El destino viene sugerido automáticamente.</span><div class="sp" style="flex:1"></div><span class="muted" id="pw-count"></span></div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th>SKU</th><th>Descripción</th><th>Lote / Vence</th><th>Recepción</th><th style="text-align:right">Por guardar</th><th>Destino sugerido</th><th data-action></th></tr></thead>
+          <tbody id="pw-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Armado de kit -->
+      <section class="page" data-pg="assembly">
+        <div class="toolbar"><span class="muted">Ensambla kits de stock propio. Al armar, tú eliges de qué ubicación sale cada componente.</span></div>
+        <div class="card" style="margin-bottom:16px"><div class="tablewrap"><table>
+          <thead><tr><th>Kit</th><th>Descripción</th><th>Receta (componentes)</th><th style="text-align:right">Stock kit</th><th data-action></th></tr></thead>
+          <tbody id="asm-kits"></tbody>
+        </table></div></div>
+        <div class="toolbar"><span class="muted">Historial de armados — auditable: de qué ubicaciones se extrajo cada componente, quién y cuándo.</span></div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th>Fecha</th><th>Kit</th><th style="text-align:right">Cant.</th><th>Destino</th><th>Extracciones</th><th>Usuario</th></tr></thead>
+          <tbody id="asm-hist"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Movimientos (kardex) -->
+      <section class="page" data-pg="movements">
+        <div class="mvbar">
+          <div class="field"><label>SKU</label><input id="mv-sku" placeholder="Todos"></div>
+          <div class="field"><label>Tipo</label><select id="mv-type"></select></div>
+          <div class="field"><label>Ubicación</label><select id="mv-loc"></select></div>
+          <div class="field"><label>Usuario</label><select id="mv-user"></select></div>
+          <div class="field" id="mv-cli-field"><label>Cliente</label><select id="mv-cli"></select></div>
+          <div class="field"><label>Referencia</label><input id="mv-ref" placeholder="Todas"></div>
+          <div class="field"><label>Desde</label><input id="mv-from" type="date"></div>
+          <div class="field"><label>Hasta</label><input id="mv-to" type="date"></div>
+        </div>
+        <div class="mvactions">
+          <span class="muted" id="mv-count"></span>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn" id="mv-clear">Limpiar filtros</button>
+          <button class="btn" id="mv-export">Exportar</button>
+        </div>
+        <div class="card"><div class="tablewrap"><table id="mv-table">
+          <thead><tr><th>Fecha</th><th>Movimiento</th><th>SKU</th><th>Ubicación</th><th>Lote</th><th>Estado</th><th>Usuario</th><th class="mv-col-cli">Cliente</th><th>Referencia</th><th style="text-align:right">Cantidad</th></tr></thead>
+          <tbody id="mv-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Conteo cíclico -->
+      <section class="page" data-pg="counts">
+        <p class="muted" style="margin:0 0 14px">Tareas de conteo que el sistema propone según la estrategia del cliente (<b id="cc-strat">ABC</b>).</p>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th>Prioridad</th><th>Objetivo</th><th>Motivo</th><th data-action></th></tr></thead>
+          <tbody id="cc-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Reportes -->
+      <section class="page" data-pg="reports">
+        <div class="kpis" id="rep-kpis"></div>
+        <div class="card"><div class="h"><h3>Exactitud de inventario por conteo</h3><div class="sp"></div><span class="muted" id="rep-acc-sub"></span></div><div class="b"><div class="chart" id="rep-acc-chart"></div></div></div>
+        <div class="card"><div class="h"><h3>Despachos últimos 5 días</h3><div class="sp"></div><span class="muted" id="rep-seller"></span></div><div class="b"><div class="chart" id="rep-chart"></div></div></div>
+      </section>
+
+      <!-- Facturación 3PL -->
+      <section class="page" data-pg="billing">
+        <div class="billtabs" id="bill-tabs" style="display:none">
+          <button class="segbtn on" data-billtab="dash">📊 Resumen</button>
+          <button class="segbtn" data-billtab="inv">🧾 Facturas</button>
+        </div>
+
+        <!-- Vista Resumen (dashboard de facturación) — solo staff -->
+        <div class="billview" id="bill-dash">
+          <div class="toolbar">
+            <div class="field" style="min-width:120px"><label>Año</label><select id="bd-year"></select></div>
+            <div class="field" style="min-width:140px"><label>Mes</label><select id="bd-month"></select></div>
+            <div class="sp" style="flex:1"></div>
+            <span class="muted" id="bd-scope"></span>
+          </div>
+          <div class="kpis" id="bd-kpis"></div>
+          <div id="bd-content">
+            <div class="sectionrow" style="grid-template-columns:1.05fr .95fr">
+              <div class="card"><div class="h"><h3>Composición por concepto</h3><div class="sp"></div><span class="muted" id="bd-comp-total"></span></div>
+                <div class="b"><div class="stackbar" id="bd-stack"></div><div id="bd-comp"></div></div>
+              </div>
+              <div class="card"><div class="h"><h3>Facturación por período</h3><div class="sp"></div><span class="muted" id="bd-trend-cap"></span></div>
+                <div class="b"><div id="bd-trend"></div></div>
+              </div>
+            </div>
+            <div class="card" style="margin-top:16px"><div class="h"><h3>Apertura por cliente y concepto</h3><div class="sp"></div><span class="muted">Montos del alcance seleccionado</span></div>
+              <div class="tablewrap"><table class="matrix"><thead id="bd-mx-head"></thead><tbody id="bd-mx-body"></tbody><tfoot id="bd-mx-foot"></tfoot></table></div>
+            </div>
+          </div>
+          <div id="bd-empty" class="empty" style="display:none">Aún no hay facturas emitidas para construir el dashboard. Genera facturas en la pestaña «Facturas».</div>
+        </div>
+
+        <!-- Vista Facturas (tarifario + generar + lista) -->
+        <div class="billview on" id="bill-invoices-view">
+        <div class="card client-billing-note" id="bill-cli-note" style="margin-bottom:16px;display:none"><div class="b" style="display:flex;align-items:center;gap:10px"><span class="ic" style="font-size:18px">📄</span><span class="muted">Aquí puedes revisar y <b>aprobar</b> las facturas de servicios logísticos emitidas por tu operador. Abre una factura para ver el detalle y aprobarla.</span></div></div>
+        <div class="sectionrow" id="bill-manage" style="grid-template-columns:1fr 1fr">
+          <div class="card"><div class="h"><h3>Tarifario del cliente</h3><div class="sp"></div><span class="muted" id="bill-cli"></span></div>
+            <div class="b">
+              <div class="mvbar" style="grid-template-columns:1fr 1fr;box-shadow:none;border:0;padding:0;margin:0">
+                <div class="field"><label>Cuota fija mensual</label><input id="rt-fixed" type="number" min="0" value="0"></div>
+                <div class="field"><label>Almacenamiento (por unidad-mes)</label><input id="rt-storage" type="number" min="0" value="0"></div>
+                <div class="field"><label>Recepción (por unidad)</label><input id="rt-receipt" type="number" min="0" value="0"></div>
+                <div class="field"><label>Despacho (por pedido)</label><input id="rt-ship" type="number" min="0" value="0"></div>
+                <div class="field"><label>Picking (por unidad)</label><input id="rt-pick" type="number" min="0" value="0"></div>
+                <div class="field"><label>Armado (por kit)</label><input id="rt-asm" type="number" min="0" value="0"></div>
+              </div>
+              <label class="apprv-row" style="display:flex;align-items:flex-start;gap:9px;margin-top:12px;cursor:pointer"><input type="checkbox" id="rt-approval" style="margin-top:2px"><span><b>Requiere aprobación del cliente</b><div class="hint">Si se activa, cada factura de este cliente queda <b>pendiente</b> hasta que el cliente la apruebe desde su portal (queda registrado quién y cuándo). Si se desactiva, las facturas quedan emitidas directamente.</div></span></label>
+              <div class="ferr" id="rt-err" style="margin-top:8px"></div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px"><span class="hint">Montos en <b id="rt-cur">CLP</b> (sin decimales).</span><button class="btn pri" id="rt-save">Guardar tarifas</button></div>
+            </div>
+          </div>
+          <div class="card"><div class="h"><h3>Generar factura</h3></div>
+            <div class="b">
+              <div class="mvbar" style="grid-template-columns:1fr 1fr;box-shadow:none;border:0;padding:0;margin:0 0 10px">
+                <div class="field"><label>Año</label><input id="bl-year" type="number" min="2024" value="2026"></div>
+                <div class="field"><label>Mes</label><select id="bl-month"></select></div>
+              </div>
+              <div style="display:flex;gap:10px"><button class="btn" id="bl-preview">Vista previa</button><button class="btn pri" id="bl-gen">Generar factura</button></div>
+              <div id="bl-preview-box" style="margin-top:14px"></div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px"><div class="h"><h3>Facturas emitidas</h3></div><div class="tablewrap"><table>
+          <thead><tr><th>Factura</th><th>Período</th><th>Emitida</th><th>Por</th><th>Estado</th><th style="text-align:right">Total</th><th data-action></th></tr></thead>
+          <tbody id="bill-invoices"></tbody>
+        </table></div></div>
+        </div>
+      </section>
+
+      <!-- Mensajes (chat interno cliente ↔ operaciones) -->
+      <section class="page" data-pg="chat">
+        <div class="chatwrap" id="chatwrap">
+          <div class="chat-inbox-pane" id="chat-inbox-pane">
+            <div class="chat-inbox-head">Conversaciones <span class="muted" id="chat-inbox-count"></span></div>
+            <div id="chat-inbox" class="chat-inbox"></div>
+          </div>
+          <div class="chat-thread-pane">
+            <div class="chat-thread-head">
+              <div><div class="chat-th-title" id="chat-th-title">Equipo de operaciones</div><div class="hint" id="chat-th-sub"></div></div>
+            </div>
+            <div id="chat-msgs" class="chat-msgs"></div>
+            <div class="chat-composer">
+              <textarea id="chat-input" rows="1" placeholder="Escribe un mensaje…"></textarea>
+              <button class="btn pri" id="chat-send">Enviar</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Clientes (sellers) -->
+      <section class="page" data-pg="clients">
+        <div class="toolbar"><span class="muted" id="cli-scope">Cuentas de cliente (sellers) de la operación.</span><div class="sp" style="flex:1"></div><button class="btn pri hidden" id="cli-new">＋ Nuevo cliente</button></div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th>Cliente</th><th>ID</th><th>Picking</th><th>Conteo</th><th>Estado</th><th data-action></th></tr></thead>
+          <tbody id="cli-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Marca / white-label de la operación -->
+      <section class="page" data-pg="branding">
+        <div class="card"><div class="b" id="brand-form"></div></div>
+      </section>
+
+      <!-- Canal de voz operador↔admin -->
+      <section class="page" data-pg="voicechannel">
+        <div class="toolbar">
+          <span class="muted" id="voc-scope">Deja un mensaje de voz o texto para la administración de la operación.</span>
+          <div class="sp" style="flex:1"></div>
+          <div class="billtabs" id="voc-tabs" style="margin:0">
+            <button class="segbtn on" data-voctab="compose">Nuevo mensaje</button>
+            <button class="segbtn" data-voctab="threads" data-admin>Bandeja (admin)</button>
+            <button class="segbtn" data-voctab="insights" data-admin>Estadísticas &amp; IA</button>
+          </div>
+        </div>
+
+        <!-- Componer: grabar voz o escribir -->
+        <div id="voc-compose">
+          <div class="grid2">
+            <div class="card">
+              <div class="h"><h3>Mensaje de voz</h3></div>
+              <div class="b">
+                <div id="voc-rec-ui" style="display:flex;flex-direction:column;gap:12px;align-items:flex-start">
+                  <button class="btn pri" id="voc-rec-btn" style="padding:12px 20px;font-size:15px">🎙️ Grabar</button>
+                  <div class="muted" id="voc-rec-status">Presiona grabar y habla. Puedes agregar una nota escrita opcional.</div>
+                  <audio id="voc-rec-preview" controls class="hidden" style="width:100%"></audio>
+                  <div class="fld" style="margin:0;width:100%"><label>Nota opcional (ayuda a clasificar)</label><input id="voc-rec-note" type="text" placeholder="Ej: falta stock en zona A"></div>
+                  <div style="display:flex;gap:8px">
+                    <button class="btn pri hidden" id="voc-rec-send">Enviar mensaje de voz</button>
+                    <button class="btn hidden" id="voc-rec-discard">Descartar</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="h"><h3>Mensaje de texto</h3></div>
+              <div class="b">
+                <div class="fld"><label>Escribe tu mensaje</label><textarea id="voc-text" rows="4" placeholder="Escribe aquí…"></textarea></div>
+                <button class="btn pri" id="voc-text-send">Enviar mensaje</button>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:14px">
+            <div class="h"><h3>Mi hilo</h3><div class="sp"></div><span class="muted">Tus mensajes y las respuestas de la administración.</span></div>
+            <div class="b" id="voc-mythread"><div class="muted">Aún no has enviado mensajes.</div></div>
+          </div>
+        </div>
+
+        <!-- Bandeja admin: hilos por operador -->
+        <div id="voc-threads" class="hidden">
+          <div class="grid2" style="grid-template-columns:280px 1fr">
+            <div class="card">
+              <div class="h"><h3>Operadores</h3></div>
+              <div class="b" id="voc-thread-list"><div class="muted">Sin mensajes.</div></div>
+            </div>
+            <div class="card">
+              <div class="h"><h3 id="voc-thread-title">Selecciona un operador</h3></div>
+              <div class="b" id="voc-thread-view"><div class="muted">Elige un hilo a la izquierda para verlo y responder.</div></div>
+              <div class="b" id="voc-reply-box" style="border-top:1px solid var(--line);display:none">
+                <div class="fld" style="margin:0"><label>Responder</label><textarea id="voc-reply-text" rows="2" placeholder="Escribe una respuesta…"></textarea></div>
+                <button class="btn pri" id="voc-reply-send" style="margin-top:8px">Responder</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Estadísticas + insights IA -->
+        <div id="voc-insights" class="hidden">
+          <div class="kpis" id="voc-kpis"></div>
+          <div class="grid2">
+            <div class="card">
+              <div class="h"><h3>Tópicos más frecuentes</h3></div>
+              <div class="b" id="voc-topics"><div class="muted">Sin datos.</div></div>
+            </div>
+            <div class="card">
+              <div class="h"><h3>Actividad por operador</h3></div>
+              <div class="b" id="voc-byoperator"><div class="muted">Sin datos.</div></div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:14px">
+            <div class="h"><h3>Insights &amp; sugerencias del agente IA</h3><div class="sp"></div><span class="muted" id="voc-ins-engine"></span></div>
+            <div class="b" id="voc-ins-body"><div class="muted">Sin datos suficientes todavía.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Usuarios -->
+      <section class="page" data-pg="users">
+        <div class="toolbar"><span class="muted" id="usr-scope">Usuarios y roles.</span><div class="sp" style="flex:1"></div><button class="btn pri hidden" id="usr-new">＋ Nuevo usuario</button></div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th>Usuario</th><th>Email</th><th>Rol</th><th>Operación</th><th>Alcance</th><th>Estado</th><th data-action></th></tr></thead>
+          <tbody id="usr-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Plan del SaaS (PLG · Fase 1; admin/supervisor) -->
+      <section class="page" data-pg="plan">
+        <div id="plan-trial"></div>
+        <div class="grid2" style="align-items:stretch">
+          <div class="card"><div class="b" id="plan-current"></div></div>
+          <div class="card"><div class="h"><h3>Uso este mes</h3></div><div class="b" id="plan-usage"></div></div>
+        </div>
+        <div class="card"><div class="h"><h3>Compara los planes</h3><div class="sp" style="flex:1"></div><span class="muted" id="plan-admin-hint" style="margin-right:10px"></span><div class="billtabs" id="plan-cur" style="margin:0"><button class="segbtn on" data-cur="CLP">CLP</button><button class="segbtn" data-cur="USD">USD</button></div></div><div class="b"><div class="tiers" id="plan-catalog"></div></div></div>
+      </section>
+
+      <!-- Actividad por usuario (auditoría operativa; admin/supervisor) -->
+      <section class="page" data-pg="activity">
+        <div class="toolbar">
+          <span class="muted" id="act-scope">Registro por usuario: eventos de órdenes (reservar, picking, empacar, despachar) e inventario (recepción, guardado, ajuste).</span>
+          <div class="sp" style="flex:1"></div>
+          <div class="billtabs" id="act-toggle" style="margin:0">
+            <button class="segbtn" data-aw="1">24 h</button>
+            <button class="segbtn on" data-aw="7">7 días</button>
+            <button class="segbtn" data-aw="30">30 días</button>
+            <button class="segbtn" data-aw="90">90 días</button>
+            <button class="segbtn" data-aw="0">Todo</button>
+            <button class="segbtn" data-aw="custom">Personalizado</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;margin:0 0 12px;flex-wrap:wrap">
+          <div class="fld" style="margin:0;min-width:200px"><label>Operador</label><select id="act-user"></select></div>
+          <div class="fld hidden" id="act-fromwrap" style="margin:0"><label>Desde</label><input id="act-from" type="date"></div>
+          <div class="fld hidden" id="act-towrap" style="margin:0"><label>Hasta</label><input id="act-to" type="date"></div>
+          <button class="btn" id="act-refresh" style="padding:8px 14px">Actualizar</button>
+        </div>
+        <div class="kpis" id="act-kpis"></div>
+        <div class="card">
+          <div class="h"><h3>Productividad por operador</h3><div class="sp" style="flex:1"></div><span class="muted" id="act-prod-sub"></span></div>
+          <div class="tablewrap"><table class="matrix"><thead id="act-prod-head"></thead><tbody id="act-prod-body"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Línea de tiempo</h3><div class="sp" style="flex:1"></div><span class="muted" id="act-feed-sub"></span></div>
+          <div class="b" id="act-feed" style="max-height:60vh;overflow-y:auto"></div>
+        </div>
+      </section>
+
+      <!-- Auditoría de IA (G5): gobernanza de recomendaciones y acciones de agentes -->
+      <section class="page" data-pg="aiaudit">
+        <div class="toolbar">
+          <span class="muted">Cada recomendación y acción de agente (copiloto, advisor de guardado, jobs) queda registrada y es auditable. Abajo, el % de sugerencias aceptadas y su efecto.</span>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn" id="aia-refresh" style="padding:8px 14px">Actualizar</button>
+        </div>
+        <div class="kpis" id="aia-kpis"></div>
+        <div class="card">
+          <div class="h"><h3>Aceptación por tipo de recomendación</h3></div>
+          <div class="tablewrap"><table class="matrix"><thead id="aia-type-head"></thead><tbody id="aia-type-body"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Acciones de agente (auditoría)</h3><div class="sp" style="flex:1"></div><span class="muted" id="aia-act-sub"></span></div>
+          <div class="tablewrap"><table class="matrix"><thead><tr><th>Fecha</th><th>Agente</th><th>Decisión</th><th>Actor</th><th>Orden</th><th>Resultado</th></tr></thead><tbody id="aia-act-body"></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- Asignaciones: balanceo de carga de tareas (Camino B) -->
+      <section class="page" data-pg="asignaciones">
+        <div class="toolbar">
+          <div class="billtabs" id="asg-view" style="margin:0">
+            <button class="segbtn on" data-asgv="tipo">Por tipo de tarea</button>
+            <button class="segbtn" data-asgv="operario">Por operario</button>
+          </div>
+          <span id="asg-tipo-controls" style="display:contents">
+          <div class="billtabs" id="asg-type" style="margin:0 0 0 10px">
+            <button class="segbtn on" data-asgt="PICK">Picking</button>
+            <button class="segbtn" data-asgt="PACK">Empaque</button>
+            <button class="segbtn" data-asgt="SHIP">Despacho</button>
+            <button class="segbtn" data-asgt="PUTAWAY">Guardado</button>
+            <button class="segbtn" data-asgt="RECEIVE">Recepción</button>
+            <button class="segbtn" data-asgt="RESLOT">Re-slotting</button>
+            <button class="segbtn" data-asgt="COUNT">Conteo</button>
+          </div>
+          <div class="sp" style="flex:1"></div>
+          <span class="muted" style="margin-right:10px">Modo:</span>
+          <div class="billtabs" id="asg-mode" style="margin:0">
+            <button class="segbtn on" data-asgm="advisory">Advisory</button>
+            <button class="segbtn" data-asgm="strict">Estricto</button>
+          </div>
+          <button class="btn" id="asg-continuous" style="padding:8px 14px;margin-left:10px">🔄 Continuo: off</button>
+          <button class="btn pri" id="asg-balance" style="padding:8px 14px">⚖ Auto-balancear</button>
+          <button class="btn" id="asg-redistribute" style="padding:8px 14px" title="Mueve tareas asignadas pero no iniciadas del operario más cargado al ocioso">🔁 Redistribuir</button>
+          </span>
+          <button class="btn" id="asg-refresh" style="padding:8px 14px">Actualizar</button>
+        </div>
+
+        <div id="asg-tipo">
+          <div class="kpis" id="asg-kpis"></div>
+          <div class="card">
+            <div class="h"><h3>Carga por operario</h3><div class="sp" style="flex:1"></div><span class="muted" id="asg-load-sub"></span></div>
+            <div class="tablewrap"><table class="matrix"><thead><tr><th>Operario</th><th class="num">Velocidad (u/h)</th><th class="num">Tareas abiertas</th><th class="num">Unidades</th><th class="num">Horas estimadas</th></tr></thead><tbody id="asg-load-body"></tbody></table></div>
+          </div>
+          <div class="card">
+            <div class="h"><h3>Pool de tareas pendientes</h3><div class="sp" style="flex:1"></div><span class="muted" id="asg-pool-sub"></span></div>
+            <div class="tablewrap"><table class="matrix"><thead><tr><th>Tarea</th><th>Cliente</th><th class="num">Unidades</th><th>Asignado a</th><th>Asignar</th></tr></thead><tbody id="asg-pool-body"></tbody></table></div>
+          </div>
+        </div>
+
+        <div id="asg-operario" hidden>
+          <div class="toolbar" style="margin-top:0">
+            <label style="display:flex;align-items:center;gap:9px;font-size:13px">Operario
+              <select id="asg-op-sel" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);min-width:200px"></select>
+            </label>
+            <div class="sp" style="flex:1"></div>
+            <span class="muted" id="asg-op-summary"></span>
+          </div>
+          <div class="kpis" id="asg-op-kpis"></div>
+          <div class="card">
+            <div class="h"><h3>Actividades asignadas</h3><div class="sp" style="flex:1"></div><span class="muted" id="asg-op-sub"></span></div>
+            <div class="tablewrap"><table class="matrix"><thead><tr><th>Tarea</th><th>Tipo</th><th>Cliente</th><th class="num">Unidades</th><th>Estado</th><th>Asignada</th></tr></thead><tbody id="asg-op-body"></tbody></table></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Agente proactivo (Nivel 3, Fase 1): reglas + alertas in-app -->
+      <section class="page" data-pg="agente">
+        <div class="toolbar">
+          <span class="muted">El agente vigila la operación y, cuando una regla se cumple, avisa o ejecuta su acción — según lo configures: solo avisar, ejecutar con confirmación, o ejecutar directo.</span>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn pri" id="agt-eval" style="padding:8px 14px">⚡ Evaluar ahora</button>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Alertas activas</h3><div class="sp" style="flex:1"></div><span class="muted" id="agt-alerts-sub"></span></div>
+          <div class="b"><div id="agt-alerts"></div></div>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Reglas del agente</h3><div class="sp" style="flex:1"></div><span class="muted">Enciende/apaga cada regla y ajusta su umbral y enfriamiento</span></div>
+          <div class="b"><div id="agt-rules"></div></div>
+        </div>
+      </section>
+
+      <!-- Costos y rentabilidad (costeo por actividad + estándar/real) -->
+      <section class="page" data-pg="costos">
+        <div class="toolbar">
+          <span class="muted">Ingreso (facturación) vs. costo por actividad. La mano de obra se mide a costo <b>estándar</b> (objetivo) y <b>real</b> para gestionar la eficiencia.</span>
+          <div class="sp" style="flex:1"></div>
+          <input type="month" id="cos-month" class="inp" style="padding:7px 10px" />
+          <button class="btn" id="cos-rates-toggle" style="padding:8px 14px">⚙ Tarifario de costos</button>
+          <button class="btn" id="cos-refresh" style="padding:8px 14px">Actualizar</button>
+        </div>
+
+        <!-- Editor del tarifario de costos (colapsable) -->
+        <div class="card hidden" id="cos-rates-card">
+          <div class="h"><h3>Tarifario de costos</h3><div class="sp" style="flex:1"></div><span class="muted" id="cos-rates-sub"></span></div>
+          <div class="b">
+            <div class="grid2" style="gap:14px">
+              <label class="fld"><span>Moneda</span><input id="cr-currency" class="inp" placeholder="CLP"/></label>
+              <label class="fld"><span>Tarifa mano de obra ESTÁNDAR ($/hora)</span><input id="cr-stdrate" type="number" class="inp"/></label>
+              <label class="fld"><span>Costo/hora OPERARIO ($/hora)</span><input id="cr-role-operator" type="number" class="inp"/></label>
+              <label class="fld"><span>Costo/hora SUPERVISOR ($/hora)</span><input id="cr-role-supervisor" type="number" class="inp"/></label>
+              <label class="fld"><span>Almacenaje ($ por unidad-mes)</span><input id="cr-storage" type="number" class="inp"/></label>
+              <label class="fld"><span>Embalaje (costo como % del cobro, 0–1)</span><input id="cr-pkgratio" type="number" step="0.05" class="inp"/></label>
+              <label class="fld"><span>Overhead mensual del CD ($)</span><input id="cr-overhead" type="number" class="inp"/></label>
+              <label class="fld"><span>Prorrateo de overhead</span><select id="cr-driver" class="inp"><option value="laborHours">Por horas de trabajo</option><option value="unitMonths">Por unidad-mes almacenada</option><option value="orders">Por órdenes</option></select></label>
+            </div>
+            <div style="margin-top:8px"><span class="muted">Estándar u/h por tarea: </span>
+              <span class="chipin">PICK <input id="cr-uph-PICK" type="number" class="inp inpmini"/></span>
+              <span class="chipin">PUTAWAY <input id="cr-uph-PUTAWAY" type="number" class="inp inpmini"/></span>
+              <span class="chipin">PACK <input id="cr-uph-PACK" type="number" class="inp inpmini"/></span>
+              <span class="chipin">RECEIVE <input id="cr-uph-RECEIVE" type="number" class="inp inpmini"/></span>
+              <span class="chipin">COUNT <input id="cr-uph-COUNT" type="number" class="inp inpmini"/></span>
+            </div>
+            <div style="margin-top:12px;text-align:right"><button class="btn pri" id="cr-save" style="padding:8px 16px">Guardar tarifario</button></div>
+          </div>
+        </div>
+
+        <div class="kpis" id="cos-kpis"></div>
+
+        <div class="card">
+          <div class="h"><h3>Rentabilidad por cliente</h3><div class="sp" style="flex:1"></div><span class="muted" id="cos-prof-sub"></span></div>
+          <div class="tablewrap"><table class="matrix"><thead><tr><th>Cliente</th><th class="num">Ingreso</th><th class="num">Costo real</th><th class="num">M. Obra std/real</th><th class="num">Almac.</th><th class="num">Emb.</th><th class="num">Overhead</th><th class="num">Margen real</th><th class="num">%</th><th class="num">% objetivo</th></tr></thead><tbody id="cos-prof-body"></tbody></table></div>
+        </div>
+
+        <div class="card">
+          <div class="h"><h3>Eficiencia de mano de obra (estándar vs. real)</h3><div class="sp" style="flex:1"></div>
+            <div class="billtabs" id="cos-eff-group" style="margin:0"><button class="segbtn on" data-effg="operator">Por operario</button><button class="segbtn" data-effg="type">Por tarea</button></div>
+          </div>
+          <div class="tablewrap"><table class="matrix"><thead><tr><th>—</th><th class="num">Unidades</th><th class="num">Horas reales</th><th class="num">Horas std</th><th class="num">Eficiencia</th><th class="num">Costo real</th><th class="num">Costo std</th><th class="num">Varianza</th></tr></thead><tbody id="cos-eff-body"></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- Empaquetado: matriz módulo × plan (solo plataforma) -->
+      <section class="page" data-pg="pkgmatrix">
+        <div class="toolbar">
+          <span class="muted">Asocia módulos y define límites por plan. Los cambios rigen en vivo para las cuentas nuevas; las existentes se ven afectadas según su plan actual.</span>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn" id="pkg-reset">Restaurar valores por defecto</button>
+          <button class="btn pri" id="pkg-save">Guardar cambios</button>
+        </div>
+        <div class="card"><div class="tablewrap" id="pkg-matrix"><div class="b muted">Cargando matriz…</div></div></div>
+      </section>
+
+      <!-- Operaciones (solo plataforma) -->
+      <section class="page" data-pg="operations">
+        <div class="toolbar"><span class="muted">Cada operación es un mundo aislado: sus bodegas, clientes, usuarios e inventario.</span><div class="sp" style="flex:1"></div><button class="btn pri hidden" id="ops-new">＋ Nueva operación</button></div>
+        <div class="grid2" id="ops-grid"></div>
+      </section>
+
+      <!-- Uso de la plataforma (solo plataforma) -->
+      <section class="page" data-pg="usage">
+        <div class="toolbar">
+          <span class="muted" id="usg-scope">Nivel de uso de la plataforma por operación y consolidado.</span>
+          <div class="sp" style="flex:1"></div>
+          <div class="billtabs" id="usg-toggle" style="margin:0">
+            <button class="segbtn" data-uw="1">24 h</button>
+            <button class="segbtn on" data-uw="7">7 días</button>
+            <button class="segbtn" data-uw="30">30 días</button>
+            <button class="segbtn" data-uw="90">90 días</button>
+            <button class="segbtn" data-uw="custom">Personalizado</button>
+          </div>
+        </div>
+        <div id="usg-range" class="hidden" style="display:flex;gap:8px;align-items:flex-end;margin:0 0 12px;flex-wrap:wrap">
+          <div class="fld" style="margin:0"><label>Desde</label><input id="usg-from" type="date"></div>
+          <div class="fld" style="margin:0"><label>Hasta</label><input id="usg-to" type="date"></div>
+          <button class="btn pri" id="usg-apply" style="padding:8px 14px">Aplicar</button>
+        </div>
+        <div class="kpis" id="usg-kpis"></div>
+        <div class="card">
+          <div class="h"><h3>Uso por operación</h3><div class="sp"></div><span class="muted" id="usg-sub"></span></div>
+          <div class="tablewrap"><table class="matrix"><thead id="usg-mx-head"></thead><tbody id="usg-mx-body"></tbody><tfoot id="usg-mx-foot"></tfoot></table></div>
+        </div>
+      </section>
+
+      <!-- Anuncios de plataforma (mantenedor, solo plataforma) -->
+      <section class="page" data-pg="announcements">
+        <div class="toolbar">
+          <span class="muted">Barra superior on-demand para administradores y supervisores. Cada anuncio lleva un enlace a una landing y registra los clics.</span>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn pri" id="ann-new">＋ Nuevo anuncio</button>
+        </div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th>Anuncio</th><th>Enlace</th><th>Estado</th><th style="text-align:right">Clics</th><th>Creado</th><th data-action></th></tr></thead>
+          <tbody id="ann-list"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Webhooks configurables por evento -->
+      <section class="page" data-pg="webhooks">
+        <div class="toolbar">
+          <span class="muted" id="wh-scope">Entrega eventos de despacho y recepción a tus sistemas por HTTP.</span>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn pri" id="wh-new">＋ Nuevo webhook</button>
+        </div>
+        <div id="wh-notice"></div>
+        <div class="card" id="wh-list-card"><div class="tablewrap"><table>
+          <thead><tr><th>URL de destino</th><th>Eventos</th><th>Alcance</th><th>Estado</th><th data-action></th></tr></thead>
+          <tbody id="wh-list"></tbody>
+        </table></div></div>
+        <div class="card" id="wh-access-card" style="display:none">
+          <div class="h"><h3>Acceso de clientes al panel</h3><div class="sp"></div><span class="muted" id="wh-access-sub"></span></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Cliente</th><th>Estado</th><th style="text-align:right">Panel de webhooks</th></tr></thead>
+            <tbody id="wh-access-body"></tbody>
+          </table></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- Order drawer -->
+<div class="drawer" id="drawer"><div class="panel">
+  <div class="dh"><h3 id="dr-title">Orden</h3><button class="x" id="dr-x">✕</button></div>
+  <div class="db" id="dr-body"></div>
+</div></div>
+
+<!-- Generic modal -->
+<div class="modal" id="modal"><div class="panel" id="m-panel">
+  <div class="dh"><h3 id="m-title">—</h3><button class="x" id="m-x">✕</button></div>
+  <div class="db" id="m-body"></div>
+</div></div>
+
+<div class="tooltip" id="tt"></div>
+<div class="toast" id="toast"><div class="i" id="toast-i"></div></div>
+
+
+<div class="loginov" id="loginov">
+  <div class="loginbox">
+
+    <!-- Vista: iniciar sesión -->
+    <div class="lgview" data-view="login">
+      <h1>WMS · Panel</h1>
+      <p>Inicia sesión para administrar tu bodega.</p>
+      <div class="err" id="lg-err"></div>
+      <label>Email</label>
+      <input id="lg-email" type="email" placeholder="tu@empresa.cl" autocomplete="username">
+      <label>Contraseña</label>
+      <input id="lg-pass" type="password" placeholder="••••••••" autocomplete="current-password">
+      <button class="b" id="lg-btn">Entrar</button>
+      <div class="lgrow"><button class="lg-link" data-go="forgot">¿Olvidaste tu contraseña?</button></div>
+      <div class="hint">¿No tienes cuenta? <button class="lg-link" data-go="register">Crea una gratis</button></div>
+    </div>
+
+    <!-- Vista: crear cuenta (self-serve) -->
+    <div class="lgview" data-view="register" hidden>
+      <h1>Crea tu cuenta</h1>
+      <p>Empieza gratis. Sin tarjeta.</p>
+      <div class="err" id="rg-err"></div>
+      <label>¿Qué eres?</label>
+      <select id="rg-track">
+        <option value="brand">Una marca / tienda — uso el WMS para mi propio inventario</option>
+        <option value="operator">Un operador 3PL — gestiono a varios clientes</option>
+      </select>
+      <label>Nombre de tu empresa</label>
+      <input id="rg-company" type="text" placeholder="Tienda Aurora" autocomplete="organization">
+      <label>Tu nombre</label>
+      <input id="rg-name" type="text" placeholder="Camila Rojas" autocomplete="name">
+      <label>Email de trabajo</label>
+      <input id="rg-email" type="email" placeholder="tu@empresa.cl" autocomplete="username">
+      <label>Contraseña</label>
+      <input id="rg-pass" type="password" placeholder="mínimo 6 caracteres" autocomplete="new-password">
+      <button class="b" id="rg-btn">Crear cuenta gratis</button>
+      <div class="hint">¿Ya tienes cuenta? <button class="lg-link" data-go="login">Inicia sesión</button></div>
+    </div>
+
+    <!-- Vista: olvidé mi contraseña -->
+    <div class="lgview" data-view="forgot" hidden>
+      <h1>Recuperar contraseña</h1>
+      <p>Te enviaremos un enlace para elegir una nueva.</p>
+      <div class="err" id="fg-err"></div>
+      <div class="ok" id="fg-ok" hidden></div>
+      <label>Email</label>
+      <input id="fg-email" type="email" placeholder="tu@empresa.cl" autocomplete="username">
+      <button class="b" id="fg-btn">Enviar enlace</button>
+      <div class="hint"><button class="lg-link" data-go="login">Volver a iniciar sesión</button></div>
+    </div>
+
+    <!-- Vista: elegir nueva contraseña (llega por enlace ?reset=) -->
+    <div class="lgview" data-view="reset" hidden>
+      <h1>Nueva contraseña</h1>
+      <p>Elige una contraseña para tu cuenta.</p>
+      <div class="err" id="rs-err"></div>
+      <div class="ok" id="rs-ok" hidden></div>
+      <label>Nueva contraseña</label>
+      <input id="rs-pass" type="password" placeholder="mínimo 6 caracteres" autocomplete="new-password">
+      <button class="b" id="rs-btn">Guardar y entrar</button>
+      <div class="hint"><button class="lg-link" data-go="login">Volver a iniciar sesión</button></div>
+    </div>
+
+    <!-- Vista: resultado de verificación de email (llega por enlace ?verify=) -->
+    <div class="lgview" data-view="verify" hidden>
+      <h1 id="vf-title">Verificando…</h1>
+      <p id="vf-msg">Un momento.</p>
+      <button class="b" data-go="login" hidden id="vf-btn">Iniciar sesión</button>
+    </div>
+
+  </div>
+</div>
+
+<script src="./vendor/xlsx.full.min.js"></script>
+<script src="./tutorial-guides.js"></script>
+<script src="./tutorial.js"></script>
+<script src="./app.js"></script>
+<script>
+  /* White-label: aplica la marca servida por el backend (GET /branding).
+     Defensivo: si algo falla, se queda con el logo/tema por defecto (Ninja WMS). */
+  (function () {
+    try {
+      fetch('/branding', { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (b) {
+          if (!b) return;
+          if (b.appName) {
+            document.title = b.appName + ' · Panel';
+            var el = document.getElementById('brandLogo');
+            if (el) el.setAttribute('title', b.appName);
+          }
+          // Color primario del tema: recolorea toda la UI y el wordmark inline.
+          if (b.primaryColor && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(b.primaryColor)) {
+            document.documentElement.style.setProperty('--primary', b.primaryColor);
+          }
+          // Logo personalizado (white-label full): reemplaza el SVG inline por la imagen servida.
+          if (b.logoUrl && b.logoUrl !== '/brand/logo.svg') {
+            var host = document.getElementById('brandLogo');
+            if (host) {
+              var img = document.createElement('img');
+              img.src = b.logoUrl;
+              img.alt = b.appName || 'Logo';
+              host.innerHTML = '';
+              host.appendChild(img);
+            }
+          }
+        })
+        .catch(function () {});
+    } catch (e) {}
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# Blueprint de Render (https://render.com) para la fase de prueba.
+# Render detecta este archivo y crea el servicio con una URL pública HTTPS gratis.
+# Panel de administración:  https://<tu-servicio>.onrender.com/admin/
+# PWA de operador (bodega):  https://<tu-servicio>.onrender.com/app/
+# Login con token de usuario: root (plataforma), ana / nora (admins), carla (cliente).
+services:
+  - type: web
+    name: wms-ninjahubs
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: SEED_DEMO
+        value: "true"
+      - key: PERSISTENCE
+        value: memory
+      # Autenticación real obligatoria (login email+contraseña -> JWT).
+      - key: AUTH_REQUIRED
+        value: "true"
+      # Secreto para firmar los JWT. Render puede generarlo automáticamente.
+      - key: AUTH_SECRET
+        generateValue: true
+      # CORS abierto para la fase de prueba (mismo origen sirve app+API de todos modos).
+      - key: CORS_ORIGIN
+        value: "true"
