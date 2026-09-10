@@ -1133,6 +1133,43 @@ async function run() {
     assert.equal((await facade.listInvoices('acme')).length, 1);
   });
 
+  await test('facturación: picking, despacho y embalaje se cobran en el mes del DESPACHO de la orden', async () => {
+    const { facade, billingService, clock } = buildFacade();
+    clock.set('2026-05-20T12:00:00.000Z');
+    await facade.createOperation({ id: 'op1', name: 'Op' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await facade.createLocation({ operationId: 'op1', code: 'A-01-1-A', zoneType: ZoneType.STORAGE, capacity: 1000, pickRank: 1 });
+    await facade.createSku('acme', { sku: 'P1', description: 'P1' });
+    await facade.setBillingRate('acme', { shipmentPerOrder: 500, pickPerUnit: 5 });
+    await facade.createPackaging('op1', { sku: 'CAJA-M', name: 'Caja M', unitPrice: 300 });
+    await facade.receivePackagingStock('op1', 'CAJA-M', 100);
+    await facade.receive('acme', { sku: 'P1', qty: 100, locationId: stg.id });
+    // O1: pickeada y empacada en mayo, despachada en junio → todo se cobra en JUNIO.
+    const o1 = await facade.createOrder('acme', { externalOrderId: 'O1', salesChannel: 'web', shipTo: SHIP_TO, lines: [{ sku: 'P1', qty: 20 }] });
+    await facade.allocateOrder('acme', o1.id);
+    await facade.confirmPick('acme', o1.id);
+    await facade.packOrder('acme', o1.id, { bultos: 1, materials: [{ sku: 'CAJA-M', qty: 2 }] });
+    // O2: pickeada en mayo y NUNCA despachada → no se cobra en ningún mes.
+    const o2 = await facade.createOrder('acme', { externalOrderId: 'O2', salesChannel: 'web', shipTo: SHIP_TO, lines: [{ sku: 'P1', qty: 7 }] });
+    await facade.allocateOrder('acme', o2.id);
+    await facade.confirmPick('acme', o2.id);
+    const mayo = await billingService.computeInvoice('acme', '2026-05-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z');
+    const qtyOf = (inv: any, c: string) => (inv.lines.find((l: any) => l.concept === c || l.concept.startsWith(c)) || { qty: 0 }).qty;
+    assert.equal(qtyOf(mayo, 'Picking'), 0, 'mayo: sin picking (nada despachado)');
+    assert.equal(qtyOf(mayo, 'Despacho'), 0, 'mayo: sin despacho');
+    assert.equal(qtyOf(mayo, 'Embalaje'), 0, 'mayo: sin embalaje');
+    clock.set('2026-06-02T10:00:00.000Z');
+    await facade.shipOrder('acme', o1.id, { carrier: 'X' });
+    const junio = await billingService.computeInvoice('acme', '2026-06-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z');
+    const by: Record<string, any> = {};
+    junio.lines.forEach((l) => (by[l.concept] = l));
+    assert.equal(by['Despacho'].qty, 1);
+    assert.equal(by['Picking'].qty, 20, 'solo las unidades de la orden despachada (no las 7 de O2)');
+    assert.equal(by['Picking'].amount, 100);
+    assert.equal(by['Embalaje · Caja M'].qty, 2);
+    assert.equal(by['Embalaje · Caja M'].amount, 600);
+  });
+
   await test('facturación: editar número/cantidades/concepto, detectar duplicado, enviar y eliminar', async () => {
     const { facade } = buildFacade();
     await facade.createOperation({ id: 'op1', name: 'Op' });
@@ -1845,6 +1882,7 @@ async function run() {
     await facade.receivePackagingStock('op1', 'CAJA-M', 100);
     const o = await orderToPicked(facade, 'O1', 2);
     await facade.packOrder('acme', o.id, { bultos: 1, materials: [{ sku: 'CAJA-M', qty: 3 }] });
+    await facade.shipOrder('acme', o.id, { carrier: 'X' });
     const inv = await billingService.computeInvoice('acme', '2026-05-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z');
     const line = inv.lines.find((l) => l.concept.includes('Caja M'));
     assert.ok(line, 'hay línea de embalaje');
@@ -1862,6 +1900,7 @@ async function run() {
     await facade.setPackagingSellerPrice('op1', 'CAJA-M', 'acme', 800); // override para ACME
     const o = await orderToPicked(facade, 'O1', 2);
     await facade.packOrder('acme', o.id, { bultos: 1, materials: [{ sku: 'CAJA-M', qty: 2 }] });
+    await facade.shipOrder('acme', o.id, { carrier: 'X' });
     const inv = await billingService.computeInvoice('acme', '2026-05-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z');
     const line = inv.lines.find((l) => l.concept.includes('Caja M'));
     assert.ok(line);

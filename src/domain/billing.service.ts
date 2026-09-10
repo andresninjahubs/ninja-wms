@@ -3,7 +3,8 @@
  *
  * El 3PL cobra a cada cliente por: cuota fija, ALMACENAMIENTO (unidad-mes, integrando el
  * stock físico en zonas de almacenaje/picking a lo largo del período), RECEPCIÓN (unidades
- * recibidas), DESPACHO (pedidos despachados), PICKING (unidades pickeadas) y ARMADO de kits.
+ * recibidas), DESPACHO (pedidos despachados en el período), PICKING (unidades pickeadas de esos
+ * mismos pedidos despachados), EMBALAJE (insumos de esos pedidos) y ARMADO de kits.
  * Todo se calcula desde el ledger inmutable y los registros de órdenes/armados — auditable.
  */
 import { NotFoundError, ValidationError } from './errors';
@@ -18,7 +19,7 @@ import {
   SellerRepository,
   AssemblyLogRepository,
 } from './ports';
-import { BillingInvoice, BillingLine, BillingRate, InvoiceStatus, InvoiceTaxDocument, MovementType, ZoneType } from './types';
+import { BillingInvoice, BillingLine, BillingRate, InvoiceStatus, InvoiceTaxDocument, MovementType, SalesOrder, ZoneType } from './types';
 import { PackagingService } from './packaging.service';
 
 /** Datos de un documento tributario que llega para adjuntar a una factura. */
@@ -135,15 +136,35 @@ export class BillingService {
       return t >= from && t < to;
     };
     const unidadesRecibidas = movs.filter((m) => m.type === MovementType.RECEIPT && inPeriod(m.occurredAt)).reduce((a, m) => a + m.qtyDelta, 0);
-    const unidadesPickeadas = movs.filter((m) => m.type === MovementType.PICK && inPeriod(m.occurredAt)).reduce((a, m) => a - m.qtyDelta, 0);
     const unitDays = await this.storageUnitDays(sellerId, seller.operationId, from, to);
     const unitMonths = unitDays / DAYS_PER_MONTH;
 
+    // REGLA DE CORTE: despacho, picking y embalaje se cobran por las órdenes cuyo evento
+    // DESPACHADA (SHIPPED) cae dentro del período. Así un pedido nunca se factura a medias
+    // entre dos meses (picking en uno, despacho en otro) ni se cobra si aún no salió.
     const ords = await this.orders.list(sellerId);
-    let pedidosDespachados = 0;
+    const shipped = new Map<string, SalesOrder>();
     for (const o of ords) {
+      // Fecha de despacho: evento SHIPPED del historial o, como respaldo (órdenes guardadas por
+      // versiones que no persistían el historial), la fecha del bloque de despacho.
       const ev = (o.events || []).find((e) => e.type === 'SHIPPED');
-      if (ev && inPeriod(ev.at)) pedidosDespachados += 1;
+      const shippedAt = ev ? ev.at : (o.status === 'SHIPPED' && o.shipment && o.shipment.shippedAt) ? o.shipment.shippedAt : null;
+      if (shippedAt && inPeriod(shippedAt)) shipped.set(o.id, o);
+    }
+    const pedidosDespachados = shipped.size;
+    // Unidades pickeadas: movimientos PICK del kardex ligados a cada orden despachada
+    // (referencia PICK:<orderId>). Si una orden no tiene movimientos asociados (datos antiguos),
+    // se usan las cantidades de sus líneas como respaldo.
+    const pickedByOrder = new Map<string, number>();
+    for (const m of movs) {
+      if (m.type !== MovementType.PICK || !m.reference || !m.reference.startsWith('PICK:')) continue;
+      const oid = m.reference.slice(5);
+      pickedByOrder.set(oid, (pickedByOrder.get(oid) || 0) - m.qtyDelta);
+    }
+    let unidadesPickeadas = 0;
+    for (const [oid, o] of shipped) {
+      const picked = pickedByOrder.get(oid);
+      unidadesPickeadas += picked != null && picked > 0 ? picked : (o.lines || []).reduce((a: number, l: { qty: number }) => a + (l.qty || 0), 0);
     }
     const asm = await this.assemblies.list(sellerId);
     const kitsArmados = asm.filter((a) => inPeriod(a.at)).reduce((a, r) => a + r.qty, 0);
@@ -160,10 +181,10 @@ export class BillingService {
     add('Picking', 'unidad', unidadesPickeadas, rate.pickPerUnit);
     add('Armado de kits', 'kit', kitsArmados, rate.assemblyPerKit);
 
-    // Materiales de embalaje consumidos por las órdenes de este cliente en el período.
-    // Una línea por tipo de insumo, con el precio efectivo (override por seller o default).
+    // Materiales de embalaje consumidos por las órdenes DESPACHADAS en el período (misma regla
+    // de corte que despacho y picking). Una línea por tipo de insumo, con el precio efectivo.
     if (this.packaging) {
-      const emb = await this.packaging.consumptionForBilling(seller.operationId, sellerId, fromISO, toISO);
+      const emb = await this.packaging.consumptionForBilling(seller.operationId, sellerId, fromISO, toISO, new Set(shipped.keys()));
       for (const e of emb) {
         if (e.qty > 0 && e.amount > 0) {
           lines.push({ concept: `Embalaje · ${e.name}`, unit: 'unidad', qty: e.qty, rate: e.unitPrice, amount: e.amount });

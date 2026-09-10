@@ -207,14 +207,17 @@ export class PackagingService {
   }
 
   /**
-   * Consumo de embalaje de un seller en un período, agrupado por insumo, con el monto.
+   * Consumo de embalaje de un seller a facturar, agrupado por insumo, con el monto.
    * Alimenta la pre-facturación (una línea por tipo de embalaje).
+   * Si se entrega `orderIds` (órdenes despachadas en el período), se cobran los consumos de
+   * ESAS órdenes sin importar cuándo se empacaron; si no, se cobra por fecha de consumo.
    */
   async consumptionForBilling(
     operationId: string,
     sellerId: string,
     fromIso: string,
     toIso: string,
+    orderIds?: Set<string> | null,
   ): Promise<{ sku: string; name: string; qty: number; unitPrice: number; amount: number }[]> {
     const movs = await this.repo.listMovements(operationId, { sellerId });
     const materials = await this.repo.listMaterials(operationId);
@@ -222,7 +225,8 @@ export class PackagingService {
     const agg = new Map<string, { qty: number; amount: number; unitPrice: number }>();
     for (const mv of movs) {
       if (mv.type !== PackagingMovementType.CONSUMPTION) continue;
-      if (mv.occurredAt < fromIso || mv.occurredAt >= toIso) continue;
+      if (orderIds) { if (!mv.orderId || !orderIds.has(mv.orderId)) continue; }
+      else if (mv.occurredAt < fromIso || mv.occurredAt >= toIso) continue;
       const qty = -mv.qtyDelta; // consumo positivo
       const price = mv.unitPrice ?? 0;
       const cur = agg.get(mv.materialSku) || { qty: 0, amount: 0, unitPrice: price };

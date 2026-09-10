@@ -1240,6 +1240,10 @@ export class PrismaOrderRepository implements OrderRepository {
           shipTo: order.shipTo as unknown as object,
           status: order.status,
           createdAt: new Date(order.createdAt),
+          // Historial de auditoría en la cabecera: lo leen facturación (evento SHIPPED del
+          // período), métricas y actividad. Antes no se persistía y en producción (Prisma)
+          // toda orden volvía con events=[] → despacho/picking facturados en 0.
+          events: (order.events ?? []) as unknown as object,
           ...(order.shipment ? { shipment: order.shipment as unknown as object } : {}),
           ...(order.packing ? { packing: order.packing as unknown as object } : {}),
         },
@@ -1249,6 +1253,8 @@ export class PrismaOrderRepository implements OrderRepository {
           purchaseOrderRef: order.purchaseOrderRef,
           documentType: order.documentType,
           carrier: order.carrier,
+          shipTo: order.shipTo as unknown as object,
+          events: (order.events ?? []) as unknown as object,
           ...(order.shipment ? { shipment: order.shipment as unknown as object } : {}),
           ...(order.packing ? { packing: order.packing as unknown as object } : {}),
         },
