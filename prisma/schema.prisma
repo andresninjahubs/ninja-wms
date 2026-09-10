@@ -759,7 +759,7 @@ model ReturnOrder {
   @@index([sellerId, status])
 }
 
-/** Línea normalizada de una devolución (G8). */
+/// Línea normalizada de una devolución (G8).
 model ReturnLine {
   id           String @id // "{returnId}:{lineNo}"
   returnId     String
@@ -813,7 +813,7 @@ model ReceiptOrder {
   @@index([sellerId, status])
 }
 
-/** Línea normalizada de una recepción (G8). */
+/// Línea normalizada de una recepción (G8).
 model ReceiptLine {
   id       String    @id // "{receiptId}:{lineNo}"
   receiptId String
