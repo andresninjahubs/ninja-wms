@@ -113,6 +113,11 @@
   table.m-cards td[data-label=""]::before, table.m-cards td[colspan]::before { display: none; }
   table.m-cards td[colspan] { justify-content: center; }
   table.m-cards td.m-first { font-weight: 700; font-size: 15px; justify-content: flex-start; text-align: left; gap: 8px; }
+  table.m-cards td.selcol { justify-content: flex-start; width: auto; padding: 4px 0; }
+  table.m-cards td.selcol input { width: 22px; height: 22px; }
+  .bulk-bar { top: 0; }
+  .m-only:not(.hidden) { display: inline-flex !important; }
+  .bulk-bar .bb-sel { min-width: 0; flex: 1 1 100%; }
   table.m-cards td.m-first::before { display: none; }
   table.m-cards td.m-actions { justify-content: flex-start; padding-top: 10px; }
   table.m-cards td.m-actions .rowacts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-start; }

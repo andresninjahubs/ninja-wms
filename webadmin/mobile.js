@@ -77,7 +77,7 @@
           var span=parseInt(td.getAttribute('colspan')||'1',10);
           var lbl=labels[i]!=null?labels[i]:'';
           if(td.getAttribute('data-label')!==lbl)td.setAttribute('data-label',lbl);
-          td.classList.toggle('m-first',i===0&&span===1&&!td.querySelector('.rowacts,button'));
+          td.classList.toggle('m-first',i===(labels[0]===''&&tr.querySelector('td.selcol')?1:0)&&span===1&&!td.querySelector('.rowacts,button,input'));
           td.classList.toggle('m-actions',(ths[i]&&ths[i].hasAttribute('data-action'))||!!td.querySelector('.rowacts'));
           i+=span;
         });

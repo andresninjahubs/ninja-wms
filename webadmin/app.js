@@ -2562,9 +2562,14 @@
         +(canCancel?'<button class="mini danger" data-cancel="'+o.id+'">Cancelar</button>':'')
         +(canReactivate?'<button class="mini pri" data-react="'+o.id+'">Reactivar</button>':'')
         +'</div>';
-      return '<tr class="click" data-o="'+o.id+'"><td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td><td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span></td><td style="text-align:right">'+acts+'</td></tr>';
-    }).join(""):'<tr><td colspan="7" class="empty">Sin órdenes en este estado.</td></tr>';
-    $$("#ord-body tr.click").forEach(function(tr){tr.addEventListener("click",function(e){if(e.target.closest("[data-cancel],[data-react],[data-oedit],[data-oalloc],[data-ostart],[data-opick],[data-opack],[data-olabels],[data-oship]"))return;openOrder(D.ord.filter(function(o){return o.id===tr.getAttribute("data-o");})[0]);});});
+      var selCell=bulkEnabled()?'<td class="selcol"><input type="checkbox" class="bulk-ck" data-bk="'+o.id+'" '+(bulkSel[o.id]?'checked':'')+' aria-label="Seleccionar orden"></td>':'';
+      return '<tr class="click'+(bulkSel[o.id]?' selected':'')+'" data-o="'+o.id+'">'+selCell+'<td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td><td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span></td><td style="text-align:right">'+acts+'</td></tr>';
+    }).join(""):'<tr><td colspan="'+(bulkEnabled()?8:7)+'" class="empty">Sin órdenes en este estado.</td></tr>';
+    var selTh=$("#ord-selall"); if(selTh)selTh.closest('th').classList.toggle('hidden',!bulkEnabled());
+    var selM=$("#ord-selall-m"); if(selM)selM.classList.toggle('hidden',!bulkEnabled()||!os.length);
+    syncBulkHeader(os); paintBulkBar();
+    $$("#ord-body tr.click").forEach(function(tr){tr.addEventListener("click",function(e){if(e.target.closest("[data-cancel],[data-react],[data-oedit],[data-oalloc],[data-ostart],[data-opick],[data-opack],[data-olabels],[data-oship],.selcol"))return;openOrder(D.ord.filter(function(o){return o.id===tr.getAttribute("data-o");})[0]);});});
+    $$("#ord-body .bulk-ck").forEach(function(ck){ck.addEventListener("change",function(){ if(ck.checked)bulkSel[ck.getAttribute("data-bk")]=true; else delete bulkSel[ck.getAttribute("data-bk")]; ck.closest("tr").classList.toggle("selected",ck.checked); paintBulkBar(); syncBulkHeader(os); });});
     $$("#ord-body [data-cancel]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();cancelOrder(b.getAttribute("data-cancel"));});});
     $$("#ord-body [data-react]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();reactivateOrder(b.getAttribute("data-react"));});});
     $$("#ord-body [data-oedit]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openOrderForm(byId(D.ord,b.getAttribute("data-oedit")));});});
@@ -2576,6 +2581,81 @@
     $$("#ord-body [data-oship]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openShipForm(byId(D.ord,b.getAttribute("data-oship")));});});
     paintSort('orders');
   }
+
+  // ===== Acciones masivas sobre órdenes (admin/supervisor) =====
+  // Selección con casillas + barra flotante: la acción elegida se aplica orden por orden
+  // (mismos endpoints que las acciones individuales); las que no están en el estado
+  // correcto se omiten y al final se informa el resultado. La selección sobrevive a los
+  // refrescos automáticos de la tabla.
+  var bulkSel={};
+  function bulkEnabled(){ return (role==='ADMIN'||role==='SUPERVISOR'||role==='PLATFORM_ADMIN') && can('fulfill') && !!seller; }
+  var BULK_ACTIONS=[
+    {k:'allocate', label:'Reservar stock',       from:['RECEIVED'],  to:'Reservada',   ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/allocate',{method:'POST'});}},
+    {k:'start',    label:'Pasar a picking',      from:['ALLOCATED'], to:'En picking',  ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/start-picking',{method:'POST'});}},
+    {k:'pick',     label:'Confirmar picking completo', from:['PICKING','ALLOCATED'], to:'Pickeada', ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/pick',{method:'POST'});}},
+    {k:'pack',     label:'Empacar (1 bulto)',    from:['PICKED'],    to:'Empacada',    ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/pack',{method:'POST',body:{bultos:1}});}},
+    {k:'ship',     label:'Despachar',            from:['PACKED'],    to:'Despachada',  needsCarrier:true, ep:function(id,o,x){return api('/sellers/'+seller+'/orders/'+id+'/ship',{method:'POST',body:{carrier:(o.carrier||x.carrier||undefined)}});}},
+    {k:'cancel',   label:'Cancelar',             from:['RECEIVED','ALLOCATED','PICKING'], to:'Cancelada', danger:true, ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/cancel',{method:'POST'});}},
+    {k:'react',    label:'Reactivar',            from:['CANCELLED'], to:'Ingresada',   ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/reactivate',{method:'POST'});}}
+  ];
+  function bulkSelected(){ return (D.ord||[]).filter(function(o){return bulkSel[o.id];}); }
+  function syncBulkHeader(visible){
+    var h=$("#ord-selall"); if(!h)return;
+    var vis=(visible||[]).length, n=(visible||[]).filter(function(o){return bulkSel[o.id];}).length;
+    h.checked=vis>0&&n===vis; h.indeterminate=n>0&&n<vis;
+  }
+  function paintBulkBar(){
+    var bar=$("#bulk-bar"); if(!bar)return;
+    var sel=bulkSelected();
+    if(!bulkEnabled()||!sel.length){ bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+    $("#bulk-count").textContent=sel.length+' orden'+(sel.length===1?'':'es')+' seleccionada'+(sel.length===1?'':'s');
+    var opts=BULK_ACTIONS.map(function(a){ var n=sel.filter(function(o){return a.from.indexOf(o.status)>=0;}).length; return {a:a,n:n}; }).filter(function(x){return x.n>0;});
+    var selEl=$("#bulk-action"), cur=selEl.value;
+    selEl.innerHTML='<option value="">Cambiar estado a…</option>'+opts.map(function(x){return '<option value="'+x.a.k+'">'+esc(x.a.label)+' → '+esc(x.a.to)+' ('+x.n+')</option>';}).join('');
+    if(opts.some(function(x){return x.a.k===cur;}))selEl.value=cur;
+    $("#bulk-apply").disabled=!selEl.value;
+  }
+  function bulkClear(){ bulkSel={}; renderOrders(); paintBulkBar(); }
+  function bulkApply(){
+    var k=$("#bulk-action").value; var a=BULK_ACTIONS.filter(function(x){return x.k===k;})[0]; if(!a)return;
+    var sel=bulkSelected(); var apply=sel.filter(function(o){return a.from.indexOf(o.status)>=0;}); var skip=sel.length-apply.length;
+    if(!apply.length){toast('Ninguna de las órdenes seleccionadas está en un estado válido para esta acción');return;}
+    var noCarrier=a.needsCarrier?apply.filter(function(o){return !o.carrier;}).length:0;
+    var html='<p class="muted" style="margin:0 0 10px">Se aplicará <b>'+esc(a.label)+'</b> a <b>'+apply.length+'</b> orden(es)'+(skip?', y se omitirán <b>'+skip+'</b> que no están en el estado requerido ('+a.from.map(function(st){return STN[st]||st;}).join(' / ')+')':'')+'.</p>'
+      +'<p class="muted" style="margin:0 0 12px;font-size:12.5px">Cada orden se procesa por separado: si alguna falla (por ejemplo, sin stock para reservar), las demás igual se actualizan.</p>'
+      +(a.needsCarrier?'<div class="fld"><label>Courier'+(noCarrier?' (para las '+noCarrier+' sin courier definido)':' (opcional, solo si la orden no tiene uno)')+'</label><input id="bulk-carrier" placeholder="Ej: Chilexpress, Blue Express"></div>':'')
+      +'<div id="bulk-prog" class="muted" style="margin:8px 0 0;font-size:12.5px"></div>'
+      +'<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button class="btn" id="m-no">Cancelar</button><button class="btn '+(a.danger?'danger':'pri')+'" id="m-yes">Aplicar a '+apply.length+'</button></div>';
+    openModal('Cambio de estado masivo',html);
+    $("#m-no").addEventListener('click',closeModal);
+    $("#m-yes").addEventListener('click',function(){
+      var extra={carrier:($("#bulk-carrier")&&$("#bulk-carrier").value.trim())||''};
+      $("#m-yes").disabled=true; $("#m-no").disabled=true;
+      var ok=0, fail=[], i=0, prog=$("#bulk-prog");
+      (function next(){
+        if(i>=apply.length){
+          closeModal(); bulkSel={};
+          loadSeller().then(function(){ paintBulkBar(); });
+          var msg=a.label+': '+ok+' ok'+(skip?' · '+skip+' omitida(s)':'')+(fail.length?' · '+fail.length+' con error':'');
+          if(fail.length){ openModal('Resultado del cambio masivo','<p class="muted" style="margin:0 0 10px">'+esc(msg)+'</p><div style="max-height:40vh;overflow:auto">'+fail.map(function(f){return '<div class="kv"><span>'+esc(f.ref)+'</span><b style="color:var(--crit)">'+esc(f.err)+'</b></div>';}).join('')+'</div><div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn pri" id="m-ok">Cerrar</button></div>'); $("#m-ok").addEventListener('click',closeModal); }
+          else toast(msg);
+          return;
+        }
+        var o=apply[i++]; if(prog)prog.textContent='Procesando '+i+' de '+apply.length+'… ('+(o.externalOrderId||o.id.slice(0,8))+')';
+        a.ep(o.id,o,extra).then(function(){ok++;}).catch(function(e){fail.push({ref:o.externalOrderId||o.id.slice(0,8),err:e.message||'error'});}).then(next);
+      })();
+    });
+  }
+  (function bindBulk(){
+    var h=$("#ord-selall"); if(h)h.addEventListener('change',function(){ var vis=D.ord.filter(function(o){return ordFilter==="ALL"||o.status===ordFilter;}); vis.forEach(function(o){ if(h.checked)bulkSel[o.id]=true; else delete bulkSel[o.id]; }); renderOrders(); paintBulkBar(); });
+    var sa=$("#bulk-action"); if(sa)sa.addEventListener('change',function(){ $("#bulk-apply").disabled=!sa.value; });
+    var ap=$("#bulk-apply"); if(ap)ap.addEventListener('click',bulkApply);
+    var cl=$("#bulk-clear"); if(cl)cl.addEventListener('click',bulkClear);
+    function selectVisible(){ D.ord.filter(function(o){return ordFilter==="ALL"||o.status===ordFilter;}).forEach(function(o){bulkSel[o.id]=true;}); renderOrders(); paintBulkBar(); }
+    var al=$("#bulk-all"); if(al)al.addEventListener('click',selectVisible);
+    var alm=$("#ord-selall-m"); if(alm)alm.addEventListener('click',selectVisible);
+  })();
 
   // ===== Cola de preparación (picking queue) =====
   // Orden forzado: prioridad de courier (según el cliente) y, dentro de cada courier,
