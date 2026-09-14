@@ -1330,9 +1330,15 @@ export class CopilotConfirmActionDto {
 
   @IsOptional() @IsString() @MaxLength(64) sellerId?: string;
 
-  @IsString() @MinLength(1) @MaxLength(120) orden!: string;
+  /** Confirmación por orden (flujo clásico). */
+  @IsOptional() @IsString() @MaxLength(120) orden?: string;
 
-  @IsIn(['reservar', 'iniciar_picking', 'pickear', 'empacar', 'despachar']) accion!: string;
+  @IsOptional() @IsIn(['reservar', 'iniciar_picking', 'pickear', 'empacar', 'despachar']) accion?: string;
+
+  /** Confirmación genérica de una propuesta {tool, args} (cualquier herramienta de acción). */
+  @IsOptional() @IsString() @MaxLength(64) tool?: string;
+
+  @IsOptional() args?: Record<string, unknown>;
 }
 
 /** Ajuste del modo de acciones del copiloto por operación. */

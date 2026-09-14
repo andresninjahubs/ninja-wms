@@ -58,7 +58,11 @@ export interface CopilotAnswer {
 }
 
 /** Acción de escritura propuesta por el copiloto, pendiente de confirmación del usuario. */
-export interface CopilotPendingAction { orden: string; orderId: string; sellerId: string; accion: string; from: string; to: string; }
+export interface CopilotPendingAction {
+  orden: string; orderId: string; sellerId: string; accion: string; from: string; to: string;
+  /** Propuesta genérica (cualquier herramienta de acción): se confirma con {tool, args}. */
+  tool?: string; args?: any; resumen?: string;
+}
 
 /** Preguntas de ejemplo que se muestran como chips en la UI. */
 export const COPILOT_SUGGESTIONS: string[] = [

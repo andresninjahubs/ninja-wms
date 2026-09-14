@@ -54,6 +54,7 @@ import {
   WorkTaskRepository,
   AgentRuleConfigRepository,
   AgentAlertRepository,
+  AgentJournalRepository,
   EmailSender,
   MovementRepository,
   OperationRepository,
@@ -95,6 +96,7 @@ import {
   InMemoryWorkTaskRepository,
   InMemoryAgentRuleConfigRepository,
   InMemoryAgentAlertRepository,
+  InMemoryAgentJournalRepository,
   InMemoryMovementRepository,
   InMemoryOperationRepository,
   InMemoryOrderRepository,
@@ -156,6 +158,7 @@ export async function createWmsContext(): Promise<WmsContext> {
   let taskLedger: WorkTaskRepository;
   let agentRuleConfig: AgentRuleConfigRepository;
   let agentAlerts: AgentAlertRepository;
+  let agentJournal: AgentJournalRepository;
   let users: UserRepository;
   let packs: PackRepository;
   let operations: OperationRepository;
@@ -197,6 +200,7 @@ export async function createWmsContext(): Promise<WmsContext> {
       PrismaWorkTaskRepository,
       PrismaAgentRuleConfigRepository,
       PrismaAgentAlertRepository,
+      PrismaAgentJournalRepository,
       PrismaUserRepository,
       PrismaPackRepository,
       PrismaOperationRepository,
@@ -215,6 +219,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     taskLedger = new PrismaWorkTaskRepository(db);
     agentRuleConfig = new PrismaAgentRuleConfigRepository(db);
     agentAlerts = new PrismaAgentAlertRepository(db);
+    agentJournal = new PrismaAgentJournalRepository(db);
     sellers = new PrismaSellerRepository(db);
     skus = new PrismaSkuRepository(db);
     locations = new PrismaLocationRepository(db);
@@ -259,6 +264,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     taskLedger = new InMemoryWorkTaskRepository();
     agentRuleConfig = new InMemoryAgentRuleConfigRepository();
     agentAlerts = new InMemoryAgentAlertRepository();
+    agentJournal = new InMemoryAgentJournalRepository();
     orders = new InMemoryOrderRepository(events);
     receipts = new InMemoryReceiptOrderRepository(events);
     returnsRepo = new InMemoryReturnOrderRepository(events);
@@ -364,6 +370,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     taskLedger,
     agentRuleConfig,
     agentAlerts,
+    agentJournal,
   );
 
   // Bootstrap del super-admin de plataforma (Ninja Hubs).

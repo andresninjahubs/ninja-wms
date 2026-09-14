@@ -305,10 +305,46 @@ export interface AiConfigRepository {
 export interface CopilotSettings {
   operationId: string;
   actionMode: 'confirm' | 'direct';
+  // ---- Agente autónomo (Fase 1): política de autonomía y límites ----
+  autonomyLevel?: 0 | 1 | 2 | 3; // ver agent-policy.ts (def 1)
+  shadowMode?: boolean; // decide y registra sin ejecutar (def true)
+  paused?: boolean; // interruptor: no inicia nada nuevo (def false)
+  maxActionsPerCycle?: number; // def 20
+  maxActionsPerHour?: number; // def 100
+  notifyEmail?: string | null; // correo para alertas críticas / excepciones
+  notifyWebhookUrl?: string | null; // POST firmado con las alertas nuevas
+  llmPlanning?: boolean; // ciclo de planificación con LLM (def false)
+  llmEveryMin?: number; // frecuencia mínima del ciclo LLM (def 15)
+  maxLlmCallsPerDay?: number; // presupuesto (def 100)
 }
 export interface CopilotSettingsRepository {
   get(operationId: string): Promise<CopilotSettings | null>;
   save(settings: CopilotSettings): Promise<void>;
+}
+
+/**
+ * Diario del agente (memoria persistente entre ciclos y sesiones). Cada entrada es un
+ * hecho corto: un ciclo corrido, una decisión con su justificación, una instrucción del
+ * administrador, un resultado observado. El contexto del LLM incluye las últimas entradas.
+ */
+export interface AgentJournalEntry {
+  id: string;
+  operationId: string;
+  at: string; // ISO
+  kind: 'cycle' | 'decision' | 'instruction' | 'outcome' | 'tools' | 'note';
+  actor: string;
+  text: string;
+  data: Record<string, unknown> | null;
+  /** Solo para 'instruction': hasta cuándo rige (null = hasta que se retire). */
+  expiresAt: string | null;
+  active: boolean;
+}
+export interface AgentJournalRepository {
+  append(entry: AgentJournalEntry): Promise<void>;
+  listRecent(operationId: string, opts?: { kind?: AgentJournalEntry['kind'] | null; limit?: number; since?: string }): Promise<AgentJournalEntry[]>;
+  /** Instrucciones vigentes (activas y no vencidas). */
+  listInstructions(operationId: string, now: string): Promise<AgentJournalEntry[]>;
+  update(id: string, patch: { active?: boolean; text?: string; data?: Record<string, unknown> | null }): Promise<void>;
 }
 
 /** Marca (white-label) por operación. */

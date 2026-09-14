@@ -626,7 +626,7 @@
     <button class="nav" data-pg="activity"><span class="ic">📋</span> Actividad</button>
     <button class="nav" data-pg="aiaudit"><span class="ic">🧠</span> Auditoría IA</button>
     <button class="nav" data-pg="asignaciones"><span class="ic">🧑‍🏭</span> Asignaciones</button>
-    <button class="nav" data-pg="agente"><span class="ic">🛰️</span> Reglas <span class="badge" id="nav-agente"></span></button>
+    <button class="nav" data-pg="agente"><span class="ic">🛰️</span> Agente <span class="badge" id="nav-agente"></span></button>
     <button class="nav" data-pg="branding"><span class="ic">🎨</span> Marca</button>
     <button class="nav" data-pg="clients"><span class="ic">🏢</span> Clientes</button>
     <button class="nav" data-pg="users"><span class="ic">◍</span> Usuarios</button>
@@ -1260,13 +1260,25 @@
       <!-- Agente proactivo (Nivel 3, Fase 1): reglas + alertas in-app -->
       <section class="page" data-pg="agente">
         <div class="toolbar">
-          <span class="muted">El agente vigila la operación y, cuando una regla se cumple, avisa o ejecuta su acción — según lo configures: solo avisar, ejecutar con confirmación, o ejecutar directo.</span>
+          <span class="muted">El agente corre en el servidor con su propio reloj: vigila la operación, genera alertas por orden, SKU, lote u operario, y ejecuta o propone acciones según el nivel de autonomía y la política.</span>
           <div class="sp" style="flex:1"></div>
-          <button class="btn pri" id="agt-eval" style="padding:8px 14px">⚡ Evaluar ahora</button>
+          <button class="btn pri" id="agt-eval" style="padding:8px 14px">⚡ Ejecutar ciclo ahora</button>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Estado y autonomía</h3><div class="sp" style="flex:1"></div><span class="muted">Nivel, modo sombra, límites y notificaciones</span></div>
+          <div class="b"><div id="agt-status"></div></div>
         </div>
         <div class="card">
           <div class="h"><h3>Alertas activas</h3><div class="sp" style="flex:1"></div><span class="muted" id="agt-alerts-sub"></span></div>
           <div class="b"><div id="agt-alerts"></div></div>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Instrucciones al agente</h3><div class="sp" style="flex:1"></div><span class="muted">Directrices vigentes que el agente respeta en cada ciclo</span></div>
+          <div class="b"><div id="agt-instr"></div></div>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Diario del agente</h3><div class="sp" style="flex:1"></div><span class="muted">Memoria: ciclos, decisiones y resultados</span></div>
+          <div class="b"><div id="agt-journal"></div></div>
         </div>
         <div class="card">
           <div class="h"><h3>Reglas del agente</h3><div class="sp" style="flex:1"></div><span class="muted">Enciende/apaga cada regla y ajusta su umbral y enfriamiento</span></div>

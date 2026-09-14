@@ -73,6 +73,7 @@ model AgentRuleConfig {
 
 // Agente proactivo: alertas generadas (notificaciones in-app de la Fase 1).
 model AgentAlert {
+  entityType   String? // ORDER | SKU | LOT | OPERATOR | RECEIPT (alertas por entidad, Fase 1 agente)
   id          String    @id @default(uuid())
   operationId String
   sellerId    String?
@@ -849,8 +850,35 @@ model AiCredential {
 
 // Ajustes del copiloto por operación (modo de acciones: confirm | direct).
 model CopilotSetting {
-  operationId String @id
-  actionMode  String @default("confirm")
+  operationId       String   @id
+  actionMode        String   @default("confirm")
+  // Agente autónomo (Fase 1): política de autonomía, límites y notificaciones.
+  autonomyLevel     Int      @default(1)
+  shadowMode        Boolean  @default(true)
+  paused            Boolean  @default(false)
+  maxActionsPerCycle Int     @default(20)
+  maxActionsPerHour Int      @default(100)
+  notifyEmail       String?
+  notifyWebhookUrl  String?
+  llmPlanning       Boolean  @default(false)
+  llmEveryMin       Int      @default(15)
+  maxLlmCallsPerDay Int      @default(100)
+}
+
+/// Diario del agente: memoria persistente (ciclos, decisiones, instrucciones, resultados).
+model AgentJournal {
+  id          String    @id
+  operationId String
+  at          DateTime
+  kind        String // cycle | decision | instruction | outcome | tools | note
+  actor       String
+  text        String
+  data        Json?
+  expiresAt   DateTime?
+  active      Boolean   @default(true)
+
+  @@index([operationId, at])
+  @@index([operationId, kind, active])
 }
 
 // Tarjeta de costos por operación (costeo por actividad + estándar/real → rentabilidad).

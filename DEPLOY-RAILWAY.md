@@ -40,6 +40,7 @@ En el panel → servicio del WMS → pestaña **Variables**. Agrega:
 | `ROOT_PASSWORD` | una clave fuerte para el super-admin |
 | `SEED_DEMO` | `false` |
 | `CORS_ORIGIN` | `https://TU-DOMINIO` |
+| `AGENT_SCHEDULER` | `false` apaga el reloj del agente autónomo (por defecto corre cada `AGENT_INTERVAL_SEC`, 120 s). Nivel de autonomía, sombra, límites y correo de alertas se fijan en el panel → Agente |
 | `HIDDEN_MODULES` | módulos ocultos al cliente; si no la defines aplica el default de la versión (`voz,costos,plan,aiaudit,asignaciones,agente`). `""` muestra todo |
 
 (Opcionales: `BRAND_APP_NAME`, `BRAND_PRIMARY_COLOR`, `SMTP_URL`, `SMTP_FROM`.)

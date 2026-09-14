@@ -1278,6 +1278,7 @@
           else if(a.state==='busy'){ ic='⏳'; col='var(--ink-2,#556)'; }
           else { ic='•'; col='var(--warn,#c78a00)'; }
           var ACC={reservar:'reservar',iniciar_picking:'poner en picking',pickear:'pickear',empacar:'empacar',despachar:'despachar'};
+          if(pa.tool){ if(a.state==='done')extra=' — ejecutada'; return '<div style="font-size:12.5px;padding:3px 0;color:'+col+'"><b>'+ic+'</b> '+esc(pa.resumen||pa.tool)+extra+'</div>'; }
           return '<div style="font-size:12.5px;padding:3px 0;color:'+col+'"><b>'+ic+'</b> '+esc(ACC[pa.accion]||pa.accion)+' <b>'+esc(pa.orden)+'</b> <span class="muted">('+esc(pa.from)+' → '+esc(pa.to)+')</span>'+extra+'</div>';
         }).join('');
         inner+='<div style="margin-top:10px;padding:10px 12px;border-radius:9px;background:var(--warn-wash,#fff8e6);border:1px solid var(--warn,#c78a00)">'
@@ -1334,11 +1335,12 @@
       while(i<m.actions.length && m.actions[i].state!=='pending') i++;
       if(i>=m.actions.length){
         m.actionsBusy=false; copRenderChat();
-        if(okCount>0){ toast(okCount>1?(okCount+' órdenes actualizadas'):'Orden actualizada'); if(typeof pollOrders==='function')pollOrders(); }
+        if(okCount>0){ toast(okCount>1?(okCount+' acciones ejecutadas'):'Acción ejecutada'); if(typeof pollOrders==='function')pollOrders(); }
         return;
       }
       var a=m.actions[i]; a.state='busy'; copRenderChat();
-      api('/copilot/confirm-action',{method:'POST',body:{operationId:op,sellerId:(role==='CLIENT'?seller:undefined),orden:a.pa.orden,accion:a.pa.accion}}).then(function(r){
+      var cbody=a.pa.tool?{operationId:op,sellerId:(role==='CLIENT'?seller:undefined),tool:a.pa.tool,args:a.pa.args||{}}:{operationId:op,sellerId:(role==='CLIENT'?seller:undefined),orden:a.pa.orden,accion:a.pa.accion};
+      api('/copilot/confirm-action',{method:'POST',body:cbody}).then(function(r){
         if(r&&r.ok){ a.state='done'; a.newState=r.nuevoEstado; okCount++; }
         else { a.state='error'; a.error=(r&&r.error)||'error desconocido'; }
         i++; copRenderChat(); step();
@@ -1403,7 +1405,7 @@
       vozHistory.push({role:'assistant',content:ans});
       var pas=d.pendingActions||(d.pendingAction?[d.pendingAction]:null);
       if(pas&&pas.length){ vozPending=pas.slice(); vozAwaitingConfirm=true;
-        var resumen=ans+' '+(pas.length>1?('Son '+pas.length+' acciones. '):'')+'¿Las confirmo?';
+        var resumen=ans+' '+(pas.length>1?('Son '+pas.length+' acciones. '):'')+pas.filter(function(x){return x.tool;}).map(function(x){return (x.resumen||x.tool)+'. ';}).join('')+'¿Las confirmo?';
         vozAddMsg('ai',ans,'⏳ '+pas.length+' acción(es) esperando tu confirmación por voz');
         vozSpeakText(resumen,vozAfterSpeak);
       } else {
@@ -1423,7 +1425,8 @@
         vozReply(msg+' ¿Algo más?'); if(typeof pollOrders==='function')pollOrders(); return;
       }
       var a=actions[i];
-      api('/copilot/confirm-action',{method:'POST',body:{operationId:op,orden:a.orden,accion:a.accion}}).then(function(r){
+      var vbody=a.tool?{operationId:op,tool:a.tool,args:a.args||{}}:{operationId:op,orden:a.orden,accion:a.accion};
+      api('/copilot/confirm-action',{method:'POST',body:vbody}).then(function(r){
         if(r&&r.ok)ok++;else errs++; i++; step();
       }).catch(function(){errs++;i++;step();});
     }
@@ -5027,9 +5030,49 @@
   function renderAgente(){
     if(!op)return;
     var ev=$('#agt-eval');
-    if(ev)ev.onclick=function(){api('/agent/sweep',{method:'POST',body:{operationId:op}}).then(function(r){toast(r&&r.nuevas?('Barrido: '+r.nuevas+' alerta(s) nueva(s)'):'Barrido: sin novedades');renderAgente();}).catch(function(e){toast(e.message);});};
+    if(ev)ev.onclick=function(){ev.disabled=true;api('/agent/sweep',{method:'POST',body:{operationId:op}}).then(function(r){ev.disabled=false;var b=r&&r.barrido;toast(r&&r.skipped?('Ciclo omitido: '+r.skipped):(b?('Ciclo: '+b.nuevas+' alerta(s) nueva(s), '+b.ejecutadas+' ejecutada(s), '+b.propuestas+' propuesta(s), '+b.sombra+' en sombra'):'Ciclo ejecutado'));renderAgente();}).catch(function(e){ev.disabled=false;toast(e.message);});};
+    api('/agent/status?operationId='+encodeURIComponent(op)).then(paintAgentStatus).catch(function(){});
     api('/agent/rules?'+agtScope()).then(paintAgentRules).catch(function(){});
     api('/agent/alerts?'+agtScope()).then(paintAgentAlerts).catch(function(){});
+    api('/agent/instructions?operationId='+encodeURIComponent(op)).then(paintAgentInstructions).catch(function(){});
+    api('/agent/journal?operationId='+encodeURIComponent(op)+'&limit=40').then(paintAgentJournal).catch(function(){});
+  }
+  var AGT_LEVELS=[['0','0 · Observador — solo vigila y propone'],['1','1 · Asistido — asigna y balancea solo; el resto propone'],['2','2 · Supervisado — además avanza órdenes, crea recepciones/órdenes y configura automatismos'],['3','3 · Autónomo — todo dentro de límites; escala excepciones']];
+  function paintAgentStatus(st){
+    var box=$('#agt-status'); if(!box||!st)return;
+    var s=st.settings||{};
+    var lc=st.lastCycle; var lcTxt=lc?(fmtDate(lc.at)+' · '+((lc.summary&&(lc.summary.nuevas||0))+' alerta(s), '+(lc.summary&&(lc.summary.ejecutadas||0))+' ejecutada(s), '+(lc.summary&&(lc.summary.sombra||0))+' sombra'+((lc.summary&&lc.summary.llm)?', LLM':''))):'aún sin ciclos desde el arranque';
+    var canEdit=can('master');
+    box.innerHTML='<div class="apprv-box '+(s.paused?'warn':'ok')+'" style="margin-bottom:12px"><div class="apprv-t">'+(s.paused?'⏸ Agente en pausa':(st.scheduler&&st.scheduler.enabled?'● Agente corriendo en el servidor cada '+st.scheduler.intervalSec+' s':'○ Scheduler desactivado en el servidor'))+(s.shadowMode?' · MODO SOMBRA':'')+'</div><div class="hint">Último ciclo: '+esc(lcTxt)+' · Llamadas LLM hoy: '+(st.llmCallsToday||0)+'/'+(s.maxLlmCallsPerDay||0)+'</div></div>'
+      +'<div class="form" style="gap:10px">'
+      +'<div class="row2"><div class="fld"><label>Nivel de autonomía</label><select id="ags-level"'+(canEdit?'':' disabled')+'>'+AGT_LEVELS.map(function(l){return '<option value="'+l[0]+'"'+(String(s.autonomyLevel)===l[0]?' selected':'')+'>'+esc(l[1])+'</option>';}).join('')+'</select><span class="hint">Cada acción tiene un nivel mínimo; bajo ese nivel queda propuesta para que la confirmes.</span></div>'
+      +'<div class="fld"><label>Modo del copiloto</label><select id="ags-mode"'+(canEdit?'':' disabled')+'><option value="confirm"'+(s.actionMode!=='direct'?' selected':'')+'>Confirmación (las acciones quedan propuestas)</option><option value="direct"'+(s.actionMode==='direct'?' selected':'')+'>Directo (ejecuta según el nivel)</option></select></div></div>'
+      +'<div class="row2"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="ags-shadow" '+(s.shadowMode?'checked':'')+(canEdit?'':' disabled')+' style="width:auto"> <b>Modo sombra</b> <span class="hint">— decide y registra lo que haría, sin ejecutar</span></label>'
+      +'<label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="ags-paused" '+(s.paused?'checked':'')+(canEdit?'':' disabled')+' style="width:auto"> <b>Pausar agente</b> <span class="hint">— no inicia nada nuevo</span></label></div>'
+      +'<div class="row2"><div class="fld"><label>Máx. acciones por ciclo</label><input id="ags-maxc" type="number" min="0" value="'+(s.maxActionsPerCycle||0)+'"'+(canEdit?'':' disabled')+'></div><div class="fld"><label>Máx. acciones por hora</label><input id="ags-maxh" type="number" min="0" value="'+(s.maxActionsPerHour||0)+'"'+(canEdit?'':' disabled')+'></div></div>'
+      +'<div class="row2"><div class="fld"><label>Correo para alertas críticas y excepciones</label><input id="ags-email" type="email" value="'+esc(s.notifyEmail||'')+'" placeholder="supervisor@empresa.cl"'+(canEdit?'':' disabled')+'></div><div class="fld"><label>Webhook (POST con las alertas nuevas)</label><input id="ags-wh" type="url" value="'+esc(s.notifyWebhookUrl||'')+'" placeholder="https://…"'+(canEdit?'':' disabled')+'></div></div>'
+      +'<div class="row2"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="ags-llm" '+(s.llmPlanning?'checked':'')+(canEdit?'':' disabled')+' style="width:auto"> <b>Planificación con IA</b> <span class="hint">— el agente razona con el LLM conectado y propone/ejecuta según la política</span></label>'
+      +'<div style="display:flex;gap:8px"><div class="fld" style="flex:1"><label>Cada (min)</label><input id="ags-llmmin" type="number" min="1" value="'+(s.llmEveryMin||15)+'"'+(canEdit?'':' disabled')+'></div><div class="fld" style="flex:1"><label>Máx. llamadas/día</label><input id="ags-llmmax" type="number" min="0" value="'+(s.maxLlmCallsPerDay||0)+'"'+(canEdit?'':' disabled')+'></div></div></div>'
+      +(canEdit?'<div class="acts"><span class="hint">Los cambios rigen desde el próximo ciclo.</span><button class="btn pri" id="ags-save">Guardar ajustes</button></div>':'')
+      +'</div>';
+    if($('#ags-save'))$('#ags-save').addEventListener('click',function(){
+      var body={operationId:op,autonomyLevel:parseInt($('#ags-level').value,10),actionMode:$('#ags-mode').value,shadowMode:$('#ags-shadow').checked,paused:$('#ags-paused').checked,maxActionsPerCycle:parseInt($('#ags-maxc').value,10)||0,maxActionsPerHour:parseInt($('#ags-maxh').value,10)||0,notifyEmail:$('#ags-email').value.trim()||null,notifyWebhookUrl:$('#ags-wh').value.trim()||null,llmPlanning:$('#ags-llm').checked,llmEveryMin:parseInt($('#ags-llmmin').value,10)||15,maxLlmCallsPerDay:parseInt($('#ags-llmmax').value,10)||0};
+      api('/agent/settings',{method:'PATCH',body:body}).then(function(){toast('Ajustes del agente guardados');renderAgente();}).catch(function(e){toast(e.message);});
+    });
+  }
+  function paintAgentInstructions(list){
+    var box=$('#agt-instr'); if(!box)return; list=list||[];
+    var canEdit=can('master');
+    box.innerHTML=(list.length?list.map(function(i){return '<div style="display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line-2,var(--line))"><div style="flex:1;font-size:13px">'+esc(i.text)+' <span class="hint">'+(i.expiresAt?'hasta '+esc(String(i.expiresAt).slice(0,10)):'sin vencimiento')+(i.actor&&!/^[0-9a-f-]{20,}$/i.test(i.actor)?' · '+esc(i.actor):'')+'</span></div>'+(canEdit?'<button class="mini" data-agtretire="'+esc(i.id)+'">Retirar</button>':'')+'</div>';}).join(''):'<div class="muted" style="padding:6px 2px">Sin instrucciones vigentes. Ej.: "hoy priorizar Chilexpress", "no despachar Tienda X hasta que apruebe".</div>')
+      +(canEdit?'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><input id="agt-instr-txt" placeholder="Nueva instrucción para el agente…" style="flex:1;min-width:220px"><input id="agt-instr-days" type="number" min="0" value="0" title="Días de vigencia (0 = hasta retirar)" style="width:90px"><button class="btn pri" id="agt-instr-add">Guardar</button></div>':'');
+    if($('#agt-instr-add'))$('#agt-instr-add').addEventListener('click',function(){var t=$('#agt-instr-txt').value.trim();if(!t){toast('Escribe la instrucción');return;}api('/agent/instructions',{method:'POST',body:{operationId:op,texto:t,diasVigencia:parseInt($('#agt-instr-days').value,10)||0}}).then(function(){toast('Instrucción guardada');renderAgente();}).catch(function(e){toast(e.message);});});
+    $$('#agt-instr [data-agtretire]').forEach(function(b){b.addEventListener('click',function(){api('/agent/instructions/'+encodeURIComponent(b.getAttribute('data-agtretire'))+'/retire',{method:'POST',body:{operationId:op}}).then(function(){toast('Instrucción retirada');renderAgente();}).catch(function(e){toast(e.message);});});});
+  }
+  var AGT_KIND={cycle:'Ciclo',decision:'Decisión',instruction:'Instrucción',outcome:'Resultado',tools:'Consulta',note:'Nota'};
+  function paintAgentJournal(list){
+    var box=$('#agt-journal'); if(!box)return; list=(list||[]).filter(function(e){return e.kind!=='tools';});
+    if(!list.length){box.innerHTML='<div class="muted" style="padding:6px 2px">El diario se llena con cada ciclo del agente: qué evaluó, qué decidió y qué habría hecho en modo sombra.</div>';return;}
+    box.innerHTML='<table class="m-skip" style="font-size:12.5px"><thead><tr><th>Cuándo</th><th>Tipo</th><th>Qué pasó</th></tr></thead><tbody>'+list.map(function(e){return '<tr><td class="muted" style="white-space:nowrap">'+esc(fmtDate(e.at))+'</td><td><span class="chip st-'+(e.kind==='decision'?'RESERVED':e.kind==='outcome'?'QUARANTINE':'AVAILABLE')+'"><span class="dot"></span>'+esc(AGT_KIND[e.kind]||e.kind)+'</span></td><td>'+esc(e.text)+'</td></tr>';}).join('')+'</tbody></table>';
   }
   function paintAgentAlerts(d){
     var box=$('#agt-alerts');var al=(d&&d.abiertas)||[];
@@ -5044,7 +5087,7 @@
       else if(a.actionStatus==='error'){act='<div style="font-size:12px;margin-top:6px;color:var(--crit)">✕ '+esc(a.actionResult||'no se pudo ejecutar')+'</div>';}
       return '<div style="display:flex;gap:12px;padding:12px 13px;border:1px solid var(--line);border-left:4px solid '+sv.c+';border-radius:10px;margin-bottom:9px">'
         +'<div style="flex:1;min-width:0">'
-        +'<div style="font-weight:700;font-size:13.5px">'+esc(a.title)+' <span class="rolechip" style="background:var(--surface-3);color:'+sv.c+';font-size:10.5px">'+sv.t+'</span></div>'
+        +'<div style="font-weight:700;font-size:13.5px">'+esc(a.title)+' <span class="rolechip" style="background:var(--surface-3);color:'+sv.c+';font-size:10.5px">'+sv.t+'</span>'+(a.actionStatus==='proposed'&&a.actionResult&&/sombra/.test(a.actionResult)?' <span class="rolechip" style="background:var(--surface-3);font-size:10.5px">sombra</span>':'')+'</div>'
         +'<div class="muted" style="font-size:12.5px;margin:3px 0 4px">'+esc(a.detail)+'</div>'
         +(a.action?'<div style="font-size:12.5px"><b style="color:'+sv.c+'">Sugerencia:</b> '+esc(a.action)+'</div>':'')
         +act
@@ -5096,7 +5139,7 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],reports:["Reportes","KPIs del cliente"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Mensajes","Chat interno con clientes"],voicechannel:["Canal de voz","Mensajes de voz operador ↔ administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Reglas","Agente proactivo: reglas y alertas que necesitan tu atención"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],reports:["Reportes","KPIs del cliente"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Mensajes","Chat interno con clientes"],voicechannel:["Canal de voz","Mensajes de voz operador ↔ administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
     if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}

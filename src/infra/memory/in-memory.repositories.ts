@@ -30,6 +30,8 @@ import {
   AiConfigRepository,
   AiCredential,
   CopilotSettingsRepository,
+  AgentJournalRepository,
+  AgentJournalEntry,
   CopilotSettings,
   MovementRepository,
   OperationRepository,
@@ -284,6 +286,29 @@ export class InMemoryCopilotSettingsRepository implements CopilotSettingsReposit
   }
   async save(settings: CopilotSettings): Promise<void> {
     this.store.set(settings.operationId, { ...settings });
+  }
+}
+
+export class InMemoryAgentJournalRepository implements AgentJournalRepository {
+  private readonly rows: AgentJournalEntry[] = [];
+  async append(e: AgentJournalEntry): Promise<void> { this.rows.push({ ...e, data: e.data ? { ...e.data } : null }); }
+  async listRecent(operationId: string, opts?: { kind?: AgentJournalEntry['kind'] | null; limit?: number; since?: string }): Promise<AgentJournalEntry[]> {
+    return this.rows
+      .filter((r) => r.operationId === operationId && (!opts?.kind || r.kind === opts.kind) && (!opts?.since || r.at >= opts.since))
+      .sort((a, b) => b.at.localeCompare(a.at))
+      .slice(0, opts?.limit ?? 50)
+      .map((r) => ({ ...r }));
+  }
+  async listInstructions(operationId: string, now: string): Promise<AgentJournalEntry[]> {
+    return this.rows
+      .filter((r) => r.operationId === operationId && r.kind === 'instruction' && r.active && (!r.expiresAt || r.expiresAt > now))
+      .sort((a, b) => b.at.localeCompare(a.at)).slice(0, 30).map((r) => ({ ...r }));
+  }
+  async update(id: string, patch: { active?: boolean; text?: string; data?: Record<string, unknown> | null }): Promise<void> {
+    const r = this.rows.find((x) => x.id === id); if (!r) return;
+    if (patch.active != null) r.active = patch.active;
+    if (patch.text != null) r.text = patch.text;
+    if (patch.data !== undefined) r.data = patch.data;
   }
 }
 

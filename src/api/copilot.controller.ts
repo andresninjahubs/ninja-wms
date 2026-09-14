@@ -48,6 +48,8 @@ export class CopilotController {
     const op = actorOperation(user, dto.operationId);
     const scoped = this.sellerScope(user) || (dto.sellerId || null);
     const actor = user ? { id: user.id, role: user.role } : null;
+    if (dto.tool) return this.wms.copilotConfirmTool(op, scoped, actor, { tool: dto.tool, args: dto.args || {} });
+    if (!dto.orden || !dto.accion) return { ok: false, error: 'Falta la orden y la acción, o la herramienta a confirmar.' };
     return this.wms.copilotConfirmAction(op, scoped, actor, { orden: dto.orden, accion: dto.accion });
   }
 

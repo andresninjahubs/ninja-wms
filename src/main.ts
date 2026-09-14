@@ -8,6 +8,7 @@ import { DomainExceptionFilter } from './api/domain-exception.filter';
 import { WMS_CLOCK, WMS_FACADE } from './api/tokens';
 import type { MutableClock } from './infra/system';
 import { seedDemo } from './infra/seed-demo';
+import { startAgentScheduler } from './infra/agent-scheduler';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger: ['log', 'warn', 'error'] });
@@ -67,6 +68,10 @@ async function bootstrap() {
     // eslint-disable-next-line no-console
     console.warn('No se pudo materializar la analítica inicial:', (e as Error).message);
   }
+
+  // Agente autónomo (Fase 1): reloj propio en el servidor. Ver src/infra/agent-scheduler.ts.
+  // eslint-disable-next-line no-console
+  startAgentScheduler(app.get(WMS_FACADE), (m) => console.log(m));
 
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);

@@ -1143,6 +1143,7 @@ export interface AgentAlert {
   action: string | null; // sugerencia de qué hacer
   link: string | null; // pantalla a abrir
   entityRef: string | null;
+  entityType?: 'ORDER' | 'SKU' | 'LOT' | 'OPERATOR' | 'RECEIPT' | null; // alertas por entidad
   dedupeKey: string; // para no repetir la misma alerta
   status: AgentAlertStatus;
   // Fase 3: acción asociada a la alerta (si la regla ejecuta).

@@ -98,7 +98,8 @@ import {
   User,
   ZoneType,
 } from '../domain/types';
-import { AiConfigRepository, AiCredential, AuthTokenRepository, Clock, CopilotSettingsRepository, CountAuditRepository, EmailSender, EventRepository, IdGenerator, LotRepository, PlanConfigRepository, AiAuditRepository, WorkAssignmentRepository, WorkTaskRepository, AgentRuleConfigRepository, AgentAlertRepository } from '../domain/ports';
+import { AiConfigRepository, AiCredential, AuthTokenRepository, Clock, CopilotSettingsRepository, CountAuditRepository, EmailSender, EventRepository, IdGenerator, LotRepository, PlanConfigRepository, AiAuditRepository, WorkAssignmentRepository, WorkTaskRepository, AgentRuleConfigRepository, AgentAlertRepository, AgentJournalRepository, AgentJournalEntry, CopilotSettings } from '../domain/ports';
+import { ACTION_POLICIES, decidePolicy, describePolicy, effectiveAgentSettings } from '../domain/agent-policy';
 import { AGENT_RULES, AgentRuleDef, agentRuleDef } from '../domain/agent-rules';
 import { ROLE_PERMISSIONS, UserRole } from '../domain/types';
 import {
@@ -181,6 +182,7 @@ export class WmsFacade {
     private readonly taskLedger?: WorkTaskRepository,
     private readonly agentRuleConfig?: AgentRuleConfigRepository,
     private readonly agentAlertRepo?: AgentAlertRepository,
+    private readonly agentJournal?: AgentJournalRepository,
   ) {}
 
   /** Ahora en ISO — usa el reloj inyectado (tests deterministas) o la hora real. */
@@ -520,12 +522,15 @@ export class WmsFacade {
       'Tienes HERRAMIENTAS para consultar datos en vivo del WMS (kardex, línea de tiempo de órdenes, facturación, canal de voz, etc.). Úsalas cuando necesites un dato que no esté en el resumen. Responde SOLO con datos reales (del resumen o de las herramientas); nunca inventes cifras.',
     ].join(' ');
     const canWrite = this.copilotCanWrite(actor?.role);
-    const mode = await this.getCopilotActionMode(operationId);
+    const settings = await this.agentSettings(operationId);
+    const mode = settings.actionMode;
     if (canWrite) {
       sys += ' Además puedes EJECUTAR acciones sobre órdenes con la herramienta avanzar_estado_orden (reservar, pickear, empacar, despachar), CREAR una recepción nueva (crear_recepcion) o una orden de salida nueva reservando su stock si te lo piden (crear_orden), asignar CUALQUIER tipo de tarea que ejecuta un operario —PICK, PACK, SHIP, PUTAWAY, RECEIVE, RESLOT o COUNT— (asignar_tarea), balancear la carga (balancear_carga), y CONFIGURAR LOS AUTOMATISMOS de la bodega: activar/desactivar el auto-balanceo continuo (activar_auto_balanceo), fijar el modo de asignación advisory/estricto (fijar_modo_asignacion) y disparar la reasignación por ociosidad (reasignar_ociosidad). Cuando el administrador te da una directriz para "operar en automático" (ej. "mantén el equipo balanceado solo", "que nadie quede ocioso"), traduce esa intención a estas herramientas de automatismo. Para crear órdenes o recepciones, si no sabes el id del cliente usa clientes_operacion y si no conoces los SKU usa catalogo_productos antes de crear.';
       sys += mode === 'confirm'
-        ? ' El modo es CONFIRMACIÓN: al usar esa herramienta NO se ejecuta nada; solo queda PROPUESTA para que el usuario confirme. Si el usuario pide avanzar VARIAS órdenes (ej. "despacha las 3 que están listas"), invoca la herramienta UNA VEZ POR CADA orden en este mismo turno, para dejarlas TODAS propuestas. Nunca digas que ya se despacharon/ejecutaron: di que quedaron propuestas y que las confirme. No inventes órdenes: usa las herramientas de consulta (listar_ordenes) para saber cuáles corresponden.'
-        : ' El modo es DIRECTO: la acción se ejecuta al invocar la herramienta. Si el usuario pide varias órdenes, invoca la herramienta una vez por cada una y confírmale lo realizado.';
+        ? ' El modo es CONFIRMACIÓN: las acciones que la política no permite ejecutar directamente NO se ejecutan al invocar la herramienta; quedan PROPUESTAS para que el usuario confirme (el resultado de la herramienta te dirá si se ejecutó o quedó propuesta). Si el usuario pide avanzar VARIAS órdenes (ej. "despacha las 3 que están listas"), invoca la herramienta UNA VEZ POR CADA orden en este mismo turno, para dejarlas TODAS propuestas. Nunca digas que algo se ejecutó si la herramienta respondió que quedó propuesto. No inventes órdenes: usa las herramientas de consulta (listar_ordenes) para saber cuáles corresponden.'
+        : ' El modo es DIRECTO: la acción se ejecuta al invocar la herramienta salvo que la política de autonomía la deje propuesta (la herramienta te lo dirá). Si el usuario pide varias órdenes, invoca la herramienta una vez por cada una y confírmale lo realizado.';
+      sys += ' Con guardar_instruccion puedes anotar directrices del administrador para el agente (ej. "hoy priorizar Chilexpress") y quedan vigentes en los próximos ciclos.';
+      sys += ' POLÍTICA DEL AGENTE: ' + describePolicy(settings);
     }
     sys += `\n\n=== RESUMEN DE LA OPERACIÓN (punto de partida; usa herramientas para profundizar) ===\n${ctx}`;
     const tools = canWrite ? [...COPILOT_TOOLS, ...COPILOT_ACTION_TOOLS] : COPILOT_TOOLS;
@@ -534,12 +539,14 @@ export class WmsFacade {
     const exec = async (name: string, args: any) => {
       // Herramientas de ACCIÓN (escritura): se resuelven en copilotExecAction, un
       // método directamente testeable. Si no es una acción, cae a las de lectura.
-      const r = await this.copilotExecAction(name, args, { operationId, sellerId, mode, canWrite, question, actor: actor ?? null, pendingActions });
+      const r = await this.copilotExecAction(name, args, { operationId, sellerId, mode, canWrite, question, actor: actor ?? null, pendingActions, settings });
       return r !== undefined ? r : this.runCopilotTool(name, args, operationId, sellerId);
     };
     // Historial acotado (últimos 12 turnos) + la pregunta actual.
     const turns = [...(history || []).slice(-12), { role: 'user' as const, content: question }];
     const res = await askCopilotAgent(cred, sys, turns, tools, exec);
+    // Auditoría de LECTURAS: qué consultó el copiloto y sobre qué alcance (una entrada por turno).
+    if (res.toolsUsed && res.toolsUsed.length) await this.journal(operationId, 'tools', actor?.id || 'copiloto', `Consultó: ${res.toolsUsed.join(', ')} (alcance ${sellerId || 'operación'})`, { toolsUsed: res.toolsUsed, sellerId });
     if (res.text) return { intent: 'help', answer: res.text, link: null, toolsUsed: res.toolsUsed, pendingAction: pendingActions[0] || undefined, pendingActions: pendingActions.length ? pendingActions : undefined };
     return {
       intent: 'help',
@@ -556,11 +563,37 @@ export class WmsFacade {
   private async copilotExecAction(
     name: string,
     args: any,
-    ctx: { operationId: string; sellerId: string | null; mode: 'confirm' | 'direct'; canWrite: boolean; question: string; actor?: { id?: string; role?: string } | null; pendingActions: CopilotPendingAction[] },
+    ctx: { operationId: string; sellerId: string | null; mode: 'confirm' | 'direct'; canWrite: boolean; question: string; actor?: { id?: string; role?: string } | null; pendingActions: CopilotPendingAction[]; settings?: Required<CopilotSettings>; autonomous?: boolean; confirmed?: boolean; usage?: { cycle: number; hour: number } },
   ): Promise<any | undefined> {
-    const { operationId, sellerId, mode, canWrite, question, actor, pendingActions } = ctx;
+    const { operationId, sellerId, canWrite, question, actor, pendingActions } = ctx;
+    const isAction = ACTION_POLICIES.some((p) => p.tool === name);
+    if (!isAction) return undefined; // no es una acción → el caller usa las herramientas de lectura
+    if (!canWrite) return { error: 'No tienes permisos para ejecutar acciones.' };
+    const settings = ctx.settings ?? await this.agentSettings(operationId);
+    const pol = decidePolicy({ tool: name, settings, autonomous: !!ctx.autonomous, confirmed: !!ctx.confirmed, usage: ctx.usage });
+    if (pol.decision === 'deny') return { error: `Acción no permitida: ${pol.reason}.` };
+    // Toda acción que la política deja PROPUESTA (salvo avanzar_estado_orden, que tiene su
+    // propio flujo por orden) queda como propuesta genérica {tool, args} para confirmar.
+    if (pol.decision === 'propose' && name !== 'avanzar_estado_orden') {
+      const label = pol.policy?.label || name;
+      const resumen = `${label}: ${this.describeActionArgs(name, args)}`;
+      if (!pendingActions.some((p) => p.tool === name && JSON.stringify(p.args || {}) === JSON.stringify(args || {}))) {
+        pendingActions.push({ orden: '', orderId: '', sellerId: sellerId || '', accion: name, from: '', to: '', tool: name, args: args || {}, resumen });
+        await this.recordRecommendation({ operationId, sellerId: sellerId || null, type: 'copilot_action', input: question, output: resumen, score: null, taken: null, outcome: null, actor: actor?.id || (ctx.autonomous ? 'agente' : 'copiloto') });
+      }
+      return { requiresConfirmation: true, resumen: `Propuesta registrada (${pol.reason}): ${resumen}. Un humano la confirmará; NO la des por ejecutada.` };
+    }
+    const mode: 'confirm' | 'direct' = pol.decision === 'execute' ? 'direct' : 'confirm';
+    if (name === 'guardar_instruccion') {
+      const texto = String(args?.texto ?? args?.instruccion ?? '').trim();
+      if (!texto) return { error: 'Falta el texto de la instrucción.' };
+      const dias = Number(args?.diasVigencia ?? 0);
+      const expiresAt = dias > 0 ? new Date(Date.parse(this.clockNow()) + dias * 86400000).toISOString() : null;
+      const id = await this.journal(operationId, 'instruction', actor?.id || 'copiloto', texto, { sellerId: sellerId || null }, expiresAt);
+      await this.recordAgentAction({ operationId, sellerId: sellerId || null, agent: 'copilot', decision: `instrucción: ${texto.slice(0, 80)}`, actor: actor?.id || 'copiloto', orderRef: null, result: 'ok', recommendationId: null });
+      return { ok: true, id, instruccion: texto, vigencia: expiresAt ? `hasta ${expiresAt.slice(0, 10)}` : 'hasta que se retire' };
+    }
     if (name === 'avanzar_estado_orden') {
-      if (!canWrite) return { error: 'No tienes permisos para modificar órdenes.' };
       const resolved = await this.copilotResolveOrder(operationId, sellerId, args?.orden);
       if (!resolved) return { error: 'Orden no encontrada.' };
       const plan = this.copilotPlanAction(resolved.order, args?.accion);
@@ -713,6 +746,38 @@ export class WmsFacade {
     return undefined; // no es una acción → el caller usa las herramientas de lectura
   }
 
+  /** Descripción corta y legible de los argumentos de una acción (para propuestas y diario). */
+  private describeActionArgs(name: string, args: any): string {
+    const a = args || {};
+    switch (name) {
+      case 'asignar_tarea': return `${a.tipo || 'PICK'} ${a.entidad || '?'} → ${a.operario || '?'}`;
+      case 'balancear_carga': return `repartir tareas ${a.tipo || 'PICK'}`;
+      case 'reasignar_ociosidad': return 'mover tareas del más cargado al más libre';
+      case 'activar_auto_balanceo': return a.activar === false || a.activar === 'false' ? 'desactivar auto-balanceo' : 'activar auto-balanceo';
+      case 'fijar_modo_asignacion': return `modo ${a.modo || 'advisory'}`;
+      case 'crear_recepcion': return `recepción ${a.referencia || ''} ${(a.lineas || []).length} línea(s)${a.sellerId ? ' cliente ' + a.sellerId : ''}`.trim();
+      case 'crear_orden': return `orden ${a.referencia || ''} ${(a.lineas || []).length} línea(s) para ${a.destinatario?.nombre || '?'}`.trim();
+      case 'avanzar_estado_orden': return `${a.accion || '?'} orden ${a.orden || '?'}`;
+      case 'guardar_instruccion': return String(a.texto || a.instruccion || '').slice(0, 80);
+      default: return JSON.stringify(a).slice(0, 120);
+    }
+  }
+  /** Confirma y ejecuta una propuesta genérica {tool, args} (botón confirmar del panel/voz). */
+  async copilotConfirmTool(operationId: string, sellerScope: string | null, actor: { id?: string; role?: string } | null, input: { tool: string; args: any }): Promise<any> {
+    if (!this.copilotCanWrite(actor?.role)) return { ok: false, error: 'No tienes permisos para ejecutar acciones.' };
+    const settings = await this.agentSettings(operationId);
+    const r = await this.copilotExecAction(input.tool, input.args || {}, { operationId, sellerId: sellerScope, mode: 'direct', canWrite: true, question: `confirmación: ${input.tool}`, actor, pendingActions: [], settings, confirmed: true });
+    if (r === undefined) return { ok: false, error: 'Acción no reconocida.' };
+    if (r && r.error) return { ok: false, error: r.error };
+    // Marca la recomendación como tomada (aceptación medible).
+    try {
+      const out = `${ACTION_POLICIES.find((p) => p.tool === input.tool)?.label || input.tool}: ${this.describeActionArgs(input.tool, input.args)}`;
+      const recs = this.aiAudit ? await this.aiAudit.listRecommendations(operationId, { type: 'copilot_action', limit: 200 }) : [];
+      const rec = recs.find((x) => x.taken == null && x.output === out);
+      if (rec && this.aiAudit) await this.aiAudit.updateRecommendation(rec.id, { taken: true });
+    } catch { /* best-effort */ }
+    return { ok: true, ...r };
+  }
   /** Resuelve el seller objetivo de una acción por id o nombre, dentro del alcance del usuario. */
   private async copilotResolveSeller(operationId: string, sellerScope: string | null, arg?: string | null): Promise<string | null> {
     if (sellerScope) return sellerScope; // usuario acotado a su propio cliente
@@ -1072,8 +1137,53 @@ export class WmsFacade {
   // ---- Acciones del copiloto (escritura, con permisos y modo por operación) ----
   /** ¿Un rol puede ejecutar acciones de fulfillment (avanzar órdenes)? */
   private copilotCanWrite(role?: string | null): boolean {
-    if (!role) return true; // modo demo sin usuario
+    // Sin usuario solo se permite escribir en modo demo (AUTH_REQUIRED distinto de 'true').
+    // En producción una petición sin identidad NUNCA obtiene permisos de escritura.
+    if (!role) return process.env.AUTH_REQUIRED !== 'true';
     return ROLE_PERMISSIONS[role as UserRole]?.includes('order:fulfill') ?? false;
+  }
+  /** Ajustes efectivos del agente (política de autonomía, sombra, límites, notificaciones). */
+  async agentSettings(operationId: string): Promise<Required<CopilotSettings>> {
+    const s = this.copilotSettings ? await this.copilotSettings.get(operationId).catch(() => null) : null;
+    return effectiveAgentSettings(s, operationId);
+  }
+  async updateAgentSettings(operationId: string, patch: Partial<Omit<CopilotSettings, 'operationId'>>, actor?: string): Promise<Required<CopilotSettings>> {
+    if (!this.copilotSettings) throw new ValidationError('Ajustes no disponibles');
+    const cur = await this.agentSettings(operationId);
+    const lvl = patch.autonomyLevel != null ? Math.max(0, Math.min(3, Math.round(patch.autonomyLevel))) as 0 | 1 | 2 | 3 : cur.autonomyLevel;
+    const next: CopilotSettings = {
+      ...cur,
+      actionMode: patch.actionMode === 'direct' ? 'direct' : patch.actionMode === 'confirm' ? 'confirm' : cur.actionMode,
+      autonomyLevel: lvl,
+      shadowMode: patch.shadowMode != null ? !!patch.shadowMode : cur.shadowMode,
+      paused: patch.paused != null ? !!patch.paused : cur.paused,
+      maxActionsPerCycle: patch.maxActionsPerCycle != null && patch.maxActionsPerCycle >= 0 ? Math.round(patch.maxActionsPerCycle) : cur.maxActionsPerCycle,
+      maxActionsPerHour: patch.maxActionsPerHour != null && patch.maxActionsPerHour >= 0 ? Math.round(patch.maxActionsPerHour) : cur.maxActionsPerHour,
+      notifyEmail: patch.notifyEmail !== undefined ? (patch.notifyEmail ? String(patch.notifyEmail).trim() : null) : cur.notifyEmail,
+      notifyWebhookUrl: patch.notifyWebhookUrl !== undefined ? (patch.notifyWebhookUrl ? String(patch.notifyWebhookUrl).trim() : null) : cur.notifyWebhookUrl,
+      llmPlanning: patch.llmPlanning != null ? !!patch.llmPlanning : cur.llmPlanning,
+      llmEveryMin: patch.llmEveryMin != null && patch.llmEveryMin >= 1 ? Math.round(patch.llmEveryMin) : cur.llmEveryMin,
+      maxLlmCallsPerDay: patch.maxLlmCallsPerDay != null && patch.maxLlmCallsPerDay >= 0 ? Math.round(patch.maxLlmCallsPerDay) : cur.maxLlmCallsPerDay,
+    };
+    await this.copilotSettings.save(next);
+    await this.journal(operationId, 'note', actor || 'admin', `Ajustes del agente actualizados: nivel ${next.autonomyLevel}, sombra ${next.shadowMode ? 'ON' : 'OFF'}, pausa ${next.paused ? 'ON' : 'OFF'}, modo ${next.actionMode}.`, null);
+    return effectiveAgentSettings(next, operationId);
+  }
+  /** Escribe una entrada en el diario del agente (best-effort). */
+  private async journal(operationId: string, kind: AgentJournalEntry['kind'], actor: string, text: string, data: Record<string, unknown> | null, expiresAt: string | null = null): Promise<string | null> {
+    if (!this.agentJournal) return null;
+    const id = this.ids.next();
+    try { await this.agentJournal.append({ id, operationId, at: this.clockNow(), kind, actor, text: String(text).slice(0, 600), data, expiresAt, active: true }); } catch { return null; }
+    return id;
+  }
+  /** Acciones ejecutadas por el agente autónomo en la última hora (para los límites). */
+  private async agentActionsLastHour(operationId: string): Promise<number> {
+    if (!this.aiAudit) return 0;
+    const from = new Date(Date.parse(this.clockNow()) - 3600000).toISOString();
+    try {
+      const acts = await this.aiAudit.listActions(operationId, { from, limit: 1000 });
+      return acts.filter((a) => a.actor === 'agente' && String(a.result || '').startsWith('ok')).length;
+    } catch { return 0; }
   }
   /** Modo de acciones del copiloto para una operación: 'confirm' (def) o 'direct'. */
   async getCopilotActionMode(operationId: string): Promise<'confirm' | 'direct'> {
@@ -1170,15 +1280,12 @@ export class WmsFacade {
    * por SKU, ubicaciones, órdenes por estado, demanda, lotes, embalaje y facturación.
    * Se acota con topes generosos para no exceder el presupuesto de tokens del proveedor.
    */
-  private async copilotContext(operationId: string, sellerId: string | null): Promise<string> {
+  private async copilotDetailContext(operationId: string, sellerId: string | null, caps: { skus: number; locs: number }, missing: string[]): Promise<string> {
     const now = Date.parse(this.clockNow());
     const DAY = 86400000;
     const startToday = new Date(now); startToday.setHours(0, 0, 0, 0);
     const scope = await this.copilotScope(operationId, sellerId);
-    const opName = (await this.operationsService.get(operationId))?.name || operationId;
     const L: string[] = [];
-    L.push(`Fecha actual: ${new Date(now).toISOString().slice(0, 10)}`);
-    L.push(`Operación: ${opName} (id ${operationId}). Alcance: ${sellerId ? 'seller ' + sellerId : 'toda la operación (' + scope.length + ' clientes)'}.`);
 
     // Ubicaciones + ocupación (cross-seller).
     try {
@@ -1190,9 +1297,9 @@ export class WmsFacade {
       const byZone: Record<string, number> = {};
       for (const l of locs) byZone[l.zoneType] = (byZone[l.zoneType] || 0) + 1;
       L.push('Zonas: ' + Object.keys(byZone).map((z) => `${z}=${byZone[z]}`).join(', '));
-      const occLines = locs.slice(0, 120).map((l) => `${l.code}[${l.zoneType}] ocup ${occ[l.id] || 0}${l.capacity ? '/' + l.capacity : ''}`);
-      L.push(occLines.join(' · '));
-    } catch { /* ignore */ }
+      const occLines = locs.slice(0, caps.locs).map((l) => `${l.code}[${l.zoneType}] ocup ${occ[l.id] || 0}${l.capacity ? '/' + l.capacity : ''}`);
+      L.push(occLines.join(' · ') + (locs.length > caps.locs ? ` … (+${locs.length - caps.locs} ubicaciones)` : ''));
+    } catch { missing.push('ubicaciones'); }
 
     let opStockTotal = 0;
     const abcDist: Record<string, number> = {};
@@ -1222,13 +1329,14 @@ export class WmsFacade {
       L.push(`Stock total on-hand: ${total} un. Por estado: ${Object.keys(byState).map((s) => `${s}=${byState[s]}`).join(', ') || '—'}.`);
       L.push(`SKUs activos: ${skus.filter((s) => s.active !== false).length} de ${skus.length}.`);
       for (const s of skus) { const c = (s.rotationClass as string) || '—'; abcDist[c] = (abcDist[c] || 0) + 1; }
-      // Inventario por SKU (on-hand + demanda 30d + cobertura), hasta 250 líneas.
-      const skuLines = skus.slice(0, 250).map((s) => {
+      // Inventario por SKU (on-hand + demanda 30d + cobertura): primero los de mayor demanda.
+      const ranked = [...skus].sort((a, b) => (demand30[b.sku] || 0) - (demand30[a.sku] || 0));
+      const skuLines = ranked.slice(0, caps.skus).map((s) => {
         const oh = onHand[s.sku] || 0; const d = demand30[s.sku] || 0;
         const cov = d > 0 ? Math.floor(oh / (d / 30)) + 'd' : '—';
         return `${s.sku} "${s.description || ''}" on-hand ${oh}, demanda30 ${d}, cobertura ${cov}${s.lotControlled ? ' [lote]' : ''}${s.expiryControlled ? ' [vence]' : ''}${s.serialControlled ? ' [serie]' : ''}`;
       });
-      L.push('Inventario por SKU:\n' + skuLines.join('\n') + (skus.length > 250 ? `\n… (+${skus.length - 250} SKUs más)` : ''));
+      L.push('Inventario por SKU (los de mayor demanda; usa stock_de_sku / catalogo_productos para el resto):\n' + skuLines.join('\n') + (skus.length > caps.skus ? `\n… (+${skus.length - caps.skus} SKUs más)` : ''));
       L.push(`Órdenes: total ${orders.length}. Por estado: ${Object.keys(st).map((k) => `${k}=${st[k]}`).join(', ') || '—'}. En riesgo(>2d) ${aging}. Despachadas hoy ${shippedToday}, 7d ${shipped7}, 30d ${shipped30}.`);
       const q = await this.getPickingQueue(sid).catch(() => []);
       L.push(`Cola de preparación: ${q.length} orden(es).`);
@@ -1248,7 +1356,7 @@ export class WmsFacade {
       L.push(`\n== EMBALAJE (${materials.length} insumos) ==`);
       L.push(materials.slice(0, 80).map((m: any) => `${m.sku} "${m.name}" saldo ${oh[m.sku] || 0}`).join(' · '));
       if (pk.length) L.push('Por reabastecer (consumo14>saldo): ' + pk.map((p) => `${p.sku} quedan ${p.onHand} cobertura ${p.coverageDays}d reponer ${p.reorder}`).join(', '));
-    } catch { /* embalaje no disponible */ }
+    } catch { missing.push('embalaje'); }
 
     // Clasificación ABC (G7): distribución de SKUs por clase de rotación.
     if (Object.keys(abcDist).length) {
@@ -1259,7 +1367,7 @@ export class WmsFacade {
     try {
       const acc = await this.getInventoryAccuracy(operationId);
       if (acc && acc.accuracyPct != null) L.push(`\n== EXACTITUD DE INVENTARIO == ${acc.accuracyPct}% sobre ${acc.countsConsidered} conteos (${acc.linesAccurate}/${acc.linesCounted} líneas exactas).`);
-    } catch { /* sin conteos */ }
+    } catch { missing.push('exactitud de inventario'); }
 
     // Conteo cíclico pendiente por cliente.
     try {
@@ -1274,7 +1382,7 @@ export class WmsFacade {
       if (prod && prod.operators && prod.operators.length) {
         L.push(`\n== PRODUCTIVIDAD (u/h por operario) == ` + prod.operators.slice(0, 10).map((o: any) => `${o.operator} ${o.unitsPerHour ?? '—'}u/h (${o.units}u/${o.hoursWorked}h)`).join(' · '));
       }
-    } catch { /* sin labor */ }
+    } catch { missing.push('productividad'); }
 
     // Carga / asignaciones (Camino B): horas estimadas y pendientes.
     try {
@@ -1296,7 +1404,7 @@ export class WmsFacade {
       L.push(`\n== RENTABILIDAD (mes en curso, ${pr.currency}) == Ingreso ${cl(t.revenue)}, costo real ${cl(t.totalReal)}, margen real ${cl(t.marginReal)} (${t.marginPctReal ?? '—'}%), margen objetivo ${t.marginPctStandard ?? '—'}%, varianza mano de obra ${cl(t.laborVariance)}.`);
       const worst = (pr.sellers || []).slice(0, 3).map((s: any) => `${s.sellerName} ${s.marginPctReal ?? '—'}%`).join(', ');
       if (worst) L.push(`Clientes a vigilar (peor margen real): ${worst}.`);
-    } catch { /* sin costos configurados */ }
+    } catch { missing.push('rentabilidad'); }
 
     // Auditoría IA (G5): gobernanza de recomendaciones y acciones de agentes.
     try {
@@ -1313,11 +1421,180 @@ export class WmsFacade {
       if (unread) L.push(`\n== MENSAJES == ${unread} mensaje(s) de clientes sin leer.`);
     } catch { /* sin chat */ }
 
-    let ctx = L.join('\n');
-    // Tope de seguridad para no exceder el presupuesto del proveedor.
-    const CAP = 60000;
-    if (ctx.length > CAP) ctx = ctx.slice(0, CAP) + '\n… (contexto truncado)';
-    return ctx;
+    return L.join('\n');
+  }
+
+  // ---- Contexto en capas para el LLM y el agente (Fase 1 agente autónomo) ----------------
+
+  private profileCache = new Map<string, { at: number; text: string }>();
+  /** Invalida el perfil cacheado (al cambiar clientes, ubicaciones, usuarios o ajustes). */
+  private invalidateAgentProfile(operationId: string): void { this.profileCache.delete(operationId); }
+
+  /**
+   * CAPA 1 — Perfil del tenant: estable, cacheado 5 minutos. Quién es la operación, sus
+   * clientes y políticas, zonas y capacidad, equipo, y las reglas de negocio que el modelo
+   * debe respetar (hoy solo vivían en el código).
+   */
+  async agentProfileContext(operationId: string): Promise<string> {
+    const now = Date.parse(this.clockNow());
+    const c = this.profileCache.get(operationId);
+    if (c && now - c.at < 5 * 60000) return c.text;
+    const L: string[] = [];
+    const op = await this.operationsService.get(operationId);
+    L.push(`== PERFIL DE LA OPERACIÓN ==`);
+    L.push(`Operación: ${op?.name || operationId} (id ${operationId}). Modo de asignación: ${op?.assignmentMode || 'advisory'}. Auto-balanceo continuo: ${op?.autoBalance ? 'ON' : 'OFF'}.`);
+    try {
+      const sellers = await this.listSellers(operationId);
+      L.push(`Clientes (${sellers.length}): ` + sellers.map((x) => `${x.name} [id ${x.id}] picking ${x.pickingStrategy}${x.consolidateByLocation ? ', consolida por ubicación' : ''}${x.autoAllocateOnIngest ? ', auto-reserva al ingresar' : ''}${(x.courierPriority || []).length ? ', couriers ' + (x.courierPriority || []).join('>') : ''}${x.active === false ? ', INACTIVO' : ''}`).join(' · '));
+    } catch { L.push('Clientes: (no disponible)'); }
+    try {
+      const locs = await this.locations.listByOperation(operationId);
+      const byZone: Record<string, { n: number; cap: number }> = {};
+      for (const l of locs) { const z = byZone[l.zoneType] || { n: 0, cap: 0 }; z.n += l.active === false ? 0 : 1; z.cap += l.capacity || 0; byZone[l.zoneType] = z; }
+      L.push(`Ubicaciones activas por zona: ` + Object.keys(byZone).map((z) => `${z}=${byZone[z].n}${byZone[z].cap ? ' (cap ' + byZone[z].cap + ' un)' : ''}`).join(', ') + '.');
+    } catch { L.push('Ubicaciones: (no disponible)'); }
+    try {
+      const users = await this.listUsers(operationId);
+      const ops = users.filter((u) => u.active && u.role === 'OPERATOR');
+      const staff = users.filter((u) => u.active && (u.role === 'ADMIN' || u.role === 'SUPERVISOR'));
+      L.push(`Equipo: ${ops.length} operario(s) (${ops.slice(0, 15).map((u) => u.name || u.email).join(', ')}${ops.length > 15 ? '…' : ''}); staff: ${staff.map((u) => `${u.name || u.email} (${u.role})`).join(', ') || '—'}.`);
+    } catch { L.push('Equipo: (no disponible)'); }
+    L.push('Reglas de negocio que debes respetar: el stock recién recibido queda en la zona de RECEPCIÓN y NO es reservable hasta guardarse (putaway) en almacenaje/picking; la reserva es todo-o-nada por orden (si falta stock para una línea no se reserva nada); FIFO usa la fecha de recepción del lote y FEFO el vencimiento; una orden pickeada, empacada o despachada ya no se cancela; recibir, pickear y despachar se confirman con la evidencia del operario (escaneo/registro), tú cierras el paso administrativo; picking, despacho y embalaje se facturan en el mes del despacho; las ubicaciones DEV-MERMA y DEV-CUARENTENA no son pickeables.');
+    const text = L.join('\n');
+    this.profileCache.set(operationId, { at: now, text });
+    return text;
+  }
+
+  private lastStateSnapshot = new Map<string, Record<string, number>>();
+  /**
+   * CAPA 2 — Estado operativo compacto: contadores y LISTAS ACCIONABLES con identificadores,
+   * más deltas respecto del ciclo anterior. Es lo que el agente necesita para decidir; el
+   * detalle se obtiene con herramientas.
+   */
+  async agentStateContext(operationId: string, sellerId: string | null): Promise<string> {
+    const now = Date.parse(this.clockNow());
+    const L: string[] = [];
+    const missing: string[] = [];
+    const counters: Record<string, number> = {};
+    const scope = await this.copilotScope(operationId, sellerId);
+    const sname = new Map<string, string>();
+    try { for (const x of await this.listSellers(operationId)) sname.set(x.id, x.name); } catch { /* ignore */ }
+    const nm = (sid: string) => sname.get(sid) || sid;
+    L.push(`== ESTADO OPERATIVO (${new Date(now).toISOString().replace('T', ' ').slice(0, 16)} UTC) ==`);
+    // Órdenes por estado + en riesgo con IDs.
+    try {
+      const st: Record<string, number> = {}; let open = 0;
+      for (const sid of scope) for (const o of await this.orders.listOrders(sid)) { st[o.status] = (st[o.status] || 0) + 1; if (o.status !== 'SHIPPED' && o.status !== 'CANCELLED') open++; }
+      counters.ordenesAbiertas = open;
+      L.push(`Órdenes abiertas ${open}: ` + Object.keys(st).filter((k) => k !== 'SHIPPED' && k !== 'CANCELLED').map((k) => `${k}=${st[k]}`).join(', ') + ` (despachadas ${st.SHIPPED || 0}, canceladas ${st.CANCELLED || 0}).`);
+      const risk = await this.getOrdersAtRisk(operationId, { sellerId, maxHours: 12, limit: 25 });
+      counters.ordenesEnRiesgo = risk.enRiesgo;
+      if (risk.items.length) L.push(`Órdenes detenidas +12 h (${risk.enRiesgo}): ` + risk.items.map((i) => `${i.orden} [${i.estado} ${i.horasDetenida}h, ${nm(i.sellerId)}${i.courier ? ', ' + i.courier : ''}]`).join('; ') + (risk.enRiesgo > risk.items.length ? ' …' : ''));
+    } catch { missing.push('órdenes'); }
+    // Tareas sin asignar por tipo (con refs) y carga de operarios.
+    try {
+      const parts: string[] = [];
+      for (const t of ['PICK', 'PUTAWAY', 'RECEIVE', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
+        const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: 200 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
+        const mine = sellerId ? pool.filter((x) => x.sellerId === sellerId) : pool;
+        counters[`sinAsignar_${t}`] = mine.length;
+        if (mine.length) parts.push(`${t}=${mine.length} (${mine.slice(0, 8).map((x) => x.entityRef || x.entityId).join(', ')}${mine.length > 8 ? '…' : ''})`);
+      }
+      L.push(`Tareas sin asignar: ${parts.join(' · ') || 'ninguna'}.`);
+      const load = await this.operatorLoad(operationId);
+      const dir = await this.operatorsDirectory(operationId);
+      const act = new Map(dir.operarios.map((o) => [o.id, o.activo]));
+      counters.operariosActivos = dir.activos;
+      L.push(`Operarios: ${dir.activos} activo(s), ${dir.inactivos} inactivo(s). Carga: ` + (load.operarios.slice(0, 12).map((o) => `${o.nombre || o.operario}${act.get(o.operario) === false ? ' (inactivo)' : ''} ${o.tareasAbiertas}t/${o.horasEstimadas ?? 0}h`).join(' · ') || '—') + '.');
+    } catch { missing.push('tareas y operarios'); }
+    // Recepciones abiertas.
+    try {
+      const rec: string[] = []; let n = 0;
+      for (const sid of scope) for (const r of await this.listReceipts(sid)) if (r.status === 'PENDING' || r.status === 'PARTIAL') { n++; if (rec.length < 10) rec.push(`${r.reference || r.id} [${r.status}, ${nm(sid)}]`); }
+      counters.recepcionesAbiertas = n;
+      L.push(`Recepciones abiertas ${n}${rec.length ? ': ' + rec.join('; ') + (n > rec.length ? ' …' : '') : ''}.`);
+    } catch { missing.push('recepciones'); }
+    // Quiebres, lotes por vencer, embalaje bajo.
+    try {
+      const so = await this.getStockoutRisk(operationId, { sellerId, coverDays: 7, limit: 10 });
+      counters.quiebres = so.enRiesgo;
+      if (so.enRiesgo) L.push(`Quiebre inminente (${so.enRiesgo} SKU, cobertura < 7 d): ` + so.items.map((i) => `${i.sku} ${i.diasCobertura}d (${nm(i.sellerId)})`).join(', ') + '.');
+    } catch { missing.push('quiebres'); }
+    try {
+      const lots: string[] = []; let n = 0;
+      for (const sid of scope) for (const l of await this.expiringLots(sid, now)) { n++; if (lots.length < 10) lots.push(`${l.sku}·${l.lot} ${l.days < 0 ? 'VENCIDO' : l.days + 'd'} (${l.qty}u, ${nm(sid)})`); }
+      counters.lotesPorVencer = n;
+      if (n) L.push(`Lotes por vencer/vencidos (${n}): ${lots.join(', ')}${n > lots.length ? ' …' : ''}.`);
+    } catch { missing.push('lotes'); }
+    try {
+      const pk = await this.packagingLow(operationId);
+      counters.insumosBajos = pk.length;
+      if (pk.length) L.push(`Insumos de embalaje bajo mínimo (${pk.length}): ` + pk.slice(0, 8).map((p) => `${p.sku} quedan ${p.onHand} (${p.coverageDays}d)`).join(', ') + '.');
+    } catch { missing.push('embalaje'); }
+    // Alertas abiertas del agente.
+    try {
+      const alerts = this.agentAlertRepo ? await this.agentAlertRepo.listOpen(operationId) : [];
+      counters.alertasAbiertas = alerts.length;
+      if (alerts.length) L.push(`Alertas abiertas del agente (${alerts.length}): ` + alerts.slice(0, 12).map((a) => `[${a.severity}] ${a.title}${a.actionStatus === 'proposed' ? ' (acción propuesta: ' + a.actionLabel + ')' : ''}`).join('; ') + (alerts.length > 12 ? ' …' : '') + '.');
+    } catch { missing.push('alertas'); }
+    // Deltas respecto del ciclo anterior.
+    const key = `${operationId}:${sellerId || '*'}`;
+    const prev = this.lastStateSnapshot.get(key);
+    if (prev) {
+      const d = Object.keys(counters).filter((k) => prev[k] !== undefined && prev[k] !== counters[k]).map((k) => `${k} ${prev[k]}→${counters[k]}`);
+      L.push(`Cambios desde el ciclo anterior: ${d.length ? d.join(', ') : 'sin cambios'}.`);
+    }
+    this.lastStateSnapshot.set(key, counters);
+    if (missing.length) L.push(`(No disponible en este ciclo: ${missing.join(', ')}.)`);
+    return L.join('\n');
+  }
+
+  /** CAPA 4 — Memoria del agente: instrucciones vigentes, últimas decisiones y resultados. */
+  async agentMemoryContext(operationId: string): Promise<string> {
+    if (!this.agentJournal) return '';
+    const L: string[] = [];
+    const now = this.clockNow();
+    try {
+      const ins = await this.agentJournal.listInstructions(operationId, now);
+      L.push(`== INSTRUCCIONES VIGENTES DEL ADMINISTRADOR (${ins.length}) ==`);
+      L.push(ins.length ? ins.map((i) => `- ${i.text}${i.expiresAt ? ' (hasta ' + i.expiresAt.slice(0, 10) + ')' : ''}`).join('\n') : '- (ninguna)');
+      const recent = (await this.agentJournal.listRecent(operationId, { limit: 40 })).filter((e) => e.kind !== 'tools' && e.kind !== 'instruction').slice(0, 15);
+      if (recent.length) {
+        L.push(`== DIARIO RECIENTE DEL AGENTE ==`);
+        L.push(recent.map((e) => `${e.at.replace('T', ' ').slice(5, 16)} [${e.kind}] ${e.text}`).join('\n'));
+      }
+    } catch { L.push('(diario no disponible)'); }
+    return L.join('\n');
+  }
+
+  /**
+   * Contexto completo para el LLM, compuesto por capas con PRIORIDAD: si hay que recortar,
+   * se recortan primero las capas de detalle y nunca lo accionable. Las secciones que fallan
+   * se declaran como "no disponible" en vez de desaparecer en silencio.
+   */
+  private async copilotContext(operationId: string, sellerId: string | null): Promise<string> {
+    const now = Date.parse(this.clockNow());
+    const missing: string[] = [];
+    const settings = await this.agentSettings(operationId);
+    const head = `Fecha actual: ${new Date(now).toISOString().slice(0, 10)}. Alcance: ${sellerId ? 'cliente ' + sellerId : 'toda la operación'}. Política: ${describePolicy(settings)}`;
+    const sections: Array<{ name: string; prio: number; text: string }> = [{ name: 'cabecera', prio: 0, text: head }];
+    const push = async (name: string, prio: number, fn: () => Promise<string>) => { try { const t = await fn(); if (t) sections.push({ name, prio, text: t }); } catch { missing.push(name); } };
+    await push('perfil', 1, () => this.agentProfileContext(operationId));
+    await push('estado', 1, () => this.agentStateContext(operationId, sellerId));
+    await push('memoria', 1, () => this.agentMemoryContext(operationId));
+    await push('detalle', 3, () => this.copilotDetailContext(operationId, sellerId, { skus: 80, locs: 60 }, missing));
+    const CAP = 48000;
+    let total = sections.reduce((a, x) => a + x.text.length + 2, 0);
+    for (const prio of [3, 2]) {
+      for (const sec of sections.filter((x) => x.prio === prio)) {
+        if (total <= CAP) break;
+        const room = Math.max(0, sec.text.length - (total - CAP));
+        sec.text = room > 400 ? sec.text.slice(0, room) + `\n… (${sec.name} recortado)` : `(${sec.name} omitido por tamaño)`;
+        total = sections.reduce((a, x) => a + x.text.length + 2, 0);
+      }
+    }
+    if (missing.length) sections.push({ name: 'faltantes', prio: 0, text: `(Secciones no disponibles: ${missing.join(', ')}.)` });
+    return sections.map((x) => x.text).join('\n\n');
   }
 
   // ---- Credenciales de IA por tenant (para el copiloto) --------------------
@@ -3126,96 +3403,271 @@ export class WmsFacade {
     }
   }
 
-  /** Evalúa UNA regla y devuelve el candidato a alerta (agregado por regla), o null. */
-  private async evalAgentRule(operationId: string, def: AgentRuleDef, cfg: AgentRuleConfig): Promise<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string | null } | null> {
+  /**
+   * Evalúa UNA regla y devuelve los candidatos a alerta POR ENTIDAD (orden, SKU, lote,
+   * operario), cada uno con su referencia, para que sean accionables. Devuelve [] si nada.
+   */
+  private async evalAgentRule(operationId: string, def: AgentRuleDef, cfg: AgentRuleConfig): Promise<Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'ORDER' | 'SKU' | 'LOT' | 'OPERATOR' }>> {
     const sid = cfg.sellerId || undefined;
+    const nm = new Map<string, string>();
+    try { for (const x of await this.listSellers(operationId)) nm.set(x.id, x.name); } catch { /* ignore */ }
+    const cl = (id: string | null | undefined) => (id ? nm.get(id) || id : '');
     if (def.key === 'orden_estancada') {
-      const r = await this.getOrdersAtRisk(operationId, { sellerId: sid, maxHours: cfg.threshold });
-      const items = r.items.filter((i) => i.estado !== 'PACKED');
-      if (!items.length) return null;
-      const ej = items.slice(0, 5).map((i) => i.orden).join(', ');
-      return { sellerId: cfg.sellerId, entityRef: null, title: `${items.length} orden(es) detenida(s) +${cfg.threshold} h`, detail: `Sin avanzar hace más de ${cfg.threshold} h: ${ej}${items.length > 5 ? '…' : ''}.`, action: 'Prioriza su preparación en la cola o revisa si están bloqueadas por stock.' };
+      const r = await this.getOrdersAtRisk(operationId, { sellerId: sid, maxHours: cfg.threshold, limit: 100 });
+      return r.items.filter((i) => i.estado !== 'PACKED').map((i) => ({
+        sellerId: i.sellerId, entityRef: i.orden, entityType: 'ORDER' as const,
+        title: `Orden ${i.orden} detenida ${Math.round(i.horasDetenida)} h en ${i.estado}`,
+        detail: `${cl(i.sellerId)} · ${i.unidades} un${i.courier ? ' · ' + i.courier : ''} · creada ${i.creada.slice(0, 16).replace('T', ' ')}.`,
+        action: i.estado === 'RECEIVED' ? 'Reserva su stock (o revisa si falta stock).' : i.estado === 'ALLOCATED' ? 'Asígnala a un operario y pásala a picking.' : 'Revisa por qué el picking no avanza.',
+      }));
     }
     if (def.key === 'sla_despacho') {
-      const r = await this.getOrdersAtRisk(operationId, { sellerId: sid, maxHours: cfg.threshold });
-      const items = r.items.filter((i) => i.estado === 'PACKED');
-      if (!items.length) return null;
-      const ej = items.slice(0, 5).map((i) => i.orden).join(', ');
-      return { sellerId: cfg.sellerId, entityRef: null, title: `${items.length} pedido(s) empacado(s) sin despachar +${cfg.threshold} h`, detail: `Se pasan de su ventana de despacho: ${ej}${items.length > 5 ? '…' : ''}.`, action: 'Despáchalos antes del corte del courier.' };
+      const r = await this.getOrdersAtRisk(operationId, { sellerId: sid, maxHours: cfg.threshold, limit: 100 });
+      return r.items.filter((i) => i.estado === 'PACKED').map((i) => ({
+        sellerId: i.sellerId, entityRef: i.orden, entityType: 'ORDER' as const,
+        title: `Pedido ${i.orden} empacado hace ${Math.round(i.horasDetenida)} h sin despachar`,
+        detail: `${cl(i.sellerId)} · ${i.unidades} un${i.courier ? ' · ' + i.courier : ''}.`,
+        action: 'Despáchalo antes del corte del courier.',
+      }));
     }
     if (def.key === 'quiebre_stock') {
-      const r = await this.getStockoutRisk(operationId, { sellerId: sid, coverDays: cfg.threshold });
-      if (!r.enRiesgo) return null;
-      const ej = r.items.slice(0, 5).map((i) => `${i.sku} (${i.diasCobertura}d)`).join(', ');
-      return { sellerId: cfg.sellerId, entityRef: null, title: `${r.enRiesgo} SKU(s) con cobertura < ${cfg.threshold} días`, detail: `Por quebrar stock: ${ej}${r.items.length > 5 ? '…' : ''}.`, action: 'Gestiona la reposición sugerida con el cliente.' };
+      const r = await this.getStockoutRisk(operationId, { sellerId: sid, coverDays: cfg.threshold, limit: 50 });
+      return r.items.map((i) => ({
+        sellerId: i.sellerId, entityRef: i.sku, entityType: 'SKU' as const,
+        title: `${i.sku} con cobertura de ${i.diasCobertura} día(s)`,
+        detail: `${cl(i.sellerId)} · disponible ${i.disponible} · demanda ${i.demandaDiaria}/día · reposición sugerida ${i.reposicionSugerida}.`,
+        action: 'Gestiona la reposición con el cliente.',
+      }));
     }
     if (def.key === 'operario_inactivo') {
       const dir = await this.operatorsDirectory(operationId);
-      const off = dir.operarios.filter((o) => !o.activo && o.tareasAbiertas >= Math.max(1, cfg.threshold));
-      if (!off.length) return null;
-      const ej = off.slice(0, 5).map((o) => `${o.nombre} (${o.tareasAbiertas})`).join(', ');
-      return { sellerId: null, entityRef: null, title: `${off.length} operario(s) inactivo(s) con tareas abiertas`, detail: `Tienen carga sin completar: ${ej}${off.length > 5 ? '…' : ''}.`, action: 'Reasigna su carga a operarios activos (reasignación por ociosidad).' };
+      return dir.operarios.filter((o) => !o.activo && o.tareasAbiertas >= Math.max(1, cfg.threshold)).map((o) => ({
+        sellerId: null, entityRef: o.id, entityType: 'OPERATOR' as const,
+        title: `${o.nombre} inactivo con ${o.tareasAbiertas} tarea(s) abierta(s)`,
+        detail: `Última conexión ${o.ultimaConexion ? o.ultimaConexion.slice(0, 16).replace('T', ' ') : 'desconocida'}.`,
+        action: 'Reasigna su carga a operarios activos.',
+      }));
     }
     if (def.key === 'lote_por_vencer') {
       const scope = cfg.sellerId ? [cfg.sellerId] : (await this.listSellers(operationId)).map((s) => s.id);
       const now = Date.parse(this.clockNow());
-      const lots: Array<{ sku: string; lot: string; days: number }> = [];
-      for (const s of scope) for (const l of await this.expiringLots(s, now)) if (l.days <= cfg.threshold) lots.push({ sku: l.sku, lot: l.lot, days: l.days });
-      if (!lots.length) return null;
-      lots.sort((a, b) => a.days - b.days);
-      const ej = lots.slice(0, 5).map((l) => `${l.sku}·${l.lot} (${l.days}d)`).join(', ');
-      return { sellerId: cfg.sellerId, entityRef: null, title: `${lots.length} lote(s) por vencer (≤ ${cfg.threshold} días)`, detail: `FEFO: ${ej}${lots.length > 5 ? '…' : ''}.`, action: 'Prioriza su salida o da de baja lo vencido.' };
+      const out: Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'LOT' }> = [];
+      for (const s of scope) for (const l of await this.expiringLots(s, now)) if (l.days <= cfg.threshold) out.push({
+        sellerId: s, entityRef: `${l.sku}·${l.lot}`, entityType: 'LOT',
+        title: `${l.sku} lote ${l.lot} ${l.days < 0 ? 'VENCIDO' : 'vence en ' + l.days + ' día(s)'}`,
+        detail: `${cl(s)} · ${l.qty} un en stock.`,
+        action: l.days < 0 ? 'Da de baja o pon en cuarentena el lote vencido.' : 'Prioriza su salida (FEFO).',
+      });
+      return out.sort((a, b) => a.title.localeCompare(b.title));
     }
-    return null;
+    return [];
   }
 
-  /** Barrido del agente: evalúa las reglas encendidas y genera alertas nuevas (dedup + cooldown). */
-  async runAgentSweep(operationId: string): Promise<{ evaluadas: number; nuevas: number }> {
-    if (!this.agentAlertRepo) return { evaluadas: 0, nuevas: 0 };
+  /**
+   * Barrido del agente: evalúa las reglas encendidas y genera alertas nuevas POR ENTIDAD
+   * (dedupe por regla+entidad, cooldown). Respeta la política: en modo sombra o con nivel
+   * insuficiente, la acción automática queda PROPUESTA en vez de ejecutarse.
+   */
+  async runAgentSweep(operationId: string, opts?: { autonomous?: boolean }): Promise<{ evaluadas: number; nuevas: number; ejecutadas: number; propuestas: number; sombra: number }> {
+    if (!this.agentAlertRepo) return { evaluadas: 0, nuevas: 0, ejecutadas: 0, propuestas: 0, sombra: 0 };
     const now = Date.parse(this.clockNow());
-    let evaluadas = 0, nuevas = 0;
+    const settings = await this.agentSettings(operationId);
+    const usage = { cycle: 0, hour: await this.agentActionsLastHour(operationId) };
+    let evaluadas = 0, nuevas = 0, ejecutadas = 0, propuestas = 0, sombra = 0;
+    const MAX_PER_RULE = 15;
     for (const def of AGENT_RULES) {
       const cfg = await this.agentRuleEffective(operationId, def);
       if (!cfg.enabled) continue;
       evaluadas++;
-      let cand: { sellerId: string | null; title: string; detail: string; action: string; entityRef: string | null } | null = null;
-      try { cand = await this.evalAgentRule(operationId, def, cfg); } catch { cand = null; }
-      if (!cand) continue;
-      const dedupeKey = `${def.key}:${cfg.sellerId || 'op'}`;
-      // Ya hay una alerta ABIERTA para esto → no duplicar.
-      if (await this.agentAlertRepo.findOpenByDedupe(operationId, dedupeKey)) continue;
-      // En enfriamiento (se descartó/creó hace poco) → esperar.
-      const last = await this.agentAlertRepo.lastByDedupe(operationId, dedupeKey);
-      if (last && (now - Date.parse(last.createdAt)) < cfg.cooldownMin * 60000) continue;
-      // Fase 3: acción de la regla. Si es 'execute' y tiene acción definida, se ejecuta
-      // directo (y se registra el resultado) o queda propuesta para confirmar.
-      const canExec = cfg.actionType === 'execute' && !!def.autoAction;
-      let actionTool: string | null = null, actionLabel: string | null = null;
-      let actionStatus: 'none' | 'proposed' | 'done' | 'error' = 'none', actionResult: string | null = null;
-      if (canExec && def.autoAction) {
-        actionTool = def.autoAction.tool; actionLabel = def.autoAction.label;
-        if (cfg.actionMode === 'directo') {
-          try {
-            actionResult = await this.runAgentTool(operationId, actionTool, 'agente');
-            actionStatus = 'done';
-            await this.recordAgentAction({ operationId, sellerId: cand.sellerId, agent: 'agent-rule', decision: `${def.key} → ${actionTool}`, actor: 'agente', orderRef: cand.entityRef, result: `ok: ${actionResult}`, recommendationId: null });
-          } catch (e: any) {
-            actionResult = (e && e.message) || 'no se pudo ejecutar'; actionStatus = 'error';
-            await this.recordAgentAction({ operationId, sellerId: cand.sellerId, agent: 'agent-rule', decision: `${def.key} → ${actionTool}`, actor: 'agente', orderRef: cand.entityRef, result: `error: ${actionResult}`, recommendationId: null });
+      let cands: Awaited<ReturnType<WmsFacade['evalAgentRule']>> = [];
+      try { cands = await this.evalAgentRule(operationId, def, cfg); } catch { cands = []; }
+      let createdForRule = 0;
+      // La acción automática de la regla se ejecuta UNA vez por barrido (no por entidad).
+      let ruleActionDone: { status: 'done' | 'error' | 'proposed' | 'none'; result: string | null } | null = null;
+      for (const cand of cands) {
+        if (createdForRule >= MAX_PER_RULE) break;
+        const dedupeKey = `${def.key}:${cand.entityRef}`;
+        if (await this.agentAlertRepo.findOpenByDedupe(operationId, dedupeKey)) continue;
+        const last = await this.agentAlertRepo.lastByDedupe(operationId, dedupeKey);
+        if (last && (now - Date.parse(last.createdAt)) < cfg.cooldownMin * 60000) continue;
+        const canExec = cfg.actionType === 'execute' && !!def.autoAction;
+        let actionTool: string | null = null, actionLabel: string | null = null;
+        let actionStatus: 'none' | 'proposed' | 'done' | 'error' = 'none', actionResult: string | null = null;
+        if (canExec && def.autoAction) {
+          actionTool = def.autoAction.tool; actionLabel = def.autoAction.label;
+          if (!ruleActionDone) {
+            const pol = decidePolicy({ tool: def.autoAction.tool, settings, autonomous: true, usage });
+            if (cfg.actionMode === 'directo' && pol.decision === 'execute') {
+              try {
+                const result = await this.runAgentTool(operationId, actionTool, 'agente');
+                ruleActionDone = { status: 'done', result }; usage.cycle++; ejecutadas++;
+                await this.recordAgentAction({ operationId, sellerId: cand.sellerId, agent: 'agent-rule', decision: `${def.key} → ${actionTool}`, actor: 'agente', orderRef: cand.entityRef, result: `ok: ${result}`, recommendationId: null });
+                await this.journal(operationId, 'decision', 'agente', `${def.name}: ejecuté "${actionLabel}" → ${result}`, { rule: def.key, tool: actionTool });
+              } catch (e: any) {
+                const msg = (e && e.message) || 'no se pudo ejecutar';
+                ruleActionDone = { status: 'error', result: msg };
+                await this.recordAgentAction({ operationId, sellerId: cand.sellerId, agent: 'agent-rule', decision: `${def.key} → ${actionTool}`, actor: 'agente', orderRef: cand.entityRef, result: `error: ${msg}`, recommendationId: null });
+                await this.journal(operationId, 'outcome', 'agente', `${def.name}: falló "${actionLabel}" (${msg}); escalado a excepción.`, { rule: def.key, tool: actionTool });
+              }
+            } else {
+              const why = cfg.actionMode !== 'directo' ? 'la regla pide confirmación' : pol.reason;
+              ruleActionDone = { status: 'proposed', result: `propuesta (${why})` };
+              if (settings.shadowMode && cfg.actionMode === 'directo') {
+                sombra++;
+                await this.recordAgentAction({ operationId, sellerId: cand.sellerId, agent: 'agent-shadow', decision: `${def.key} → ${actionTool}`, actor: 'agente', orderRef: cand.entityRef, result: `shadow: habría ejecutado "${actionLabel}"`, recommendationId: null });
+                await this.journal(operationId, 'decision', 'agente', `[sombra] ${def.name}: habría ejecutado "${actionLabel}" (${pol.reason}).`, { rule: def.key, tool: actionTool, shadow: true });
+              } else propuestas++;
+            }
           }
-        } else {
-          actionStatus = 'proposed';
+          actionStatus = ruleActionDone.status; actionResult = ruleActionDone.result;
         }
+        await this.agentAlertRepo.create({
+          operationId, sellerId: cand.sellerId, ruleKey: def.key, severity: cfg.severity,
+          title: cand.title, detail: cand.detail, action: cand.action, link: def.link, entityRef: cand.entityRef, entityType: cand.entityType,
+          dedupeKey, status: 'open', actionTool, actionLabel, actionStatus, actionResult,
+          createdAt: this.clockNow(), ackAt: null, ackBy: null,
+        });
+        nuevas++; createdForRule++;
       }
-      await this.agentAlertRepo.create({
-        operationId, sellerId: cand.sellerId, ruleKey: def.key, severity: cfg.severity,
-        title: cand.title, detail: cand.detail, action: cand.action, link: def.link, entityRef: cand.entityRef,
-        dedupeKey, status: 'open', actionTool, actionLabel, actionStatus, actionResult,
-        createdAt: this.clockNow(), ackAt: null, ackBy: null,
-      });
-      nuevas++;
     }
-    return { evaluadas, nuevas };
+    return { evaluadas, nuevas, ejecutadas, propuestas, sombra };
+  }
+
+  // ---- Diario e instrucciones del agente ------------------------------------------------
+  async agentJournalList(operationId: string, opts?: { kind?: AgentJournalEntry['kind'] | null; limit?: number }): Promise<AgentJournalEntry[]> {
+    if (!this.agentJournal) return [];
+    return this.agentJournal.listRecent(operationId, { kind: opts?.kind ?? null, limit: Math.min(opts?.limit ?? 60, 300) });
+  }
+  async agentInstructions(operationId: string): Promise<AgentJournalEntry[]> {
+    if (!this.agentJournal) return [];
+    return this.agentJournal.listInstructions(operationId, this.clockNow());
+  }
+  async addAgentInstruction(operationId: string, texto: string, diasVigencia: number, actor?: string): Promise<{ ok: boolean; id: string | null }> {
+    const t = String(texto || '').trim();
+    if (!t) throw new ValidationError('Falta el texto de la instrucción');
+    const expiresAt = diasVigencia > 0 ? new Date(Date.parse(this.clockNow()) + diasVigencia * 86400000).toISOString() : null;
+    const id = await this.journal(operationId, 'instruction', actor || 'admin', t, null, expiresAt);
+    return { ok: !!id, id };
+  }
+  async retireAgentInstruction(operationId: string, id: string, actor?: string): Promise<{ ok: boolean }> {
+    if (!this.agentJournal) return { ok: false };
+    const cur = (await this.agentJournal.listInstructions(operationId, this.clockNow())).find((e) => e.id === id);
+    if (!cur) throw new NotFoundError('Instrucción no encontrada');
+    await this.agentJournal.update(id, { active: false });
+    await this.journal(operationId, 'note', actor || 'admin', `Instrucción retirada: ${cur.text.slice(0, 80)}`, null);
+    return { ok: true };
+  }
+
+  // ---- Ciclo del agente autónomo (Fase 1): reloj propio, lock, sombra, notificaciones ----
+
+  private agentRunning = new Set<string>();
+  private agentLastCycle = new Map<string, { at: string; summary: Record<string, unknown> }>();
+  private agentLastLlm = new Map<string, number>();
+
+  /** Estado del agente para el panel: ajustes, último ciclo, lock, presupuesto. */
+  async agentStatus(operationId: string): Promise<{ settings: Required<CopilotSettings>; running: boolean; lastCycle: { at: string; summary: Record<string, unknown> } | null; scheduler: { enabled: boolean; intervalSec: number }; llmCallsToday: number }> {
+    const settings = await this.agentSettings(operationId);
+    return {
+      settings,
+      running: this.agentRunning.has(operationId),
+      lastCycle: this.agentLastCycle.get(operationId) ?? null,
+      scheduler: { enabled: process.env.AGENT_SCHEDULER !== 'false', intervalSec: Math.max(30, Number(process.env.AGENT_INTERVAL_SEC || 120)) },
+      llmCallsToday: await this.agentLlmCallsToday(operationId),
+    };
+  }
+  private async agentLlmCallsToday(operationId: string): Promise<number> {
+    if (!this.agentJournal) return 0;
+    const since = new Date(this.clockNow()); since.setUTCHours(0, 0, 0, 0);
+    try { return (await this.agentJournal.listRecent(operationId, { kind: 'cycle', since: since.toISOString(), limit: 500 })).filter((e) => e.data && (e.data as any).llm).length; } catch { return 0; }
+  }
+
+  /**
+   * UN ciclo completo del agente para una operación. Lo dispara el scheduler del servidor
+   * (o "Evaluar ahora"). Nunca corren dos ciclos a la vez para la misma operación.
+   */
+  async runAgentCycle(operationId: string, opts?: { force?: boolean; by?: string }): Promise<{ skipped?: string; barrido?: { evaluadas: number; nuevas: number; ejecutadas: number; propuestas: number; sombra: number }; llm?: { ran: boolean; text?: string | null; actions?: number; error?: string | null }; notificadas?: number }> {
+    if (this.agentRunning.has(operationId)) return { skipped: 'ciclo en curso' };
+    const settings = await this.agentSettings(operationId);
+    if (settings.paused && !opts?.force) return { skipped: 'agente en pausa' };
+    this.agentRunning.add(operationId);
+    const startedAt = this.clockNow();
+    try {
+      const barrido = await this.runAgentSweep(operationId, { autonomous: true });
+      let llm: { ran: boolean; text?: string | null; actions?: number; error?: string | null } = { ran: false };
+      if (settings.llmPlanning) llm = await this.agentLlmPlanning(operationId, settings);
+      const notificadas = await this.notifyAgentAlerts(operationId, settings, startedAt);
+      const summary = { ...barrido, llm: llm.ran, llmActions: llm.actions ?? 0, notificadas, by: opts?.by || 'scheduler' };
+      this.agentLastCycle.set(operationId, { at: this.clockNow(), summary });
+      if (barrido.nuevas || barrido.ejecutadas || llm.ran) {
+        await this.journal(operationId, 'cycle', 'agente', `Ciclo: ${barrido.evaluadas} reglas, ${barrido.nuevas} alerta(s) nueva(s), ${barrido.ejecutadas} ejecutada(s), ${barrido.propuestas} propuesta(s), ${barrido.sombra} en sombra${llm.ran ? `, planificación LLM (${llm.actions ?? 0} acción(es))` : ''}.`, summary);
+      }
+      return { barrido, llm, notificadas };
+    } finally {
+      this.agentRunning.delete(operationId);
+    }
+  }
+
+  /**
+   * Ciclo de PLANIFICACIÓN con LLM (opcional, presupuestado): el modelo recibe el contexto
+   * en capas y puede invocar las herramientas de acción; la política decide si cada acción se
+   * ejecuta, queda propuesta o se registra en sombra. Solo corre si hay algo accionable.
+   */
+  private async agentLlmPlanning(operationId: string, settings: Required<CopilotSettings>): Promise<{ ran: boolean; text?: string | null; actions?: number; error?: string | null }> {
+    const now = Date.parse(this.clockNow());
+    const last = this.agentLastLlm.get(operationId) || 0;
+    if (now - last < settings.llmEveryMin * 60000) return { ran: false };
+    if ((await this.agentLlmCallsToday(operationId)) >= settings.maxLlmCallsPerDay) return { ran: false, error: 'presupuesto diario de llamadas agotado' };
+    const cred = await this.resolveAiCredential(operationId, null);
+    if (!cred) return { ran: false, error: 'sin IA conectada' };
+    await this.agentStateContext(operationId, null); // refresca los contadores
+    // Sin nada accionable, no gastamos una llamada.
+    const c = this.lastStateSnapshot.get(`${operationId}:*`) || {};
+    const actionable = (c.ordenesEnRiesgo || 0) + (c.quiebres || 0) + (c.lotesPorVencer || 0) + (c.insumosBajos || 0) + Object.keys(c).filter((k) => k.startsWith('sinAsignar_')).reduce((a, k) => a + (c[k] || 0), 0);
+    if (!actionable) return { ran: false };
+    this.agentLastLlm.set(operationId, now);
+    const ctx = await this.copilotContext(operationId, null);
+    const sys = [
+      'Eres el AGENTE DE BODEGA de Ninja WMS operando en automático para esta operación. No conversas con nadie: decides y actúas.',
+      'Tu objetivo: que ninguna orden quede detenida, que el trabajo pendiente esté asignado y balanceado entre operarios activos, y que los riesgos (quiebres, lotes por vencer, insumos bajos) queden escalados.',
+      'Usa las herramientas de acción cuando corresponda; la política decide si se ejecutan o quedan propuestas (la herramienta te lo dirá). Respeta las instrucciones vigentes del administrador y las reglas de negocio del perfil.',
+      'No repitas acciones que el diario reciente muestre como ya hechas o propuestas. No inventes órdenes ni operarios: usa listar_ordenes, tareas_pendientes y operarios si necesitas confirmar.',
+      'Al final responde en español con un informe breve (máximo 6 frases) de lo que hiciste, lo que dejaste propuesto y lo que requiere a un humano, con los identificadores.',
+    ].join(' ') + `\n\n=== CONTEXTO ===\n${ctx}`;
+    const usage = { cycle: 0, hour: await this.agentActionsLastHour(operationId) };
+    const pendingActions: CopilotPendingAction[] = [];
+    let actions = 0;
+    const exec = async (name: string, args: any) => {
+      const r = await this.copilotExecAction(name, args, { operationId, sellerId: null, mode: settings.actionMode, canWrite: true, question: 'ciclo automático del agente', actor: { id: 'agente', role: 'SUPERVISOR' }, pendingActions, settings, autonomous: true, usage });
+      if (r !== undefined) { if (r && r.ok) { usage.cycle++; actions++; } return r; }
+      return this.runCopilotTool(name, args, operationId, null);
+    };
+    const res = await askCopilotAgent(cred, sys, [{ role: 'user', content: 'Ejecuta el ciclo de planificación de la bodega ahora.' }], [...COPILOT_TOOLS, ...COPILOT_ACTION_TOOLS], exec);
+    await this.journal(operationId, 'cycle', 'agente', `Planificación LLM: ${res.text ? res.text.slice(0, 400) : 'sin respuesta'}${res.error ? ' (error: ' + res.error + ')' : ''}`, { llm: true, actions, proposed: pendingActions.length, toolsUsed: res.toolsUsed });
+    for (const p of pendingActions) await this.journal(operationId, 'decision', 'agente', `[propuesta] ${p.resumen || (p.accion + ' ' + p.orden)}`, { pending: p });
+    return { ran: true, text: res.text, actions, error: res.error ?? null };
+  }
+
+  /** Notifica por correo/webhook las alertas creadas en este ciclo (críticas y acciones propuestas). */
+  private async notifyAgentAlerts(operationId: string, settings: Required<CopilotSettings>, sinceIso: string): Promise<number> {
+    if (!this.agentAlertRepo) return 0;
+    if (!settings.notifyEmail && !settings.notifyWebhookUrl) return 0;
+    const recent = (await this.agentAlertRepo.listRecent(operationId, 100)).filter((a) => a.createdAt >= sinceIso && (a.severity === 'crit' || a.actionStatus === 'proposed' || a.actionStatus === 'error'));
+    if (!recent.length) return 0;
+    const opName = (await this.operationsService.get(operationId))?.name || operationId;
+    const lines = recent.map((a) => `[${a.severity}] ${a.title} — ${a.detail}${a.actionStatus === 'proposed' ? ` → propuesta: ${a.actionLabel}` : a.actionStatus === 'error' ? ` → falló: ${a.actionResult}` : ''}`);
+    if (settings.notifyEmail && this.emailSender) {
+      try {
+        await this.emailSender.send({ to: settings.notifyEmail, subject: `[Ninja WMS] ${recent.length} alerta(s) del agente · ${opName}`, text: `Alertas nuevas del agente de bodega (${opName}):\n\n${lines.join('\n')}\n\nRevísalas en el panel → Reglas / Alertas.` });
+      } catch { /* best-effort */ }
+    }
+    if (settings.notifyWebhookUrl) {
+      try {
+        const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 5000);
+        await fetch(settings.notifyWebhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Ninja-Event': 'agent.alerts' }, body: JSON.stringify({ event: 'agent.alerts', at: this.clockNow(), operationId, operation: opName, alerts: recent }), signal: ctrl.signal }).catch(() => null);
+        clearTimeout(t);
+      } catch { /* best-effort */ }
+    }
+    return recent.length;
   }
 
   /** Alertas del agente. Con `sweep`, primero corre el barrido (panel en vivo). */

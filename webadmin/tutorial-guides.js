@@ -326,12 +326,15 @@ window.NINJA_TOUR_GUIDES = {
   },
 
   agente: {
-    icon:'🛰️', title:'Reglas',
-    summary:'El agente proactivo vigila la operación 24/7: cuando una regla se cumple, avisa o actúa según cómo lo configures.',
+    icon:'🛰️', title:'Agente',
+    summary:'El agente de bodega corre en el servidor con su propio reloj: vigila la operación, genera alertas por orden, SKU, lote u operario, y ejecuta o propone acciones según el nivel de autonomía que fijes.',
     steps:[
-      {el:'#agt-eval', place:'bottom', title:'Evaluar ahora', text:'Fuerza una evaluación inmediata de todas las reglas activas. Normalmente el agente corre solo, periódicamente.'},
-      {el:'#agt-alerts', place:'top', title:'Alertas activas', text:'Cada alerta explica qué regla se cumplió, sobre qué (una orden, un SKU, un operario) y qué acción propone. Puedes aprobarla, descartarla o ir a resolverla.'},
-      {el:'#agt-rules', place:'top', title:'Configurar las reglas', text:'Enciende o apaga cada regla, ajusta su <b>umbral</b> (por ejemplo «orden sin reservar hace más de 2 horas») y su <b>enfriamiento</b> para no repetir avisos. Elige el modo: solo avisar, ejecutar con confirmación o ejecutar directo.'}
+      {el:'#agt-status', place:'bottom', title:'Nivel de autonomía y modo sombra', text:'Elige hasta dónde puede actuar solo: <b>0</b> solo propone, <b>1</b> asigna y balancea, <b>2</b> además avanza órdenes y crea recepciones u órdenes, <b>3</b> todo dentro de límites. Con <b>modo sombra</b> decide y anota lo que haría sin ejecutar: úsalo para calibrar antes de soltarlo. Aquí también fijas límites por ciclo y por hora, el correo o webhook de aviso y la pausa.'},
+      {el:'#agt-eval', place:'bottom', title:'Ejecutar ciclo ahora', text:'Fuerza un ciclo completo inmediato. Normalmente corre solo cada dos minutos, aunque nadie tenga el panel abierto.'},
+      {el:'#agt-alerts', place:'top', title:'Alertas por entidad', text:'Cada alerta nombra la orden, el SKU, el lote o el operario afectado y propone qué hacer. Si la regla tiene acción automática, verás si se ejecutó, quedó propuesta para tu confirmación o se registró en sombra.'},
+      {el:'#agt-instr', place:'top', title:'Instrucciones al agente', text:'Directrices en lenguaje natural que el agente respeta en cada ciclo («hoy priorizar Chilexpress», «no despachar Tienda X hasta que apruebe»), con vigencia opcional. También se pueden dictar desde el copiloto.'},
+      {el:'#agt-journal', place:'top', title:'Diario', text:'La memoria del agente: qué evaluó, qué decidió y por qué, qué habría hecho en sombra y qué resultado tuvo. Es la base para subir el nivel de autonomía con evidencia.'},
+      {el:'#agt-rules', place:'top', title:'Reglas', text:'Enciende o apaga cada regla, ajusta su <b>umbral</b> y su <b>enfriamiento</b>, y elige si solo avisa, ejecuta con confirmación o ejecuta directo (siempre dentro de la política de autonomía).'}
     ]
   },
 

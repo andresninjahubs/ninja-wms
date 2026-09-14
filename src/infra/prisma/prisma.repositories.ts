@@ -44,6 +44,8 @@ import {
   WorkTaskRepository,
   AgentRuleConfigRepository,
   AgentAlertRepository,
+  AgentJournalRepository,
+  AgentJournalEntry,
   PlanConfigRepository,
   WebhookRepository,
 } from '../../domain/ports';
@@ -701,11 +703,59 @@ export class PrismaOpsChannelRepository implements OpsChannelRepository {
 export class PrismaCopilotSettingsRepository implements CopilotSettingsRepository {
   constructor(private readonly db: PrismaClient) {}
   async get(operationId: string): Promise<CopilotSettings | null> {
-    const r = await this.db.copilotSetting.findUnique({ where: { operationId } });
-    return r ? { operationId: r.operationId, actionMode: (r.actionMode === 'direct' ? 'direct' : 'confirm') } : null;
+    const r: any = await this.db.copilotSetting.findUnique({ where: { operationId } });
+    return r ? {
+      operationId: r.operationId, actionMode: (r.actionMode === 'direct' ? 'direct' : 'confirm'),
+      autonomyLevel: r.autonomyLevel ?? 1, shadowMode: r.shadowMode ?? true, paused: r.paused ?? false,
+      maxActionsPerCycle: r.maxActionsPerCycle ?? 20, maxActionsPerHour: r.maxActionsPerHour ?? 100,
+      notifyEmail: r.notifyEmail ?? null, notifyWebhookUrl: r.notifyWebhookUrl ?? null,
+      llmPlanning: r.llmPlanning ?? false, llmEveryMin: r.llmEveryMin ?? 15, maxLlmCallsPerDay: r.maxLlmCallsPerDay ?? 100,
+    } : null;
   }
   async save(s: CopilotSettings): Promise<void> {
-    await this.db.copilotSetting.upsert({ where: { operationId: s.operationId }, create: { operationId: s.operationId, actionMode: s.actionMode }, update: { actionMode: s.actionMode } });
+    const data: any = { actionMode: s.actionMode };
+    if (s.autonomyLevel != null) data.autonomyLevel = s.autonomyLevel;
+    if (s.shadowMode != null) data.shadowMode = s.shadowMode;
+    if (s.paused != null) data.paused = s.paused;
+    if (s.maxActionsPerCycle != null) data.maxActionsPerCycle = s.maxActionsPerCycle;
+    if (s.maxActionsPerHour != null) data.maxActionsPerHour = s.maxActionsPerHour;
+    if (s.notifyEmail !== undefined) data.notifyEmail = s.notifyEmail;
+    if (s.notifyWebhookUrl !== undefined) data.notifyWebhookUrl = s.notifyWebhookUrl;
+    if (s.llmPlanning != null) data.llmPlanning = s.llmPlanning;
+    if (s.llmEveryMin != null) data.llmEveryMin = s.llmEveryMin;
+    if (s.maxLlmCallsPerDay != null) data.maxLlmCallsPerDay = s.maxLlmCallsPerDay;
+    await this.db.copilotSetting.upsert({ where: { operationId: s.operationId }, create: { operationId: s.operationId, ...data }, update: data });
+  }
+}
+
+export class PrismaAgentJournalRepository implements AgentJournalRepository {
+  constructor(private readonly db: PrismaClient) {}
+  private get t(): any { return (this.db as any).agentJournal; }
+  private toDomain(r: any): AgentJournalEntry {
+    return { id: r.id, operationId: r.operationId, at: (r.at as Date).toISOString(), kind: r.kind, actor: r.actor, text: r.text,
+      data: (r.data as Record<string, unknown>) ?? null, expiresAt: r.expiresAt ? (r.expiresAt as Date).toISOString() : null, active: r.active !== false };
+  }
+  async append(e: AgentJournalEntry): Promise<void> {
+    await this.t.create({ data: { id: e.id, operationId: e.operationId, at: new Date(e.at), kind: e.kind, actor: e.actor, text: e.text,
+      data: e.data ?? undefined, expiresAt: e.expiresAt ? new Date(e.expiresAt) : null, active: e.active } });
+  }
+  async listRecent(operationId: string, opts?: { kind?: AgentJournalEntry['kind'] | null; limit?: number; since?: string }): Promise<AgentJournalEntry[]> {
+    const where: any = { operationId };
+    if (opts?.kind) where.kind = opts.kind;
+    if (opts?.since) where.at = { gte: new Date(opts.since) };
+    const rows = await this.t.findMany({ where, orderBy: { at: 'desc' }, take: opts?.limit ?? 50 });
+    return rows.map((r: any) => this.toDomain(r));
+  }
+  async listInstructions(operationId: string, now: string): Promise<AgentJournalEntry[]> {
+    const rows = await this.t.findMany({ where: { operationId, kind: 'instruction', active: true, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date(now) } }] }, orderBy: { at: 'desc' }, take: 30 });
+    return rows.map((r: any) => this.toDomain(r));
+  }
+  async update(id: string, patch: { active?: boolean; text?: string; data?: Record<string, unknown> | null }): Promise<void> {
+    const data: any = {};
+    if (patch.active != null) data.active = patch.active;
+    if (patch.text != null) data.text = patch.text;
+    if (patch.data !== undefined) data.data = patch.data ?? undefined;
+    await this.t.updateMany({ where: { id }, data });
   }
 }
 
@@ -1072,13 +1122,13 @@ export class PrismaAgentAlertRepository implements AgentAlertRepository {
   private toDomain(r: any): AgentAlert {
     return { id: r.id, operationId: r.operationId, sellerId: r.sellerId ?? null, ruleKey: r.ruleKey,
       severity: r.severity as AgentRuleSeverity, title: r.title, detail: r.detail, action: r.action ?? null, link: r.link ?? null,
-      entityRef: r.entityRef ?? null, dedupeKey: r.dedupeKey, status: r.status as AgentAlertStatus,
+      entityRef: r.entityRef ?? null, entityType: r.entityType ?? null, dedupeKey: r.dedupeKey, status: r.status as AgentAlertStatus,
       actionTool: r.actionTool ?? null, actionLabel: r.actionLabel ?? null, actionStatus: (r.actionStatus ?? 'none') as AgentAlertActionStatus, actionResult: r.actionResult ?? null,
       createdAt: (r.createdAt as Date).toISOString(), ackAt: r.ackAt ? (r.ackAt as Date).toISOString() : null, ackBy: r.ackBy ?? null };
   }
   private row(a: Omit<AgentAlert, 'id'>): any {
     return { operationId: a.operationId, sellerId: a.sellerId, ruleKey: a.ruleKey, severity: a.severity, title: a.title,
-      detail: a.detail, action: a.action, link: a.link, entityRef: a.entityRef, dedupeKey: a.dedupeKey, status: a.status,
+      detail: a.detail, action: a.action, link: a.link, entityRef: a.entityRef, entityType: a.entityType ?? null, dedupeKey: a.dedupeKey, status: a.status,
       actionTool: a.actionTool, actionLabel: a.actionLabel, actionStatus: a.actionStatus, actionResult: a.actionResult,
       createdAt: new Date(a.createdAt), ackAt: a.ackAt ? new Date(a.ackAt) : null, ackBy: a.ackBy };
   }

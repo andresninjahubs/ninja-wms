@@ -194,6 +194,18 @@ export const COPILOT_TOOLS: ToolSpec[] = [
  */
 export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
   {
+    name: 'guardar_instruccion',
+    description: 'Guarda una directriz del administrador para el agente de bodega (ej. "hoy priorizar Chilexpress", "no despachar el cliente X hasta que apruebe"). Queda vigente en los próximos ciclos del agente hasta que se retire o venza.',
+    parameters: {
+      type: 'object',
+      properties: {
+        texto: { type: 'string', description: 'La instrucción, en una frase clara.' },
+        diasVigencia: { type: 'number', description: 'Días de vigencia (0 = hasta que se retire).' },
+      },
+      required: ['texto'],
+    },
+  },
+  {
     name: 'avanzar_estado_orden',
     description: 'Avanza el estado de una orden en el flujo de fulfillment. Acciones: "reservar" (RECEIVED→ALLOCATED), "iniciar_picking" (ALLOCATED→PICKING: marca la recolección en curso, sin recolectar aún), "pickear" (ALLOCATED/PICKING→PICKED: completa la recolección), "empacar" (PICKED→PACKED), "despachar" (PACKED→SHIPPED). Úsala cuando el usuario pida marcar/avanzar una orden; usa "iniciar_picking" cuando pida "poner en picking" o "empezar a preparar" y "pickear" cuando pida darla por recolectada.',
     parameters: {

@@ -78,8 +78,11 @@ import {
   InMemoryWorkTaskRepository,
   InMemoryAgentRuleConfigRepository,
   InMemoryAgentAlertRepository,
+  InMemoryAgentJournalRepository,
+  InMemoryCopilotSettingsRepository,
   SequentialIdGenerator,
 } from '../src/infra/memory/in-memory.repositories';
+import { decidePolicy, effectiveAgentSettings } from '../src/domain/agent-policy';
 import { LogEmailSender } from '../src/infra/email';
 import { WebhookSender } from '../src/domain/ports';
 
@@ -804,6 +807,8 @@ async function run() {
     const taskLedger = new InMemoryWorkTaskRepository();
     const agentRuleConfig = new InMemoryAgentRuleConfigRepository();
     const agentAlertRepo = new InMemoryAgentAlertRepository();
+    const agentJournal = new InMemoryAgentJournalRepository();
+    const copilotSettings = new InMemoryCopilotSettingsRepository();
     const costs = new InMemoryCostRepository();
     const costingService = new CostingService(costs, sellers, users, billingService, movements, laborTasks, clock, rollups, packagingService);
     const chatService = new ChatService(new InMemoryChatRepository(), sellers, clock);
@@ -821,8 +826,8 @@ async function run() {
     const emailSender = new LogEmailSender();
     const planConfig = new InMemoryPlanConfigRepository();
     const facade = new WmsFacade(inventory, orderService, receiptService, productService, billingService, sellers, skus, locations, ids, advisor, cyc, userSvc, bc, opSvc, metricsService, chatService, platformUsageService, announcementService, webhookService, shippingLabels, returnService, serials, packagingService,
-      undefined, undefined, clock, undefined, undefined, undefined, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo);
-    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo };
+      undefined, undefined, clock, undefined, undefined, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal);
+    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings };
   }
 
   async function seedScan(facade: WmsFacade) {
@@ -2111,6 +2116,8 @@ async function run() {
     await facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
     await facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id }); // stock en STORAGE (reservable)
     const oper = await facade.createUser({ name: 'Pedro', email: 'pedro@nh.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    // Este test prueba la EJECUCIÓN de las acciones: nivel 3 y sin sombra (la política se prueba aparte).
+    await facade.updateAgentSettings('op1', { autonomyLevel: 3, shadowMode: false, actionMode: 'direct' }, 'ana');
 
     const call = (name: string, args: any, mode: 'confirm' | 'direct' = 'direct', pendingActions: any[] = []) =>
       (facade as any).copilotExecAction(name, args, { operationId: 'op1', sellerId: null, mode, canWrite: true, question: 't', actor: { id: 'ana', role: UserRole.ADMIN }, pendingActions });
@@ -2129,11 +2136,16 @@ async function run() {
     const o2 = await call('crear_orden', { sellerId: 'acme', destinatario: { nombre: 'Ana', direccion: 'Calle 1' }, lineas: [{ sku: 'CAM', qty: 3 }], reservar: true });
     assert.ok(o2.ok); assert.equal(o2.estado, 'ALLOCATED'); assert.equal(o2.reservada, true);
 
-    // 4) Crear orden CON reservar en modo CONFIRMACIÓN → orden creada + reserva PROPUESTA.
+    // 4) Crear orden CON reservar en modo CONFIRMACIÓN → TODA la creación queda PROPUESTA
+    //    (política Fase 1: en confirmación no se escribe nada de nivel ≥2 sin un humano).
+    await facade.updateAgentSettings('op1', { actionMode: 'confirm' }, 'ana');
     const pend: any[] = [];
     const o3 = await call('crear_orden', { sellerId: 'acme', destinatario: { nombre: 'Luis' }, lineas: [{ sku: 'CAM', qty: 1 }], reservar: true }, 'confirm', pend);
-    assert.ok(o3.ok); assert.equal(o3.estado, 'RECEIVED'); assert.equal(o3.requiresConfirmation, true);
-    assert.equal(pend.length, 1); assert.equal(pend[0].accion, 'reservar'); assert.equal(pend[0].orderId, o3.id);
+    assert.equal(o3.requiresConfirmation, true); assert.equal(pend.length, 1); assert.equal(pend[0].tool, 'crear_orden');
+    assert.equal((await facade.listOrders('acme')).length, 2, 'la orden NO se creó hasta confirmar');
+    const c3 = await facade.copilotConfirmTool('op1', null, { id: 'ana', role: UserRole.ADMIN }, { tool: pend[0].tool, args: pend[0].args });
+    assert.ok(c3.ok); assert.equal(c3.estado, 'ALLOCATED', 'al confirmar se crea Y se reserva');
+    await facade.updateAgentSettings('op1', { actionMode: 'direct' }, 'ana');
 
     // 5) Asignar tarea ligada a orden: PICK, luego PACK y SHIP avanzando el estado.
     assert.ok((await call('asignar_tarea', { tipo: 'PICK', entidad: o2.orden, operario: oper.id })).ok, 'PICK asignada');
@@ -2376,6 +2388,7 @@ async function run() {
       await f.facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
       const pedro = await f.facade.createUser({ id: 'pedro', name: 'Pedro', email: 'p@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
       await f.facade.createUser({ id: 'carla', name: 'Carla', email: 'c@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' }); // activa, recibe la carga
+      await f.facade.updateAgentSettings('op1', { autonomyLevel: 1, shadowMode: false }, 'ana'); // ejecución real (sin sombra)
       const order = await f.facade.createOrder('acme', { externalOrderId: 'PED-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 2 }] }, 'ana');
       await f.facade.allocateOrder('acme', order.id, 'ana');
       await f.facade.assignTask('op1', { type: 'PICK', entityId: order.id, entityRef: 'PED-1', sellerId: 'acme', operator: pedro.id, unitsEstimate: 2, by: 'ana' });
@@ -3672,6 +3685,118 @@ async function run() {
     await f.facade.receivePackagingStock('op1', 'BOLSA', 500, 'pamela', null, 12);
     mats = await f.facade.listPackaging('op1'); assert.equal(mats.find((x: any) => x.sku === 'BOLSA')!.avgCost, 12);
     await expectThrows(() => f.facade.receivePackagingStock('op1', 'BOLSA', 5, 'pamela', null, -1), ValidationError);
+  });
+
+  // ---- Agente autónomo Fase 1: política, sombra, alertas por entidad, ciclo, diario ----
+  await test('política de autonomía: nivel, sombra, pausa, límites y confirmación', async () => {
+    const base = effectiveAgentSettings(null, 'op1');
+    assert.equal(base.autonomyLevel, 1); assert.equal(base.shadowMode, true);
+    // Nivel 1 permite asignar/balancear al agente solo si NO está en sombra.
+    assert.equal(decidePolicy({ tool: 'asignar_tarea', settings: base, autonomous: true }).decision, 'propose');
+    const real = { ...base, shadowMode: false };
+    assert.equal(decidePolicy({ tool: 'asignar_tarea', settings: real, autonomous: true }).decision, 'execute');
+    assert.equal(decidePolicy({ tool: 'avanzar_estado_orden', settings: real, autonomous: true }).decision, 'propose', 'avanzar órdenes exige nivel 2');
+    assert.equal(decidePolicy({ tool: 'avanzar_estado_orden', settings: { ...real, autonomyLevel: 2 }, autonomous: true }).decision, 'execute');
+    assert.equal(decidePolicy({ tool: 'balancear_carga', settings: { ...real, paused: true }, autonomous: true }).decision, 'deny');
+    assert.equal(decidePolicy({ tool: 'balancear_carga', settings: real, autonomous: true, usage: { cycle: 20, hour: 0 } }).decision, 'propose', 'límite por ciclo');
+    assert.equal(decidePolicy({ tool: 'balancear_carga', settings: real, autonomous: true, usage: { cycle: 0, hour: 100 } }).decision, 'propose', 'límite por hora');
+    // Humano vía copiloto en modo confirmación: las acciones de nivel ≥2 quedan propuestas; las de nivel 1 se ejecutan.
+    assert.equal(decidePolicy({ tool: 'crear_recepcion', settings: real, autonomous: false }).decision, 'propose');
+    assert.equal(decidePolicy({ tool: 'asignar_tarea', settings: real, autonomous: false }).decision, 'execute');
+    assert.equal(decidePolicy({ tool: 'crear_recepcion', settings: { ...real, actionMode: 'direct', autonomyLevel: 2 }, autonomous: false }).decision, 'execute');
+    // Confirmación humana explícita siempre ejecuta; acción desconocida siempre propone.
+    assert.equal(decidePolicy({ tool: 'crear_orden', settings: base, autonomous: true, confirmed: true }).decision, 'execute');
+    assert.equal(decidePolicy({ tool: 'lo_que_sea', settings: { ...real, autonomyLevel: 3 }, autonomous: false }).decision, 'propose');
+  });
+
+  await test('copiloto: en modo confirmación TODAS las escrituras de nivel ≥2 quedan propuestas y se confirman con {tool,args}', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await f.facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.updateAgentSettings('op1', { autonomyLevel: 1, shadowMode: false, actionMode: 'confirm' }, 'ana');
+    const pending: any[] = [];
+    const r = await (f.facade as any).copilotExecAction('crear_recepcion', { sellerId: 'acme', lineas: [{ sku: 'CAM', qty: 10 }], referencia: 'G-1' }, { operationId: 'op1', sellerId: null, mode: 'confirm', canWrite: true, question: 'crea la recepción', actor: { id: 'ana', role: UserRole.ADMIN }, pendingActions: pending });
+    assert.equal(r.requiresConfirmation, true, 'crear_recepcion queda propuesta (antes se ejecutaba siempre)');
+    assert.equal(pending.length, 1); assert.equal(pending[0].tool, 'crear_recepcion');
+    assert.equal((await f.facade.listReceipts('acme')).length, 0, 'nada se creó');
+    // El humano confirma la propuesta genérica.
+    const c = await f.facade.copilotConfirmTool('op1', null, { id: 'ana', role: UserRole.ADMIN }, { tool: pending[0].tool, args: pending[0].args });
+    assert.equal(c.ok, true);
+    assert.equal((await f.facade.listReceipts('acme')).length, 1, 'ahora sí existe');
+    const recs = await f.aiAudit.listRecommendations('op1', { type: 'copilot_action' });
+    assert.ok(recs.some((x) => x.taken === true), 'la recomendación quedó marcada como tomada');
+    // Sin identidad y con AUTH_REQUIRED=true no hay escritura.
+    process.env.AUTH_REQUIRED = 'true';
+    assert.equal((f.facade as any).copilotCanWrite(null), false);
+    delete process.env.AUTH_REQUIRED;
+    assert.equal((f.facade as any).copilotCanWrite(null), true, 'modo demo');
+  });
+
+  await test('agente: alertas POR ENTIDAD con referencia, y ciclo con lock, sombra y diario', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
+    await f.facade.createUser({ id: 'pedro', name: 'Pedro', email: 'p@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createUser({ id: 'carla', name: 'Carla', email: 'c@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    // Dos órdenes estancadas 48 h → dos alertas, una por orden, con su referencia.
+    f.clock.set('2026-01-01T00:00:00.000Z');
+    for (const ref of ['PED-1', 'PED-2']) { const o = await f.facade.createOrder('acme', { externalOrderId: ref, salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 1 }] }, 'ana'); await f.facade.allocateOrder('acme', o.id, 'ana'); }
+    f.clock.set('2026-01-03T00:00:00.000Z');
+    await f.facade.updateAgentRule('op1', 'orden_estancada', { enabled: true, threshold: 24, actionType: 'execute', actionMode: 'directo' }, 'ana');
+    // Sombra ON (default): la acción NO se ejecuta, queda registrada como "habría ejecutado".
+    const c1 = await f.facade.runAgentCycle('op1', { by: 'test' });
+    assert.ok(c1.barrido, 'ciclo corrió');
+    const open = await f.facade.agentAlerts('op1');
+    const est = open.abiertas.filter((a) => a.ruleKey === 'orden_estancada');
+    assert.equal(est.length, 2, 'una alerta por orden');
+    assert.deepEqual(est.map((a) => a.entityRef).sort(), ['PED-1', 'PED-2']);
+    assert.equal(est[0].entityType, 'ORDER');
+    assert.equal(c1.barrido!.sombra, 1, 'acción de la regla en sombra (una vez por barrido)');
+    assert.equal(c1.barrido!.ejecutadas, 0);
+    const shadowActs = await f.aiAudit.listActions('op1', { agent: 'agent-shadow' });
+    assert.equal(shadowActs.length, 1);
+    const journal = await f.facade.agentJournalList('op1');
+    assert.ok(journal.some((e) => e.kind === 'decision' && /sombra/.test(e.text)), 'el diario registra la decisión en sombra');
+    assert.ok(journal.some((e) => e.kind === 'cycle'), 'el diario registra el ciclo');
+    // Dedupe por entidad: un segundo ciclo no duplica.
+    await f.facade.runAgentCycle('op1', { by: 'test' });
+    assert.equal((await f.facade.agentAlerts('op1')).abiertas.filter((a) => a.ruleKey === 'orden_estancada').length, 2);
+    // Pausa → el ciclo se omite.
+    await f.facade.updateAgentSettings('op1', { paused: true }, 'ana');
+    assert.equal((await f.facade.runAgentCycle('op1')).skipped, 'agente en pausa');
+    // Estado del agente para el panel.
+    const st = await f.facade.agentStatus('op1');
+    assert.equal(st.settings.paused, true); assert.ok(st.lastCycle);
+  });
+
+  await test('agente: instrucciones vigentes y contexto en capas (perfil, estado, memoria)', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega Norte' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME', pickingStrategy: PickingStrategy.FEFO });
+    await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 500 });
+    await f.facade.addAgentInstruction('op1', 'Hoy priorizar Chilexpress', 1, 'ana');
+    const ins = await f.facade.agentInstructions('op1');
+    assert.equal(ins.length, 1);
+    const profile = await f.facade.agentProfileContext('op1');
+    assert.ok(/Bodega Norte/.test(profile) && /FEFO/.test(profile) && /Reglas de negocio/.test(profile), 'perfil con clientes, políticas y reglas');
+    const state = await f.facade.agentStateContext('op1', null);
+    assert.ok(/ESTADO OPERATIVO/.test(state) && /Órdenes abiertas 0/.test(state), 'estado compacto');
+    const mem = await f.facade.agentMemoryContext('op1');
+    assert.ok(/Hoy priorizar Chilexpress/.test(mem), 'la instrucción entra en la memoria');
+    const full = await f.facade.copilotContextPreview('op1', null);
+    assert.ok(/PERFIL DE LA OPERACIÓN/.test(full.context) && /INSTRUCCIONES VIGENTES/.test(full.context) && /Inventario por SKU/.test(full.context), 'contexto en capas completo');
+    await f.facade.retireAgentInstruction('op1', ins[0].id, 'ana');
+    assert.equal((await f.facade.agentInstructions('op1')).length, 0);
+    // guardar_instruccion como herramienta del copiloto (nivel 1 → ejecuta).
+    await f.facade.updateAgentSettings('op1', { shadowMode: false }, 'ana');
+    const r = await (f.facade as any).copilotExecAction('guardar_instruccion', { texto: 'No despachar ACME hasta que apruebe' }, { operationId: 'op1', sellerId: null, mode: 'confirm', canWrite: true, question: 'x', actor: { id: 'ana', role: UserRole.ADMIN }, pendingActions: [] });
+    assert.equal(r.ok, true);
+    assert.equal((await f.facade.agentInstructions('op1')).length, 1);
   });
 
   // ---- Resumen --------------------------------------------------------------

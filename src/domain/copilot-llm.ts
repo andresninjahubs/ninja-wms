@@ -22,6 +22,10 @@ export const PROVIDER_DEFAULTS: Record<CopilotProvider, { label: string; baseUrl
 };
 
 const TIMEOUT_MS = 25000;
+/** Presupuesto por TURNO completo del agente (todas las rondas), no solo por llamada HTTP. */
+const TURN_TIMEOUT_MS = Number(process.env.COPILOT_TURN_TIMEOUT_MS || 90000);
+/** Máximo de invocaciones de herramientas por turno (presupuesto). */
+const MAX_TOOL_CALLS = Number(process.env.COPILOT_MAX_TOOL_CALLS || 30);
 
 function normProvider(p: string): CopilotProvider {
   const v = (p || '').toLowerCase();
@@ -32,7 +36,7 @@ function normProvider(p: string): CopilotProvider {
 }
 
 /** fetch con timeout; traduce fallas de red a un error legible. */
-async function timedFetch(url: string, init: any): Promise<Response> {
+async function timedFetchOnce(url: string, init: any): Promise<Response> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
@@ -43,6 +47,16 @@ async function timedFetch(url: string, init: any): Promise<Response> {
   } finally {
     clearTimeout(t);
   }
+}
+/** fetch con timeout y UN reintento con espera ante 429 / 5xx / fallo de red. */
+async function timedFetch(url: string, init: any): Promise<Response> {
+  let res: Response | null = null;
+  try { res = await timedFetchOnce(url, init); } catch (e) { await new Promise((r) => setTimeout(r, 1500)); return timedFetchOnce(url, init); }
+  if (res.status === 429 || res.status >= 500) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try { return await timedFetchOnce(url, init); } catch { return res; }
+  }
+  return res;
 }
 
 /** Extrae un mensaje de error corto y legible del cuerpo de la respuesta. */
@@ -79,7 +93,7 @@ async function askAnthropic(baseUrl: string, apiKey: string, model: string, syst
   const res = await timedFetch(`${baseUrl.replace(/\/$/, '')}/v1/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model, max_tokens: 1024, system, messages: turns }),
+    body: JSON.stringify({ model, max_tokens: 2048, temperature: 0.3, system, messages: turns }),
   });
   if (!res.ok) return { text: null, error: await errorFrom(res) };
   const data: any = await res.json();
@@ -142,7 +156,7 @@ export interface ToolSpec { name: string; description: string; parameters: any; 
 export type ToolExec = (name: string, args: any) => Promise<any>;
 export interface AgentResult extends LlmResult { toolsUsed: string[]; rounds: number; }
 
-const MAX_ROUNDS = 6;
+const MAX_ROUNDS = Number(process.env.COPILOT_MAX_ROUNDS || 14);
 function capResult(v: any): string {
   let s: string;
   try { s = JSON.stringify(v); } catch { s = String(v); }
@@ -183,7 +197,7 @@ async function agentAnthropic(baseUrl: string, apiKey: string, model: string, sy
   const anTools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
   const used: string[] = [];
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const res = await timedFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: 1200, system, messages, tools: anTools }) });
+    const res = await timedFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: 2048, temperature: 0.3, system, messages, tools: anTools }) });
     if (!res.ok) return { text: null, error: await errorFrom(res), toolsUsed: used, rounds: round };
     const data: any = await res.json();
     const blocks = data?.content;
@@ -217,7 +231,7 @@ async function agentGemini(baseUrl: string, apiKey: string, model: string, syste
     if (fcalls.length) {
       contents.push({ role: 'model', parts });
       const respParts = [];
-      for (const p of fcalls) { const fc = p.functionCall; used.push(fc.name); const r = await exec(fc.name, fc.args || {}); respParts.push({ functionResponse: { name: fc.name, response: { result: r } } }); }
+      for (const p of fcalls) { const fc = p.functionCall; used.push(fc.name); const r = await exec(fc.name, fc.args || {}); respParts.push({ functionResponse: { name: fc.name, response: { result: capResult(r) } } }); }
       contents.push({ role: 'user', parts: respParts });
       continue;
     }
@@ -228,7 +242,17 @@ async function agentGemini(baseUrl: string, apiKey: string, model: string, syste
 }
 
 /** Agente conversacional con herramientas: el LLM decide qué datos consultar. */
-export async function askCopilotAgent(cred: AiCredential, system: string, turns: ChatTurn[], tools: ToolSpec[], exec: ToolExec): Promise<AgentResult> {
+export async function askCopilotAgent(cred: AiCredential, system: string, turns: ChatTurn[], tools: ToolSpec[], execRaw: ToolExec): Promise<AgentResult> {
+  // Presupuesto por turno: N llamadas a herramientas y un plazo total; superado, la
+  // herramienta devuelve un error legible y el modelo debe cerrar con lo que tiene.
+  const deadline = Date.now() + TURN_TIMEOUT_MS;
+  let calls = 0;
+  const exec: ToolExec = async (name, args) => {
+    calls += 1;
+    if (calls > MAX_TOOL_CALLS) return { error: `presupuesto de herramientas agotado (${MAX_TOOL_CALLS} por turno): responde con lo que ya tienes` };
+    if (Date.now() > deadline) return { error: 'se agotó el tiempo del turno: responde con lo que ya tienes' };
+    return execRaw(name, args);
+  };
   try {
     const provider = normProvider(cred.provider);
     const def = PROVIDER_DEFAULTS[provider];
