@@ -1273,8 +1273,8 @@ export class PrismaOrderRepository implements OrderRepository {
         })),
       }),
     ]);
-    // Dual-write (G2+G6): el SalesOrder no persiste `events` en su cabecera, así que
-    // el event store es la única fuente consultable de su historial. Idempotente por id.
+    // Dual-write (G2+G6): además de la columna `events` de la cabecera, el historial va al
+    // event store (consultas cross-entidad). Idempotente por id.
     await this.events?.append(toDomainEvents('ORDER', order.id, order.externalOrderId, order.sellerId, order.events));
   }
 

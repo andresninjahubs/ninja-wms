@@ -729,6 +729,7 @@ model SalesOrder {
   status           String // RECEIVED | ALLOCATED | PICKING | PICKED | PACKED | SHIPPED | CANCELLED
   packing          Json? // { packedAt, bultos, trackingNumber, carrier, labelStatus, labels[] }
   shipment         Json? // { mode, carrier, trackingNumber, shippedAt }
+  events           Json     @default("[]") // historial de auditoría [{ type, at, actor, detail }] — lo lee facturación (SHIPPED), métricas y actividad
   createdAt        DateTime
 
   seller Seller      @relation(fields: [sellerId], references: [id])
