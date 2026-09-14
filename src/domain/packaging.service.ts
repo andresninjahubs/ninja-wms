@@ -30,6 +30,18 @@ export interface PackagingConsumptionInput {
 
 export interface PackagingMaterialView extends PackagingMaterial {
   onHand: number; // saldo actual (suma de deltas)
+  avgCost: number; // costo promedio ponderado (PMP) vigente por unidad
+  lastCost: number | null; // costo de la última reposición
+  lastCostAt: string | null; // fecha de la última reposición con costo
+  stockValue: number; // onHand × avgCost (valor del inventario de insumos)
+}
+
+/** Estado de costos de un insumo, recorriendo su ledger en orden cronológico. */
+export interface PackagingCostState {
+  onHand: number;
+  avgCost: number;
+  lastCost: number | null;
+  lastCostAt: string | null;
 }
 
 export class PackagingService {
@@ -120,17 +132,55 @@ export class PackagingService {
       sellerId: extra.sellerId ?? null,
       orderId: extra.orderId ?? null,
       unitPrice: extra.unitPrice ?? null,
+      unitCost: extra.unitCost ?? null,
       reference: extra.reference ?? null,
       actor: extra.actor ?? 'system',
       occurredAt: this.clock.now(),
     };
   }
 
+  /**
+   * Costo promedio ponderado (PMP) a partir del ledger de un insumo:
+   *   - RECEIPT con costo: nuevo PMP = (saldo×PMP + qty×costo) / (saldo + qty).
+   *     Si el saldo era ≤ 0, el PMP pasa a ser el costo del ingreso.
+   *   - RECEIPT sin costo (histórico) y ajustes positivos: entran al PMP vigente.
+   *   - Salidas (consumo, ajuste negativo): no cambian el PMP, solo el saldo.
+   */
+  costStateFrom(movements: PackagingMovement[]): PackagingCostState {
+    const st: PackagingCostState = { onHand: 0, avgCost: 0, lastCost: null, lastCostAt: null };
+    const sorted = [...movements].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+    for (const mv of sorted) {
+      if (mv.qtyDelta > 0 && mv.type === PackagingMovementType.RECEIPT && mv.unitCost != null) {
+        const prevQty = Math.max(0, st.onHand);
+        st.avgCost = prevQty > 0 ? Math.round((prevQty * st.avgCost + mv.qtyDelta * mv.unitCost) / (prevQty + mv.qtyDelta)) : mv.unitCost;
+        st.lastCost = mv.unitCost;
+        st.lastCostAt = mv.occurredAt;
+      }
+      st.onHand += mv.qtyDelta;
+    }
+    return st;
+  }
+
+  async costState(operationId: string, sku: string): Promise<PackagingCostState> {
+    const movs = await this.repo.listMovements(operationId, { materialSku: this.norm(sku) });
+    return this.costStateFrom(movs);
+  }
+
   /** Ingreso de stock de un insumo (+). */
-  async receiveStock(operationId: string, sku: string, qty: number, actor?: string, reference?: string | null): Promise<PackagingMovement> {
+  async receiveStock(
+    operationId: string,
+    sku: string,
+    qty: number,
+    actor?: string,
+    reference?: string | null,
+    unitCost?: number | null,
+  ): Promise<PackagingMovement> {
     await this.mustGet(operationId, sku);
     if (!(qty > 0) || !Number.isInteger(qty)) throw new ValidationError(`Cantidad de ingreso inválida: ${qty}`);
-    const mv = this.ev(operationId, this.norm(sku), PackagingMovementType.RECEIPT, qty, { actor, reference: reference ?? null });
+    if (unitCost != null && (!(unitCost >= 0) || !Number.isFinite(unitCost))) throw new ValidationError(`Costo unitario inválido: ${unitCost}`);
+    const mv = this.ev(operationId, this.norm(sku), PackagingMovementType.RECEIPT, qty, {
+      actor, reference: reference ?? null, unitCost: unitCost != null ? Math.round(unitCost) : null,
+    });
     await this.repo.appendMovements([mv]);
     return mv;
   }
@@ -139,9 +189,10 @@ export class PackagingService {
   async adjustStock(operationId: string, sku: string, qtyDelta: number, actor?: string, reference?: string | null): Promise<PackagingMovement> {
     await this.mustGet(operationId, sku);
     if (!Number.isInteger(qtyDelta) || qtyDelta === 0) throw new ValidationError('El ajuste debe ser un entero distinto de 0');
-    const onHand = await this.onHand(operationId, sku);
+    const st = await this.costState(operationId, sku);
+    const onHand = st.onHand;
     if (onHand + qtyDelta < 0) throw new ValidationError(`El ajuste dejaría el saldo negativo (saldo ${onHand}, ajuste ${qtyDelta})`);
-    const mv = this.ev(operationId, this.norm(sku), PackagingMovementType.ADJUSTMENT, qtyDelta, { actor, reference: reference ?? null });
+    const mv = this.ev(operationId, this.norm(sku), PackagingMovementType.ADJUSTMENT, qtyDelta, { actor, reference: reference ?? null, unitCost: st.avgCost });
     await this.repo.appendMovements([mv]);
     return mv;
   }
@@ -169,11 +220,13 @@ export class PackagingService {
       const m = await this.mustGet(operationId, sku);
       if (!m.active) throw new ValidationError(`El insumo de embalaje ${sku} está inactivo`);
       const price = this.effectivePrice(m, sellerId);
+      const cost = (await this.costState(operationId, sku)).avgCost; // valoriza la salida al PMP vigente
       movements.push(
         this.ev(operationId, sku, PackagingMovementType.CONSUMPTION, -it.qty, {
           sellerId,
           orderId,
           unitPrice: price,
+          unitCost: cost,
           reference: `PACK:${orderId}`,
           actor,
         }),
@@ -197,9 +250,29 @@ export class PackagingService {
   async listMaterials(operationId: string): Promise<PackagingMaterialView[]> {
     const materials = await this.repo.listMaterials(operationId);
     const movs = await this.repo.listMovements(operationId);
-    const bySku = new Map<string, number>();
-    for (const mv of movs) bySku.set(mv.materialSku, (bySku.get(mv.materialSku) || 0) + mv.qtyDelta);
-    return materials.map((m) => ({ ...m, onHand: bySku.get(m.sku) || 0 }));
+    const bySku = new Map<string, PackagingMovement[]>();
+    for (const mv of movs) { const arr = bySku.get(mv.materialSku) || []; arr.push(mv); bySku.set(mv.materialSku, arr); }
+    return materials.map((m) => {
+      const st = this.costStateFrom(bySku.get(m.sku) || []);
+      return { ...m, onHand: st.onHand, avgCost: st.avgCost, lastCost: st.lastCost, lastCostAt: st.lastCostAt, stockValue: Math.max(0, st.onHand) * st.avgCost };
+    });
+  }
+
+  /**
+   * Costo real de embalaje consumido por un seller en un período (o para un set de órdenes),
+   * valorizado al PMP del momento del consumo. Alimenta rentabilidad (costo vs. cobro).
+   */
+  async consumptionCost(operationId: string, sellerId: string, fromIso: string, toIso: string, orderIds?: Set<string> | null): Promise<{ qty: number; cost: number; billed: number }> {
+    const movs = await this.repo.listMovements(operationId, { sellerId });
+    let qty = 0, cost = 0, billed = 0;
+    for (const mv of movs) {
+      if (mv.type !== PackagingMovementType.CONSUMPTION) continue;
+      if (orderIds) { if (!mv.orderId || !orderIds.has(mv.orderId)) continue; }
+      else if (mv.occurredAt < fromIso || mv.occurredAt >= toIso) continue;
+      const q = -mv.qtyDelta;
+      qty += q; cost += q * (mv.unitCost ?? 0); billed += q * (mv.unitPrice ?? 0);
+    }
+    return { qty, cost: Math.round(cost), billed: Math.round(billed) };
   }
 
   listMovements(operationId: string, filter?: { materialSku?: string; sellerId?: string }): Promise<PackagingMovement[]> {

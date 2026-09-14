@@ -405,6 +405,8 @@ export interface LocationRepository {
   findByCode(operationId: string, code: string): Promise<Location | null>;
   save(location: Location): Promise<void>;
   listByOperation(operationId: string): Promise<Location[]>;
+  /** Elimina físicamente una ubicación (solo se permite si nunca tuvo movimientos). */
+  delete(locationId: string): Promise<void>;
 }
 
 export interface OrderRepository {

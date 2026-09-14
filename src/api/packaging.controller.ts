@@ -72,17 +72,17 @@ export class PackagingController {
     return this.wms.setPackagingSellerPrice(actorOperation(user, operationId), sku, dto.sellerId, dto.price ?? null);
   }
 
-  /** Ingreso de stock de un insumo (+). */
+  /** Reposición de stock de un insumo (+). Queda registrada en el historial con referencia y usuario. */
   @Post(':sku/receive')
   @RequirePermission('inventory:receive')
   receive(@Param('sku') sku: string, @Body() dto: PackagingStockDto, @CurrentUser() user: User | null, @Query('operationId') operationId?: string) {
-    return this.wms.receivePackagingStock(actorOperation(user, operationId), sku, dto.qty, actorOf(user));
+    return this.wms.receivePackagingStock(actorOperation(user, operationId), sku, dto.qty, actorOf(user), dto.reference?.trim() || null, dto.unitCost ?? null);
   }
 
   /** Ajuste manual del stock de un insumo (+/−). */
   @Post(':sku/adjust')
   @RequirePermission('inventory:receive')
   adjust(@Param('sku') sku: string, @Body() dto: PackagingStockDto, @CurrentUser() user: User | null, @Query('operationId') operationId?: string) {
-    return this.wms.adjustPackagingStock(actorOperation(user, operationId), sku, dto.qty, actorOf(user));
+    return this.wms.adjustPackagingStock(actorOperation(user, operationId), sku, dto.qty, actorOf(user), dto.reference?.trim() || null);
   }
 }

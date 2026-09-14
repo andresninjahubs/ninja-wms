@@ -17,6 +17,7 @@ import { OrdersController } from './orders.controller';
 import { OrdersImportController } from './orders-import.controller';
 import { ReturnsController } from './returns.controller';
 import { ProductsImportController } from './products-import.controller';
+import { LocationsImportController } from './locations-import.controller';
 import { ProductsController } from './products.controller';
 import { ReceiptsController } from './receipts.controller';
 import { ReceiptsImportController } from './receipts-import.controller';
@@ -53,6 +54,7 @@ import type { WmsContext } from '../infra/context';
     ReturnsController,
     ProductsController,
     ProductsImportController,
+    LocationsImportController,
     BillingController,
     ChatController,
     AnnouncementsController,

@@ -80,6 +80,7 @@ import {
   PutawaySuggestion,
   RotationClass,
   ReceiptOrder,
+  ReceiptOrderStatus,
   ReturnOrder,
   SalesOrder,
   Serial,
@@ -1755,6 +1756,31 @@ export class WmsFacade {
     };
     await this.locations.save(updated);
     return updated;
+  }
+
+  /**
+   * Elimina una ubicación. Solo se permite si NUNCA tuvo movimientos de stock
+   * (de ningún cliente) y ninguna recepción abierta apunta a ella. Si tuvo
+   * historia, la respuesta correcta es desactivarla (el kardex la referencia).
+   */
+  async deleteLocation(locationId: string, actor?: User | null): Promise<{ ok: true; id: string; code: string }> {
+    const loc = await this.locations.findById(locationId);
+    if (!loc) throw new NotFoundError(`Ubicación no encontrada: ${locationId}`);
+    if (actor && actor.operationId && actor.operationId !== loc.operationId) {
+      throw new ForbiddenError('No puedes eliminar ubicaciones de otra operación');
+    }
+    if (await this.inventory.locationHasHistory(locationId)) {
+      throw new ValidationError(`La ubicación ${loc.code} tiene movimientos de stock registrados y no se puede eliminar. Desactívala para que deje de usarse.`);
+    }
+    const sellers = await this.listSellers(loc.operationId);
+    for (const s of sellers) {
+      const open = (await this.receipts.list(s.id)).filter((r) => r.locationId === locationId && r.status !== ReceiptOrderStatus.CANCELLED);
+      if (open.length) {
+        throw new ValidationError(`La ubicación ${loc.code} está asociada a ${open.length} recepción(es) del cliente ${s.name}. Cancélalas o cambia su ubicación antes de eliminarla.`);
+      }
+    }
+    await this.locations.delete(locationId);
+    return { ok: true, id: locationId, code: loc.code };
   }
 
   // ---- Códigos de barra y unidades de medida --------------------------------
@@ -4253,13 +4279,13 @@ export class WmsFacade {
     if (!this.packaging) return Promise.resolve([]);
     return this.packaging.listMaterials(operationId);
   }
-  receivePackagingStock(operationId: string, sku: string, qty: number, actor?: string) {
+  receivePackagingStock(operationId: string, sku: string, qty: number, actor?: string, reference?: string | null, unitCost?: number | null) {
     if (!this.packaging) throw new ValidationError('Embalaje no disponible');
-    return this.packaging.receiveStock(operationId, sku, qty, actor);
+    return this.packaging.receiveStock(operationId, sku, qty, actor, reference ?? null, unitCost ?? null);
   }
-  adjustPackagingStock(operationId: string, sku: string, qtyDelta: number, actor?: string) {
+  adjustPackagingStock(operationId: string, sku: string, qtyDelta: number, actor?: string, reference?: string | null) {
     if (!this.packaging) throw new ValidationError('Embalaje no disponible');
-    return this.packaging.adjustStock(operationId, sku, qtyDelta, actor);
+    return this.packaging.adjustStock(operationId, sku, qtyDelta, actor, reference ?? null);
   }
   listPackagingMovements(operationId: string, filter?: { materialSku?: string; sellerId?: string }) {
     if (!this.packaging) return Promise.resolve([]);

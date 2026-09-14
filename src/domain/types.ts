@@ -823,6 +823,12 @@ export interface PackagingMovement {
   sellerId: string | null; // a qué cliente se carga el consumo (null en RECEIPT/ADJUSTMENT)
   orderId: string | null; // orden que consumió el insumo
   unitPrice: number | null; // precio efectivo aplicado al consumo (para trazar el cobro)
+  /**
+   * Costo unitario del insumo: en RECEIPT es el costo de compra declarado en la reposición;
+   * en CONSUMPTION/ADJUSTMENT es el costo promedio ponderado (PMP) vigente al momento, para
+   * valorizar la salida y calcular margen (precio cobrado − costo).
+   */
+  unitCost: number | null;
   reference: string | null;
   actor: string;
   occurredAt: string; // ISO

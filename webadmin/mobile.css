@@ -163,3 +163,10 @@
   .mvbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tiers { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Líneas de "Nueva orden": en pantallas chicas la cantidad va junto al SKU y el lote pasa a la fila siguiente. */
+@media (max-width: 860px){
+  .ordline,.ordline-h{grid-template-columns:minmax(0,1fr) 84px 40px}
+  .ordline-h span:nth-child(3){display:none}
+  .ordline .ol-lot{grid-column:1 / -1}
+}

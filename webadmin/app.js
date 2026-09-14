@@ -210,6 +210,7 @@
     syncNavCats();
     applyHiddenModules(); uiConfigP.then(applyHiddenModules);
     $("#loc-new").classList.toggle("hidden",!can('master'));
+    if($("#loc-import"))$("#loc-import").classList.toggle("hidden",!can('master'));
     $("#usr-new").classList.toggle("hidden",!can('user'));
     $("#ops-new").classList.toggle("hidden",!can('operation'));
     $("#cli-new").classList.toggle("hidden",!can('seller'));
@@ -2924,21 +2925,22 @@
       +'<div class="fld"><label>Comuna / ciudad (opcional)</label><input id="of-comuna" value="'+esc(st.comuna||'')+'"></div></div>'
       +'<div class="fld"><label>Dirección (opcional)</label><input id="of-addr" value="'+esc(st.address||'')+'"></div>'
       +'<p class="sec-t" style="margin:6px 0 2px">Líneas de la orden</p>'
+      +'<div class="ordline-h"><span>Producto (SKU)</span><span style="text-align:right">Cantidad</span><span>Lote (opcional)</span><span></span></div>'
       +'<div id="of-lines"></div>'
       +'<button class="btn" id="of-addline" style="align-self:flex-start">＋ Agregar línea</button>'
       +'<div class="ferr" id="of-err"></div>'
       +'<div class="acts"><span class="hint">Cliente: '+esc((byId(D.sellers,seller)||{}).name||seller)+'</span><div style="display:flex;gap:10px"><button class="btn" id="of-cancel">Cancelar</button><button class="btn pri" id="of-save">'+(isEdit?'Guardar cambios':'Crear orden')+'</button></div></div>'
       +'</div>';
-    openModal(isEdit?"Editar orden":"Nueva orden",html);
+    openModal(isEdit?"Editar orden":"Nueva orden",html,'xl');
 
     var skuOpts=D.skus.map(function(s){return {v:s.sku,t:s.sku+' — '+(s.description||'')};});
     function lineRow(l){
       l=l||{};
       var opts=skuOpts.map(function(o){return '<option value="'+esc(o.v)+'"'+(o.v===l.sku?' selected':'')+'>'+esc(o.t)+'</option>';}).join("");
       var div=document.createElement('div');
-      div.className='ordline'; div.style.cssText='display:grid;grid-template-columns:1fr 78px 90px 34px;gap:8px;align-items:center;margin-bottom:8px';
+      div.className='ordline';
       div.innerHTML='<select class="ol-sku">'+(D.skus.length?opts:'<option value="">(sin SKUs)</option>')+'</select>'
-        +'<input class="ol-qty" type="number" min="1" value="'+(l.qty||1)+'" title="Cantidad">'
+        +'<input class="ol-qty" type="number" min="1" value="'+(l.qty||1)+'" title="Cantidad" placeholder="Cant.">'
         +'<input class="ol-lot" placeholder="Lote (opc.)" value="'+esc(l.lot||'')+'" title="Lote/serie opcional">'
         +'<button class="mini danger ol-del" title="Quitar">✕</button>';
       div.querySelector('.ol-del').addEventListener('click',function(){div.parentNode.removeChild(div);});
@@ -3425,22 +3427,27 @@
     var body=$("#pkg-body"); if(!body)return;
     if($("#pkg-new"))$("#pkg-new").classList.toggle("hidden",!canPkg());
     var rows=(D.packaging||[]);
-    if(!rows.length){body.innerHTML='<tr><td colspan="7"><div class="empty">Aún no hay insumos de embalaje. Crea cajas, bolsas, cintas, etc. con "Nuevo insumo"; se consumen al empacar y se cobran al cliente.</div></td></tr>';return;}
+    if(!rows.length){body.innerHTML='<tr><td colspan="10"><div class="empty">Aún no hay insumos de embalaje. Crea cajas, bolsas, cintas, etc. con "Nuevo insumo"; se consumen al empacar y se cobran al cliente.</div></td></tr>';return;}
     body.innerHTML=rows.map(function(m){
       var low=(m.onHand||0)<=0;
       var acts=canPkg()
         ? '<button class="mini" data-pkgedit="'+esc(m.sku)+'">Editar</button>'
-          +'<button class="mini" data-pkgin="'+esc(m.sku)+'">+ Stock</button>'
+          +'<button class="mini" data-pkgin="'+esc(m.sku)+'">＋ Reponer</button>'
           +'<button class="mini" data-pkgadj="'+esc(m.sku)+'">Ajuste</button>'
+          +'<button class="mini" data-pkghist="'+esc(m.sku)+'">Historial</button>'
           +'<button class="mini" data-pkgprice="'+esc(m.sku)+'">Precios cliente</button>'
-        : '';
+        : '<button class="mini" data-pkghist="'+esc(m.sku)+'">Historial</button>';
       var over=Object.keys(m.sellerPrices||{}).length;
+      var cost=m.avgCost||0, margin=cost>0?Math.round((m.unitPrice-cost)/cost*100):null;
       return '<tr'+(m.active===false?' style="opacity:.55"':'')+'>'
         +'<td class="sku">'+esc(m.sku)+'</td>'
         +'<td class="mono2">'+esc(m.barcode||'—')+'</td>'
         +'<td>'+esc(m.name)+'</td>'
+        +'<td style="text-align:right">'+(cost>0?fmtInt(cost):'<span class="hint" title="Registra el costo en la próxima reposición">sin costo</span>')+(m.lastCost!=null&&m.lastCost!==cost?' <span class="hint" title="Costo de la última reposición">(últ. '+fmtInt(m.lastCost)+')</span>':'')+'</td>'
         +'<td style="text-align:right">'+fmtInt(m.unitPrice)+(over?' <span class="hint">(+'+over+' cliente)</span>':'')+'</td>'
+        +'<td style="text-align:right'+(margin!=null&&margin<0?';color:var(--crit)':'')+'">'+(margin!=null?(margin>0?'+':'')+margin+'%':'—')+'</td>'
         +'<td style="text-align:right'+(low?';color:var(--crit);font-weight:600':'')+'">'+fmtInt(m.onHand||0)+'</td>'
+        +'<td style="text-align:right">'+(cost>0?'$'+fmtInt(m.stockValue||0):'—')+'</td>'
         +'<td><span class="chip st-'+(m.active===false?'CANCELLED':'AVAILABLE')+'"><span class="dot"></span>'+(m.active===false?'Inactivo':'Activo')+'</span></td>'
         +'<td style="text-align:right">'+acts+'</td></tr>';
     }).join("");
@@ -3450,6 +3457,29 @@
       $$("#pkg-body [data-pkgadj]").forEach(function(b){b.addEventListener("click",function(){openPkgStock(pkgBySku(b.getAttribute("data-pkgadj")),'adj');});});
       $$("#pkg-body [data-pkgprice]").forEach(function(b){b.addEventListener("click",function(){openPkgPrices(pkgBySku(b.getAttribute("data-pkgprice")));});});
     }
+    $$("#pkg-body [data-pkghist]").forEach(function(b){b.addEventListener("click",function(){openPkgHistory(pkgBySku(b.getAttribute("data-pkghist")));});});
+  }
+  var PKG_MV_LABEL={RECEIPT:"Reposición",CONSUMPTION:"Consumo (packing)",ADJUSTMENT:"Ajuste"};
+  function openPkgHistory(m){
+    if(!m)return;
+    openModal("Historial · "+m.name,'<p class="muted" style="margin:0 0 10px">Cargando…</p>',true);
+    api('/packaging/movements?materialSku='+encodeURIComponent(m.sku)+'&operationId='+encodeURIComponent(op)).then(function(movs){
+      movs=(movs||[]).slice().sort(function(a,b){return String(b.occurredAt).localeCompare(String(a.occurredAt));});
+      var saldo=movs.reduce(function(a,x){return a+(x.qtyDelta||0);},0);
+      var repos=movs.filter(function(x){return x.type==='RECEIPT';});
+      var invested=repos.reduce(function(a,x){return a+(x.unitCost!=null?x.qtyDelta*x.unitCost:0);},0);
+      var head='<div class="apprv-box ok" style="margin-bottom:12px"><div class="apprv-t">Saldo actual: '+fmtInt(saldo)+' un.'+(m.avgCost>0?' · costo promedio $'+fmtInt(m.avgCost)+' · valor $'+fmtInt(Math.max(0,saldo)*m.avgCost):'')+'</div><div class="hint">'+repos.length+' reposición(es) · última: '+(repos.length?esc(fmtDate(repos[0].occurredAt))+' (+'+fmtInt(repos[0].qtyDelta)+(repos[0].unitCost!=null?' a $'+fmtInt(repos[0].unitCost):'')+')':'—')+(invested>0?' · total comprado $'+fmtInt(invested):'')+'</div></div>';
+      var rows=movs.map(function(x){
+        var who=x.sellerId?(byId(D.sellers,x.sellerId)||{}).name||x.sellerId:'';
+        var det=[x.orderId?'Orden '+x.orderId:'',who,x.reference||''].filter(Boolean).join(' · ');
+        var q=Math.abs(x.qtyDelta||0), costTxt=x.unitCost!=null?('$'+fmtInt(x.unitCost)+' <span class="hint">· $'+fmtInt(q*x.unitCost)+'</span>'):'—';
+        if(x.type==='CONSUMPTION'&&x.unitPrice!=null)costTxt+='<div class="hint">cobrado $'+fmtInt(x.unitPrice)+'/un'+(x.unitCost!=null?' · margen $'+fmtInt(q*(x.unitPrice-x.unitCost)):'')+'</div>';
+        return '<tr><td>'+esc(fmtDate(x.occurredAt))+'</td><td><span class="chip st-'+(x.type==='RECEIPT'?'AVAILABLE':x.type==='CONSUMPTION'?'RESERVED':'QUARANTINE')+'"><span class="dot"></span>'+esc(PKG_MV_LABEL[x.type]||x.type)+'</span></td><td style="text-align:right;font-weight:600;color:'+((x.qtyDelta||0)<0?'var(--crit)':'var(--good)')+'">'+((x.qtyDelta||0)>0?'+':'')+fmtInt(x.qtyDelta||0)+'</td><td style="text-align:right">'+costTxt+'</td><td class="muted">'+esc(det||'—')+'</td><td class="muted">'+esc(x.actor||'—')+'</td></tr>';
+      }).join('');
+      $("#m-body").innerHTML=head+(rows?'<div class="tablewrap" style="max-height:52vh;overflow:auto"><table class="m-skip"><thead><tr><th>Fecha</th><th>Tipo</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Costo unit. · total</th><th>Detalle</th><th>Usuario</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div class="empty">Este insumo aún no tiene movimientos.</div>')
+        +'<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn" id="ph-close">Cerrar</button></div>';
+      $("#ph-close").addEventListener("click",closeModal);
+    }).catch(function(e){$("#m-body").innerHTML='<div class="ferr">'+esc(e.message||'Error')+'</div>';});
   }
   function pkgBySku(sku){for(var i=0;i<(D.packaging||[]).length;i++){if(D.packaging[i].sku===sku)return D.packaging[i];}return null;}
   function pkgApi(path,opts){opts=opts||{};opts.body=opts.body||{};return api('/packaging'+path+(path.indexOf('?')<0?'?':'&')+'operationId='+encodeURIComponent(op),opts);}
@@ -3481,19 +3511,38 @@
     var isIn=mode==='in';
     var html='<div class="form">'
       +'<p class="muted" style="margin:0">'+esc(m.name)+' · saldo actual <b>'+fmtInt(m.onHand||0)+'</b></p>'
-      +'<div class="fld"><label>'+(isIn?'Cantidad a ingresar (+)':'Ajuste (+/−)')+'</label><input id="pg-qty" type="number" value="'+(isIn?1:0)+'"></div>'
+      +(isIn?'<div class="row2"><div class="fld"><label>Cantidad que ingresa (+)</label><input id="pg-qty" type="number" min="1" value="1"></div>'
+          +'<div class="fld"><label>Costo unitario (CLP, neto)</label><input id="pg-cost" type="number" min="0" value="'+(m.lastCost!=null?m.lastCost:'')+'" placeholder="Ej: 320"><span class="hint" id="pg-costhint"></span></div></div>'
+          +'<div class="fld"><label>Proveedor / N° guía o factura</label><input id="pg-ref" placeholder="Ej: Cartones Sur · Guía 4581" maxlength="200"></div>'
+          +'<div class="apprv-box" id="pg-costbox" style="margin-top:-4px"><div class="apprv-t" id="pg-total">Total de la compra: —</div><div class="hint" id="pg-pmp">'+(m.avgCost>0?'Costo promedio actual: $'+fmtInt(m.avgCost)+' · precio de cobro: $'+fmtInt(m.unitPrice):'Aún sin costo registrado · precio de cobro: $'+fmtInt(m.unitPrice))+'</div></div>'
+          +'<div class="hint" style="margin-top:-6px">La reposición queda en el historial con fecha, cantidad, costo, referencia y usuario. El costo promedio (PMP) se recalcula con cada ingreso y valoriza los consumos para la rentabilidad.</div>'
+        :'<div class="fld"><label>Ajuste (+/−)</label><input id="pg-qty" type="number" value="0"></div>'
+          +'<div class="fld"><label>Motivo del ajuste</label><input id="pg-ref" placeholder="Ej: merma por inventario" maxlength="200"></div>')
       +'<div class="ferr" id="pg-serr"></div>'
-      +'<div class="acts"><span class="hint"></span><div style="display:flex;gap:10px"><button class="btn" id="pg-scancel">Cancelar</button><button class="btn pri" id="pg-sok">'+(isIn?'Ingresar stock':'Aplicar ajuste')+'</button></div></div>'
+      +'<div class="acts"><span class="hint"></span><div style="display:flex;gap:10px"><button class="btn" id="pg-scancel">Cancelar</button><button class="btn pri" id="pg-sok">'+(isIn?'Registrar reposición':'Aplicar ajuste')+'</button></div></div>'
       +'</div>';
-    openModal(isIn?("Ingresar stock · "+m.name):("Ajustar stock · "+m.name),html);
+    openModal(isIn?("Reponer stock · "+m.name):("Ajustar stock · "+m.name),html);
     $("#pg-scancel").addEventListener("click",closeModal);
+    if(isIn){
+      var recalc=function(){
+        var q=parseInt($("#pg-qty").value,10)||0, c=parseInt($("#pg-cost").value,10);
+        if(!(q>0)||isNaN(c)){$("#pg-total").textContent="Total de la compra: —";$("#pg-costhint").textContent="";return;}
+        $("#pg-total").textContent="Total de la compra: $"+fmtInt(q*c)+" ("+fmtInt(q)+" × $"+fmtInt(c)+")";
+        var prev=Math.max(0,m.onHand||0), pmp=(prev>0&&m.avgCost>0)?Math.round((prev*m.avgCost+q*c)/(prev+q)):c;
+        $("#pg-costhint").textContent="Nuevo costo promedio: $"+fmtInt(pmp)+(m.unitPrice>0&&pmp>0?" · margen "+Math.round((m.unitPrice-pmp)/pmp*100)+"%":"");
+      };
+      $("#pg-qty").addEventListener("input",recalc);$("#pg-cost").addEventListener("input",recalc);recalc();
+    }
     $("#pg-sok").addEventListener("click",function(){
       $("#pg-serr").textContent="";
       var qty=parseInt($("#pg-qty").value,10);
       if(isIn&&!(qty>0)){$("#pg-serr").textContent="Ingresa una cantidad mayor que 0.";return;}
       if(!isIn&&(!qty||qty===0)){$("#pg-serr").textContent="El ajuste debe ser distinto de 0.";return;}
-      pkgApi('/'+encodeURIComponent(m.sku)+(isIn?'/receive':'/adjust'),{method:'POST',body:{qty:qty}})
-        .then(function(){closeModal();toast(isIn?"Stock ingresado":"Ajuste aplicado");return loadPackaging();})
+      var ref=($("#pg-ref")&&$("#pg-ref").value.trim())||undefined;
+      var payload={qty:qty,reference:ref};
+      if(isIn){var c=$("#pg-cost").value.trim(); if(c===""){$("#pg-serr").textContent="Ingresa el costo unitario de la compra (puede ser 0 si fue sin costo).";return;} var cn=parseInt(c,10); if(isNaN(cn)||cn<0){$("#pg-serr").textContent="El costo unitario debe ser un número mayor o igual a 0.";return;} payload.unitCost=cn;}
+      pkgApi('/'+encodeURIComponent(m.sku)+(isIn?'/receive':'/adjust'),{method:'POST',body:payload})
+        .then(function(){closeModal();toast(isIn?"Reposición registrada (+"+qty+")":"Ajuste aplicado");return loadPackaging();})
         .catch(function(e){$("#pg-serr").textContent=e.message;});
     });
   }
@@ -3598,7 +3647,6 @@
     if(!$("#pr-body"))return;
     if(!prInit){ prInit=true;
       $("#pr-new").addEventListener("click",function(){openProductForm(null);});
-      $("#pr-log").addEventListener("click",function(){openProductLog(null);});
       $("#pr-q").addEventListener("input",function(){prQ=this.value.trim().toLowerCase();renderProducts();});
       if($("#pr-export"))$("#pr-export").addEventListener("click",exportProducts);
       if($("#pr-import"))$("#pr-import").addEventListener("click",openProductImport);
@@ -4589,7 +4637,8 @@
       var capTxt=l.capacity>0?(used+' / '+l.capacity+' un · '+pct+'%'):(used+' un · sin límite');
       var inactive=l.active===false;
       var acts=manage?('<div class="card-actions"><button class="mini" data-ledit="'+esc(l.id)+'">Editar</button>'
-        +(inactive?'<button class="mini" data-lact="'+esc(l.id)+'">Activar</button>':'<button class="mini danger" data-ldeact="'+esc(l.id)+'">Desactivar</button>')+'</div>'):'';
+        +(inactive?'<button class="mini" data-lact="'+esc(l.id)+'">Activar</button>':'<button class="mini danger" data-ldeact="'+esc(l.id)+'">Desactivar</button>')
+        +(used===0?'<button class="mini" data-ldel="'+esc(l.id)+'" title="Solo si nunca tuvo movimientos">Eliminar</button>':'')+'</div>'):'';
       return '<div class="locc"'+(inactive?' style="opacity:.55"':'')+'><div class="code">'+esc(l.code)+(inactive?' · inactiva':'')+'</div><div class="zone">'+esc(zoneName(l.zoneType))+'</div>'
         +(l.capacity>0?'<div class="occ"><i class="'+cls+'" style="width:'+pct+'%"></i></div>':'<div class="occ"><i style="width:'+Math.min(100,used/6)+'%;background:var(--ink-3)"></i></div>')
         +'<div class="u"><span>Ocupación</span><span>'+capTxt+'</span></div>'+acts+'</div>';
@@ -4598,7 +4647,63 @@
       $$("#loc-grid [data-ledit]").forEach(function(b){b.addEventListener("click",function(){openLocForm(byId(D.locations,b.getAttribute("data-ledit")));});});
       $$("#loc-grid [data-ldeact]").forEach(function(b){b.addEventListener("click",function(){var l=byId(D.locations,b.getAttribute("data-ldeact"));openConfirm("Desactivar ubicación","La ubicación "+l.code+" dejará de usarse para guardado y picking.",function(){api('/locations/'+l.id,{method:'PATCH',body:{active:false}}).then(function(){toast("Ubicación desactivada");reloadLocations();}).catch(err);});});});
       $$("#loc-grid [data-lact]").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-lact");api('/locations/'+id,{method:'PATCH',body:{active:true}}).then(function(){toast("Ubicación activada");reloadLocations();}).catch(err);});});
+      $$("#loc-grid [data-ldel]").forEach(function(b){b.addEventListener("click",function(){var l=byId(D.locations,b.getAttribute("data-ldel"));openConfirm("Eliminar ubicación","Se eliminará la ubicación "+l.code+". Solo es posible si nunca registró movimientos de stock; si los tuvo, el sistema te pedirá desactivarla en su lugar.",function(){api('/locations/'+l.id,{method:'DELETE'}).then(function(){toast("Ubicación "+l.code+" eliminada");reloadLocations();}).catch(function(e){openModal("No se pudo eliminar",'<p class="muted" style="margin:0 0 18px">'+esc(e.message||'Error')+'</p><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" id="m-no">Cerrar</button>'+(l.active!==false?'<button class="btn danger" id="m-deact">Desactivar ahora</button>':'')+'</div>');$("#m-no").addEventListener("click",closeModal);if($("#m-deact"))$("#m-deact").addEventListener("click",function(){api('/locations/'+l.id,{method:'PATCH',body:{active:false}}).then(function(){closeModal();toast("Ubicación desactivada");reloadLocations();}).catch(err);});});});});});
     }
+  }
+
+  // ----- Carga masiva de ubicaciones (Excel) -----
+  function downloadAuth(path,filename,okMsg,onErr){
+    var h={}; if(token)h['Authorization']='Bearer '+token;
+    return fetch(API+path,{headers:h}).then(function(r){if(!r.ok)throw new Error('No se pudo generar el archivo');return r.blob();}).then(function(b){var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u);},1500);if(okMsg)toast(okMsg);}).catch(function(e){if(onErr)onErr(e);else err(e);});
+  }
+  function openLocationImport(){
+    var b64="";
+    var html='<div class="form" style="gap:14px">'
+      +'<p class="muted" style="margin:0">Crea o edita ubicaciones en masa con Excel. Las ubicaciones <b>nuevas</b> se crean; las <b>existentes</b> (mismo código) se editan — primero verás qué cambia y deberás confirmar.</p>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="li-tpl">⬇ Descargar formato Excel</button><button class="btn" id="li-cur">⬇ Exportar ubicaciones actuales</button></div>'
+      +'<div class="fld"><label>Archivo de ubicaciones (.xlsx o .csv)</label><input type="file" id="li-file" accept=".xlsx,.xls,.csv"></div>'
+      +'<div class="ferr" id="li-err"></div>'
+      +'<div id="li-result"></div>'
+      +'<div class="acts"><span class="hint">Nada se guarda hasta que confirmes.</span><div style="display:flex;gap:10px"><button class="btn" id="li-cancel">Cerrar</button><button class="btn pri" id="li-analyze">Analizar cambios</button></div></div>'
+      +'</div>';
+    openModal("Carga masiva de ubicaciones",html,true);
+    $("#li-cancel").addEventListener("click",closeModal);
+    $("#li-tpl").addEventListener("click",function(){$("#li-err").textContent="";downloadAuth('/operations/'+encodeURIComponent(op)+'/location-import/template','plantilla-ubicaciones-ninjawms.xlsx',"Formato descargado",function(e){$("#li-err").textContent=e.message;});});
+    $("#li-cur").addEventListener("click",function(){$("#li-err").textContent="";downloadAuth('/operations/'+encodeURIComponent(op)+'/location-import/export','ubicaciones-ninjawms.xlsx',"Ubicaciones exportadas",function(e){$("#li-err").textContent=e.message;});});
+    function renderPreview(j){
+      var box=$("#li-result");
+      if(!j||j.ok===false){box.innerHTML='<div class="apprv-box warn"><div class="apprv-t">No se pudo analizar el archivo</div><div class="hint">'+esc((j&&j.error)||'Error')+'</div></div>';return;}
+      var r=j.resumen||{}; var total=(r.nuevas||0)+(r.modificar||0);
+      var html='<div class="apprv-box '+(total>0?'ok':'warn')+'"><div class="apprv-t">'+(r.nuevas||0)+' nueva(s) · '+(r.modificar||0)+' a modificar</div><div class="hint">'+(r.sinCambios||0)+' sin cambios · '+(r.errores||0)+' con error</div></div>';
+      if(j.toCreate&&j.toCreate.length){html+='<div style="margin-top:12px"><p class="sec-t" style="margin:0 0 4px">Ubicaciones nuevas</p>'+j.toCreate.map(function(c){return '<div class="hint">• <b class="mono2">'+esc(c.code)+'</b> — '+esc(c.zona)+' · capacidad '+esc(c.capacidad)+' · cercanía '+esc(c.pickRank)+'</div>';}).join('')+'</div>';}
+      if(j.toUpdate&&j.toUpdate.length){html+='<div style="margin-top:12px"><p class="sec-t" style="margin:0 0 4px">Modificaciones — revisa antes de confirmar</p>'+j.toUpdate.map(function(u){return '<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px"><b class="mono2">'+esc(u.code)+'</b>'+u.changes.map(function(c){return '<div class="hint">'+esc(c.campo)+': <span style="color:var(--crit)">'+esc(c.de)+'</span> → <span style="color:var(--good)">'+esc(c.a)+'</span></div>';}).join('')+'</div>';}).join('')+'</div>';}
+      if(j.errors&&j.errors.length){html+='<div style="margin-top:12px"><p class="sec-t" style="margin:0 0 4px">Errores (esas filas se omiten)</p>'+j.errors.map(function(e){return '<div class="hint">Fila '+esc(e.fila)+': '+esc(e.motivo)+'</div>';}).join('')+'</div>';}
+      if(total>0){html+='<div style="margin-top:14px;display:flex;justify-content:flex-end"><button class="btn pri" id="li-commit">Confirmar y cargar ('+total+')</button></div>';}
+      box.innerHTML=html;
+      if($("#li-commit"))$("#li-commit").addEventListener("click",function(){
+        var btn=this; btn.disabled=true; btn.textContent="Cargando…";
+        api('/operations/'+encodeURIComponent(op)+'/location-import/commit',{method:'POST',body:{dataBase64:b64}}).then(function(res){
+          var rr=res.resumen||{};
+          toast((rr.creadas||0)+" creada(s), "+(rr.modificadas||0)+" modificada(s)");
+          box.innerHTML='<div class="apprv-box ok"><div class="apprv-t">Listo: '+(rr.creadas||0)+' creada(s) · '+(rr.modificadas||0)+' modificada(s)</div><div class="hint">'+(rr.errores||0)+' con error</div></div>'
+            +((res.errores||[]).length?'<div style="margin-top:8px">'+res.errores.map(function(e){return '<div class="hint">'+esc(e.code)+': '+esc(e.motivo)+'</div>';}).join('')+'</div>':'');
+          reloadLocations();
+        }).catch(function(e){btn.disabled=false;btn.textContent="Confirmar y cargar";$("#li-err").textContent=e.message;});
+      });
+    }
+    $("#li-analyze").addEventListener("click",function(){
+      $("#li-err").textContent=""; $("#li-result").innerHTML="";
+      var inp=$("#li-file"); var f=inp&&inp.files&&inp.files[0];
+      if(!f){$("#li-err").textContent="Elige un archivo primero.";return;}
+      var btn=this; btn.disabled=true; btn.textContent="Analizando…";
+      var rd=new FileReader();
+      rd.onload=function(){
+        b64=String(rd.result||"").split(',')[1]||"";
+        api('/operations/'+encodeURIComponent(op)+'/location-import/preview',{method:'POST',body:{dataBase64:b64}}).then(function(j){renderPreview(j);}).catch(function(e){$("#li-err").textContent=e.message;}).then(function(){btn.disabled=false;btn.textContent="Analizar cambios";});
+      };
+      rd.onerror=function(){$("#li-err").textContent="No se pudo leer el archivo.";btn.disabled=false;btn.textContent="Analizar cambios";};
+      rd.readAsDataURL(f);
+    });
   }
 
   function renderCounts(){
@@ -4886,7 +4991,7 @@
   }
 
   // ---- Modal / drawer / export / búsqueda / util ---------------------------
-  function openModal(title,html,wide){$("#m-title").textContent=title;$("#m-body").innerHTML=html;var p=$("#m-panel");if(p)p.classList.toggle("wide",!!wide);$("#modal").classList.add("on");}
+  function openModal(title,html,wide){$("#m-title").textContent=title;$("#m-body").innerHTML=html;var p=$("#m-panel");if(p){p.classList.toggle("wide",wide===true);p.classList.toggle("xl",wide==='xl');}$("#modal").classList.add("on");}
   function closeModal(){$("#modal").classList.remove("on");}
   $("#m-x").addEventListener("click",closeModal);
   $("#modal").addEventListener("click",function(e){if(e.target===$("#modal"))closeModal();});
@@ -4999,6 +5104,8 @@
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});
   $("#loc-new").addEventListener("click",function(){openLocForm(null);});
+  if($("#loc-import"))$("#loc-import").addEventListener("click",openLocationImport);
+  if($("#loc-export"))$("#loc-export").addEventListener("click",function(){downloadAuth('/operations/'+encodeURIComponent(op)+'/location-import/export','ubicaciones-ninjawms.xlsx',"Ubicaciones exportadas");});
   $("#usr-new").addEventListener("click",function(){openUserForm(null);});
   $("#ops-new").addEventListener("click",function(){openOpForm(null);});
   $("#inb-new").addEventListener("click",function(){openReceiveForm();});

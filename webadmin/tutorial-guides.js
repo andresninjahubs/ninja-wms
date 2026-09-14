@@ -177,7 +177,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#pr-new', place:'bottom', title:'Nuevo producto', text:'Define código SKU, descripción, tipo (simple o kit), EAN y niveles de empaque (unidad, caja/DUN). El SKU es <b>propio del cliente</b>: dos clientes pueden usar el mismo código sin colisión.'},
       {el:'#pr-import', place:'bottom', title:'Carga masiva', text:'Sube el maestro completo desde Excel. Es la forma más rápida de iniciar un cliente nuevo.'},
       {el:'#pr-body', place:'top', title:'Kits virtuales y armados', text:'Un kit <b>virtual</b> se explota en sus componentes al reservar y pickear. Un kit <b>armado</b> tiene stock propio y se ensambla en bodega. Elige según cómo trabaja el cliente.'},
-      {el:'#pr-log', place:'bottom', title:'Historial de cambios', text:'Cada creación, edición, activación o desactivación queda registrada con usuario y fecha. Un SKU desactivado no se puede usar en órdenes nuevas pero conserva su historia.'}
+      {el:'#pr-body', place:'top', title:'Historial por producto', text:'El botón <b>Historial</b> de cada fila muestra cada creación, edición, activación o desactivación con usuario y fecha. Un SKU desactivado no se puede usar en órdenes nuevas pero conserva su historia.'}
     ]
   },
 
@@ -186,7 +186,8 @@ window.NINJA_TOUR_GUIDES = {
     summary:'Los insumos de embalaje de la bodega (cajas, bolsas, relleno) con su precio y saldo, para controlarlos y cobrarlos por pedido.',
     steps:[
       {el:'#pkg-new', place:'bottom', title:'Nuevo insumo', text:'Registra cada tipo de caja o material con SKU interno, EAN, nombre y <b>precio</b>. Son de la bodega, no del cliente.'},
-      {el:'#pkg-body', place:'top', title:'Saldo y consumo', text:'El saldo baja cada vez que un empaque usa el insumo. Así sabes cuándo reponer y cuánto embalaje se consumió por cliente para facturarlo.'}
+      {el:'#pkg-body', place:'top', title:'Saldo y consumo', text:'El saldo baja cada vez que un empaque usa el insumo. Así sabes cuándo reponer y cuánto embalaje se consumió por cliente para facturarlo.'},
+      {el:'#pkg-body', place:'top', title:'Reponer, costos e historial', text:'Con <b>Reponer</b> registras cada ingreso con cantidad, <b>costo unitario de compra</b>, proveedor o N° de guía y usuario. El sistema calcula el <b>costo promedio ponderado</b> (PMP) del insumo, el margen contra el precio de cobro y el valor del stock. <b>Historial</b> muestra reposiciones, consumos (valorizados al costo del momento) y ajustes.'}
     ]
   },
 
@@ -195,7 +196,9 @@ window.NINJA_TOUR_GUIDES = {
     summary:'El mapa de la bodega: cada posición con su ocupación. Las ubicaciones son compartidas entre clientes (modelo caótico) para aprovechar el espacio.',
     steps:[
       {el:'#loc-new', place:'bottom', title:'Nueva ubicación', text:'Crea posiciones con código (pasillo-rack-nivel), zona y capacidad. Las zonas se usan en los gráficos del dashboard y en las sugerencias de guardado.'},
-      {el:'#loc-grid', place:'top', title:'Ocupación en vivo', text:'Cada tarjeta muestra la ubicación, su zona y cuántas unidades tiene. Haz clic para ver qué SKUs y de qué clientes están ahí. El color indica el nivel de ocupación.'}
+      {el:'#loc-import', place:'bottom', title:'Carga masiva', text:'Descarga el formato Excel, completa una fila por ubicación (código, zona, bodega, capacidad, cercanía a picking) y súbelo. Antes de guardar verás qué se crea y qué cambia. Ideal para montar la bodega completa de una vez.', roles:['PLATFORM_ADMIN','ADMIN','SUPERVISOR']},
+      {el:'#loc-grid', place:'top', title:'Ocupación en vivo', text:'Cada tarjeta muestra la ubicación, su zona y cuántas unidades tiene. Haz clic para ver qué SKUs y de qué clientes están ahí. El color indica el nivel de ocupación.'},
+      {el:'#loc-grid', place:'top', title:'Editar, desactivar o eliminar', text:'Una ubicación que nunca tuvo movimientos se puede <b>eliminar</b>. Si ya registró stock, el kardex la referencia: en ese caso se <b>desactiva</b> y deja de usarse para guardado y picking.'}
     ],
     tips:['Imprime las etiquetas de ubicación para el escaneo desde la app móvil.']
   },

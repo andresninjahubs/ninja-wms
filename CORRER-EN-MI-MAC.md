@@ -44,7 +44,7 @@ El ingreso ahora es con **email y contraseña** (autenticación real). Usa uno d
 
 | Email                  | Contraseña  | Qué ve                                              |
 |------------------------|-------------|-----------------------------------------------------|
-| `root@ninjahubs.cl`    | `admin1234` | **Todo** — las dos operaciones (super-admin)        |
+| `admin@ninjahubs.cl`    | `admin1234` | **Todo** — las dos operaciones (super-admin)        |
 | `ana@ninjahubs.cl`     | `demo1234`  | Administradora de **Bodega Ninja Hubs**             |
 | `nora@andes.cl`        | `demo1234`  | Administradora de **Bodega Andes** (aislada)        |
 | `carla@acme.cl`        | `demo1234`  | **Cliente**: solo ve su empresa (ACME)              |

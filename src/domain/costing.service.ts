@@ -219,8 +219,14 @@ export class CostingService {
       let packaging = 0;
       if (this.packaging) {
         try {
-          const emb = await this.packaging.consumptionForBilling(operationId, seller.id, fromISO, toISO);
-          packaging = emb.reduce((s, e) => s + e.amount, 0) * card.packagingCostRatio;
+          // Costo real (PMP registrado en cada reposición) cuando existe; si los consumos no
+          // tienen costo (histórico), se estima como % de lo cobrado (packagingCostRatio).
+          const real = await this.packaging.consumptionCost(operationId, seller.id, fromISO, toISO);
+          if (real.cost > 0) packaging = real.cost;
+          else {
+            const emb = await this.packaging.consumptionForBilling(operationId, seller.id, fromISO, toISO);
+            packaging = emb.reduce((s, e) => s + e.amount, 0) * card.packagingCostRatio;
+          }
         } catch { packaging = 0; }
       }
       rows.push({ seller, revenue, laborStandard, laborReal, storage, packaging, laborHours, unitMonths });

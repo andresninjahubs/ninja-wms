@@ -36,9 +36,11 @@ En el panel → servicio del WMS → pestaña **Variables**. Agrega:
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (referencia a la base) |
 | `AUTH_REQUIRED` | `true` |
 | `AUTH_SECRET` | un secreto largo (genera con `openssl rand -hex 32`) |
+| `ROOT_EMAIL` | email del super-admin (por defecto `admin@ninjahubs.cl`) |
 | `ROOT_PASSWORD` | una clave fuerte para el super-admin |
 | `SEED_DEMO` | `false` |
 | `CORS_ORIGIN` | `https://TU-DOMINIO` |
+| `HIDDEN_MODULES` | módulos ocultos al cliente; si no la defines aplica el default de la versión (`voz,costos,plan,aiaudit,asignaciones,agente`). `""` muestra todo |
 
 (Opcionales: `BRAND_APP_NAME`, `BRAND_PRIMARY_COLOR`, `SMTP_URL`, `SMTP_FROM`.)
 
@@ -53,7 +55,7 @@ proveedor de dominio. El HTTPS es automático.
 
 ## 6) Primer ingreso
 Abre `https://TU-DOMINIO/admin/` e inicia sesión como:
-- Usuario: `root@ninjahubs.cl`
+- Usuario: `admin@ninjahubs.cl` (o el `ROOT_EMAIL` que definiste)
 - Clave: la que pusiste en `ROOT_PASSWORD`
 
 Cambia la clave, crea tu primera operación, clientes y usuarios.
@@ -63,6 +65,25 @@ Cuando cambie el código, desde la carpeta:
 ```bash
 railway up
 ```
+
+### Subir una versión nueva sobre una instalación antigua
+El arranque ejecuta `prisma db push`, que adapta el esquema de la base a la versión nueva.
+Si entre versiones se eliminaron columnas o tablas, Prisma **se detiene** y el servicio no
+arranca (en los logs verás "data loss"). Tienes dos caminos:
+
+1. **Base nueva para la prueba (recomendado para que un cliente pruebe):** en Railway agrega
+   otro PostgreSQL (o un servicio nuevo completo) y apunta `DATABASE_URL` a él. Entras con el
+   super-admin, creas la operación del cliente y sus usuarios; desde el Dashboard el cliente
+   puede cargar datos de ejemplo con un clic.
+2. **Conservar la base actual:** haz un respaldo en Railway (Postgres → Backups) y agrega la
+   variable `PRISMA_ACCEPT_DATA_LOSS=true` solo para ese despliegue; quítala después.
+
+### Preparar una prueba con un cliente
+- `SEED_DEMO=false` (sin usuarios de ejemplo), `AUTH_REQUIRED=true`.
+- Crea la operación del cliente desde **Operaciones** y un usuario ADMIN para él.
+- Los tutoriales se abren solos la primera vez que entra a cada sección; los videos están
+  incluidos en la imagen (`/admin/videos/`).
+- Cuando quieras mostrarle un módulo oculto, edita `HIDDEN_MODULES` y reinicia el servicio.
 
 ## Notas de seguridad (antes de cobrar a clientes reales)
 - `SEED_DEMO=false` (sin usuarios de ejemplo con clave `demo1234`).

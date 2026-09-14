@@ -366,6 +366,12 @@ export class InventoryService {
   }
 
   /** Movimientos crudos del seller (más recientes primero) — para actividad y recepción. */
+  /** ¿La ubicación registró alguna vez un movimiento (de cualquier cliente)? */
+  async locationHasHistory(locationId: string): Promise<boolean> {
+    const occ = await this.movements.occupancyByLocation();
+    return Object.prototype.hasOwnProperty.call(occ, locationId);
+  }
+
   async listMovements(sellerId: string, limit = 50): Promise<StockMovement[]> {
     const all = await this.movements.find({ sellerId });
     return all

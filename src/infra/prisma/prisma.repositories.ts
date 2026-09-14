@@ -583,6 +583,7 @@ export class PrismaPackagingRepository implements PackagingRepository {
         sellerId: mv.sellerId,
         orderId: mv.orderId,
         unitPrice: mv.unitPrice,
+        unitCost: mv.unitCost ?? null,
         reference: mv.reference,
         actor: mv.actor,
         occurredAt: new Date(mv.occurredAt),
@@ -603,6 +604,7 @@ export class PrismaPackagingRepository implements PackagingRepository {
       sellerId: mv.sellerId ?? null,
       orderId: mv.orderId ?? null,
       unitPrice: mv.unitPrice ?? null,
+      unitCost: mv.unitCost ?? null,
       reference: mv.reference ?? null,
       actor: mv.actor,
       occurredAt: (mv.occurredAt as Date).toISOString(),
@@ -1217,6 +1219,9 @@ export class PrismaLocationRepository implements LocationRepository {
     const rows = await this.db.location.findMany({ where: { operationId } });
     return rows.map((l: any) => this.toDomain(l));
   }
+  async delete(locationId: string): Promise<void> {
+    await this.db.location.deleteMany({ where: { id: locationId } });
+  }
 }
 
 export class PrismaOrderRepository implements OrderRepository {
@@ -1348,41 +1353,48 @@ export class PrismaReceiptOrderRepository implements ReceiptOrderRepository {
   constructor(private readonly db: PrismaClient, private readonly events?: EventRepository) {}
 
   async save(order: ReceiptOrder): Promise<void> {
-    await this.db.receiptOrder.upsert({
-      where: { id: order.id },
-      create: {
-        id: order.id,
-        sellerId: order.sellerId,
-        supplier: order.supplier,
-        reference: order.reference,
-        locationId: order.locationId,
-        notes: order.notes,
-        status: order.status,
-        lines: order.lines as unknown as object,
-        events: order.events as unknown as object,
-        createdAt: new Date(order.createdAt),
-        createdBy: order.createdBy,
-      },
-      update: {
-        supplier: order.supplier,
-        reference: order.reference,
-        locationId: order.locationId,
-        notes: order.notes,
-        status: order.status,
-        lines: order.lines as unknown as object,
-        events: order.events as unknown as object,
-      },
+    // Normalización (G8): la tabla ReceiptLine guarda la cantidad ESPERADA de cada línea
+    // (el dominio la llama expectedQty; `qty` solo existe en el payload de entrada).
+    // Todo va en UNA transacción: antes, si fallaba la normalización, la orden quedaba
+    // creada pero el panel mostraba "Error interno" (y aparecía al refrescar).
+    const lineRows = (order.lines ?? []).map((l: any) => {
+      const expiry = l.expiry ? new Date(l.expiry) : null;
+      return {
+        id: `${order.id}:${l.lineNo}`, receiptId: order.id, lineNo: l.lineNo, sku: l.sku,
+        qty: Number.isFinite(l.expectedQty) ? l.expectedQty : Number(l.qty ?? 0) || 0,
+        uom: l.uom ?? 'EA', lot: l.lot ?? null,
+        expiry: expiry && !Number.isNaN(expiry.getTime()) ? expiry : null,
+      };
     });
-    // Normalización (G8): reemplaza las líneas en la tabla ReceiptLine para analytics por línea.
-    await this.db.receiptLine.deleteMany({ where: { receiptId: order.id } });
-    if (order.lines?.length) {
-      await this.db.receiptLine.createMany({
-        data: order.lines.map((l: any) => ({
-          id: `${order.id}:${l.lineNo}`, receiptId: order.id, lineNo: l.lineNo, sku: l.sku,
-          qty: l.qty, uom: l.uom ?? 'EA', lot: l.lot ?? null, expiry: l.expiry ? new Date(l.expiry) : null,
-        })),
-      });
-    }
+    await this.db.$transaction([
+      this.db.receiptOrder.upsert({
+        where: { id: order.id },
+        create: {
+          id: order.id,
+          sellerId: order.sellerId,
+          supplier: order.supplier,
+          reference: order.reference,
+          locationId: order.locationId,
+          notes: order.notes,
+          status: order.status,
+          lines: order.lines as unknown as object,
+          events: order.events as unknown as object,
+          createdAt: new Date(order.createdAt),
+          createdBy: order.createdBy,
+        },
+        update: {
+          supplier: order.supplier,
+          reference: order.reference,
+          locationId: order.locationId,
+          notes: order.notes,
+          status: order.status,
+          lines: order.lines as unknown as object,
+          events: order.events as unknown as object,
+        },
+      }),
+      this.db.receiptLine.deleteMany({ where: { receiptId: order.id } }),
+      ...(lineRows.length ? [this.db.receiptLine.createMany({ data: lineRows })] : []),
+    ]);
     // Dual-write (G2+G6): promueve el historial al event store consultable.
     await this.events?.append(toDomainEvents('RECEIPT', order.id, order.reference ?? null, order.sellerId, order.events));
   }

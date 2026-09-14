@@ -37,7 +37,7 @@ Abre **`https://<esa-url>/admin/`** e inicia sesión con **email y contraseña**
 
 | Email                | Contraseña  | Rol / Qué ve                                       |
 |----------------------|-------------|----------------------------------------------------|
-| `root@ninjahubs.cl`  | `admin1234` | PLATFORM_ADMIN — todo, incluida **Operaciones**    |
+| `admin@ninjahubs.cl`  | `admin1234` | PLATFORM_ADMIN — todo, incluida **Operaciones**    |
 | `ana@ninjahubs.cl`   | `demo1234`  | ADMIN — **Bodega Ninja Hubs** completa             |
 | `pedro@ninjahubs.cl` | `demo1234`  | OPERATOR — Ninja Hubs (sin administración)          |
 | `carla@acme.cl`      | `demo1234`  | CLIENT — solo su cliente **ACME**                  |

@@ -3607,6 +3607,73 @@ async function run() {
     assert.ok('facturacionMes' in acme && 'currency' in ov.totales, 'incluye la columna comercial');
   });
 
+  // ---- Ubicaciones: eliminar solo sin historia; reposición de embalaje con referencia ----
+  await test('ubicaciones: se elimina si nunca tuvo movimientos; si los tuvo, pide desactivar', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const vacia = await f.facade.createLocation({ operationId: 'op1', code: 'Z-99', zoneType: ZoneType.STORAGE });
+    const usada = await f.facade.createLocation({ operationId: 'op1', code: 'A-01-1-A', zoneType: ZoneType.STORAGE, capacity: 1000, pickRank: 1 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 5, locationId: usada.id });
+    const r = await f.facade.deleteLocation(vacia.id);
+    assert.equal(r.code, 'Z-99');
+    assert.equal((await f.facade.listLocations('op1')).length, 1, 'la vacía desaparece');
+    await expectThrows(() => f.facade.deleteLocation(usada.id), ValidationError);
+    assert.equal((await f.facade.listLocations('op1')).length, 1, 'la usada sigue (con historia no se borra)');
+    // Una recepción abierta apuntando a la ubicación también bloquea el borrado.
+    const recv = await f.facade.createLocation({ operationId: 'op1', code: 'RECV-02', zoneType: ZoneType.RECEIVING });
+    await f.facade.createReceipt('acme', { supplier: 'Prov', locationId: recv.id, lines: [{ sku: 'CAM', qty: 1 }] } as any);
+    await expectThrows(() => f.facade.deleteLocation(recv.id), ValidationError);
+    // Frontera de operación: un admin de otra operación no puede borrar.
+    const otra = await f.facade.createLocation({ operationId: 'op1', code: 'Z-98', zoneType: ZoneType.STORAGE });
+    await expectThrows(() => f.facade.deleteLocation(otra.id, { operationId: 'op-otra' } as any), ForbiddenError);
+  });
+
+  await test('embalaje: la reposición queda en el historial con referencia y usuario', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createPackaging('op1', { sku: 'CAJA-M', name: 'Caja mediana', barcode: null, unitPrice: 100 });
+    await f.facade.receivePackagingStock('op1', 'CAJA-M', 200, 'pamela', 'Cartones Sur · Guía 4581');
+    await f.facade.adjustPackagingStock('op1', 'CAJA-M', -3, 'pamela', 'merma');
+    const movs = await f.facade.listPackagingMovements('op1', { materialSku: 'CAJA-M' });
+    assert.equal(movs.length, 2);
+    const repo = movs.find((m: any) => m.type === 'RECEIPT')!;
+    assert.equal(repo.qtyDelta, 200);
+    assert.equal(repo.reference, 'Cartones Sur · Guía 4581');
+    assert.equal(repo.actor, 'pamela');
+    const mats = await f.facade.listPackaging('op1');
+    assert.equal(mats.find((m: any) => m.sku === 'CAJA-M')!.onHand, 197);
+  });
+
+  await test('embalaje: costo promedio ponderado (PMP) por reposición y valorización del consumo', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await f.facade.createPackaging('op1', { sku: 'CAJA-M', name: 'Caja mediana', barcode: null, unitPrice: 500 });
+    await f.facade.receivePackagingStock('op1', 'CAJA-M', 100, 'pamela', 'Guía 1', 300); // PMP 300
+    f.clock.set('2026-01-02T00:00:00.000Z');
+    await f.facade.receivePackagingStock('op1', 'CAJA-M', 100, 'pamela', 'Guía 2', 400); // PMP (100*300+100*400)/200 = 350
+    let mats = await f.facade.listPackaging('op1');
+    let m = mats.find((x: any) => x.sku === 'CAJA-M')!;
+    assert.equal(m.onHand, 200); assert.equal(m.avgCost, 350); assert.equal(m.lastCost, 400); assert.equal(m.stockValue, 70000);
+    // Consumo al empacar: se valoriza al PMP vigente y se cobra al precio del seller.
+    const use = await f.packagingService.resolveUse('op1', 'acme', 'ORD-1', [{ sku: 'CAJA-M', qty: 10 }], 'op');
+    await f.packagingService.commit(use.movements);
+    assert.equal(use.movements[0].unitCost, 350); assert.equal(use.movements[0].unitPrice, 500);
+    mats = await f.facade.listPackaging('op1'); m = mats.find((x: any) => x.sku === 'CAJA-M')!;
+    assert.equal(m.onHand, 190); assert.equal(m.avgCost, 350, 'la salida no cambia el PMP');
+    const cc = await f.packagingService.consumptionCost('op1', 'acme', '2000-01-01T00:00:00.000Z', '2100-01-01T00:00:00.000Z');
+    assert.deepEqual(cc, { qty: 10, cost: 3500, billed: 5000 });
+    // Reposición sin costo (histórico) no altera el PMP; con saldo 0 el PMP pasa a ser el costo nuevo.
+    await f.facade.receivePackagingStock('op1', 'CAJA-M', 10, 'pamela', null, null);
+    mats = await f.facade.listPackaging('op1'); assert.equal(mats[0].avgCost, 350);
+    await f.facade.createPackaging('op1', { sku: 'BOLSA', name: 'Bolsa', barcode: null, unitPrice: 50 });
+    await f.facade.receivePackagingStock('op1', 'BOLSA', 500, 'pamela', null, 12);
+    mats = await f.facade.listPackaging('op1'); assert.equal(mats.find((x: any) => x.sku === 'BOLSA')!.avgCost, 12);
+    await expectThrows(() => f.facade.receivePackagingStock('op1', 'BOLSA', 5, 'pamela', null, -1), ValidationError);
+  });
+
   // ---- Resumen --------------------------------------------------------------
   console.log(`\n${passed} pasaron, ${failures.length} fallaron\n`);
   if (failures.length > 0) process.exit(1);

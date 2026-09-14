@@ -397,6 +397,7 @@ model PackagingMovement {
   sellerId    String? // a qué cliente se carga el consumo
   orderId     String?
   unitPrice   Int? // precio efectivo aplicado al consumo
+  unitCost    Int? // costo unitario: compra (RECEIPT) o PMP vigente (salidas)
   reference   String?
   actor       String
   occurredAt  DateTime

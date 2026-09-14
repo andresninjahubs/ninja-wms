@@ -832,6 +832,18 @@ export class PackagingSellerPriceDto {
 export class PackagingStockDto {
   @IsInt()
   qty!: number;
+
+  /** Referencia de la reposición/ajuste: proveedor, N° de guía o factura, motivo. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reference?: string;
+
+  /** Costo unitario de compra (CLP por unidad) de la reposición. Alimenta el costo promedio (PMP). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  unitCost?: number;
 }
 
 /** Una etiqueta que el OMS devuelve para un bulto. */

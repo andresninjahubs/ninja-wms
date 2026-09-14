@@ -369,6 +369,9 @@ export class InMemoryLocationRepository implements LocationRepository {
   async listByOperation(operationId: string): Promise<Location[]> {
     return [...this.store.values()].filter((l) => l.operationId === operationId).map((l) => ({ ...l }));
   }
+  async delete(locationId: string): Promise<void> {
+    this.store.delete(locationId);
+  }
 }
 
 export class InMemoryPackRepository implements PackRepository {

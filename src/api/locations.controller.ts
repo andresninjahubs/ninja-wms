@@ -1,4 +1,4 @@
-import { Body, Controller, Inject, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Inject, Param, Patch, Post } from '@nestjs/common';
 import { WmsFacade } from '../app/wms.facade';
 import { CreateLocationDto, UpdateLocationDto } from './dto';
 import { actorOperation, CurrentUser } from './auth/current-user.decorator';
@@ -44,5 +44,15 @@ export class LocationsController {
       },
       user,
     );
+  }
+
+  /**
+   * Elimina una ubicación que NUNCA tuvo movimientos (ni recepciones abiertas).
+   * Si tuvo historia, responde 400 explicando que debe desactivarse.
+   */
+  @Delete(':locationId')
+  @RequirePermission('master:manage')
+  deleteLocation(@Param('locationId') locationId: string, @CurrentUser() user: User | null) {
+    return this.wms.deleteLocation(locationId, user);
   }
 }
