@@ -13,7 +13,7 @@ import {
 import type { Response } from 'express';
 import * as XLSX from 'xlsx';
 import { WmsFacade } from '../app/wms.facade';
-import { AllocateAllDto, AttachLabelsDto, CreateOrderDto, PackOrderDto, PickTaskDto, ShipDto } from './dto';
+import { AllocateAllDto, AttachLabelsDto, CreateOrderDto, PackOrderDto, PickTaskDto, SetDueDateDto, ShipDto } from './dto';
 import { actorOf, CurrentUser } from './auth/current-user.decorator';
 import { RequirePermission } from './auth/permissions.decorator';
 import { User } from '../domain/types';
@@ -61,6 +61,8 @@ export class OrdersController {
       documentType: dto.documentType ?? null,
       carrier: dto.carrier ?? null,
       priority: dto.priority,
+      dueAt: dto.dueAt ?? null,
+      dueSource: dto.dueSource ?? (dto.dueAt ? 'oms' : null),
       shipTo: dto.shipTo,
       lines: dto.lines.map((l) => ({ sku: l.sku, qty: l.qty, uom: l.unit, lot: l.lot ?? null })),
     }, actor);
@@ -89,9 +91,26 @@ export class OrdersController {
       documentType: dto.documentType ?? null,
       carrier: dto.carrier ?? null,
       priority: dto.priority,
+      dueAt: dto.dueAt ?? null,
+      dueSource: dto.dueSource ?? null,
       shipTo: dto.shipTo,
       lines: dto.lines.map((l) => ({ sku: l.sku, qty: l.qty, uom: l.unit, lot: l.lot ?? null })),
     }, actorOf(user));
+  }
+
+  /**
+   * Fija o quita el deadline de preparación de una orden. Se puede en cualquier estado
+   * abierto: que el courier mueva su hora de retiro no cambia las líneas ni el stock.
+   */
+  @Patch(':orderId/due-date')
+  @RequirePermission('order:create')
+  setDueDate(
+    @Param('sellerId') sellerId: string,
+    @Param('orderId') orderId: string,
+    @Body() dto: SetDueDateDto,
+    @CurrentUser() user: User | null,
+  ) {
+    return this.wms.setOrderDueAt(sellerId, orderId, dto.dueAt || null, dto.source || 'manual', actorOf(user));
   }
 
   @Post(':orderId/allocate')
@@ -179,7 +198,11 @@ export class OrdersController {
     @Body() dto: PackOrderDto,
     @CurrentUser() user: User | null,
   ) {
-    return this.wms.packOrder(sellerId, orderId, { bultos: dto.bultos, materials: (dto.materials ?? []).map((m) => ({ sku: m.sku, qty: m.qty })) }, actorOf(user));
+    return this.wms.packOrder(sellerId, orderId, {
+      bultos: dto.bultos,
+      materials: (dto.materials ?? []).map((m) => ({ sku: m.sku, qty: m.qty })),
+      verify: dto.verify ? dto.verify.map((v) => ({ sku: v.sku, lot: v.lot ?? null, qty: v.qty })) : null,
+    }, actorOf(user));
   }
 
   /** Reintentar la obtención de tracking + etiquetas desde el OMS. */
@@ -288,7 +311,18 @@ export class OrdersController {
     res.send(buf);
   }
 
-  /** Cola de preparación (picking) en orden forzado: courier → FIFO. Ruta estática antes de :orderId. */
+  /**
+   * Órdenes con el deadline de preparación vencido o por vencer dentro de N horas.
+   * Ruta estática: va antes de :orderId.
+   */
+  @Get('due-soon')
+  @RequirePermission('stock:read')
+  async dueSoon(@Param('sellerId') sellerId: string, @Query('horas') horas?: string) {
+    const opId = await this.wms.operationIdOfSeller(sellerId);
+    return this.wms.getOrdersDueSoon(opId, { sellerId, withinHours: horas ? Number(horas) : 4, limit: 200 });
+  }
+
+  /** Cola de preparación (picking): deadline en riesgo → courier → FIFO. Ruta estática antes de :orderId. */
   @Get('picking-queue')
   @RequirePermission('stock:read')
   pickingQueue(@Param('sellerId') sellerId: string) {

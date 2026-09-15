@@ -117,6 +117,77 @@
   @media(max-width:860px){.poweredby{display:none}}
   @media(max-width:860px){.side .spacer,.side .navgroup{display:none}.nav{width:auto}}
 
+  /* ---- Sidebar colapsable (solo iconos) --------------------------------------- */
+  .sidetoggle{border:1px solid var(--line);background:var(--surface);color:var(--ink-3);border-radius:8px;
+    width:24px;height:24px;line-height:1;font-size:13px;cursor:pointer;flex:0 0 auto}
+  .sidetoggle:hover{color:var(--ink);background:var(--surface-2)}
+  .brand{position:relative}
+  .side .navout{margin-top:6px;color:var(--crit)}
+  .side .navout:hover{background:var(--crit-wash);color:var(--crit)}
+  @media(min-width:861px){
+    .layout.sidecollapsed{grid-template-columns:70px 1fr}
+    .layout.sidecollapsed .side{padding:16px 8px;align-items:stretch}
+    .layout.sidecollapsed .brand{justify-content:center;padding:8px 0 14px}
+    .layout.sidecollapsed .brand .brandlogo{display:none}
+    /* En modo icono el texto se va; queda el símbolo, centrado y con tooltip. */
+    .layout.sidecollapsed .nav,.layout.sidecollapsed .navcat-h,.layout.sidecollapsed .navlearn{
+      font-size:0;justify-content:center;padding:10px 0;gap:0}
+    .layout.sidecollapsed .nav .ic,.layout.sidecollapsed .navcat-h .ic,.layout.sidecollapsed .navlearn .ic{font-size:16px;width:auto}
+    .layout.sidecollapsed .nav.sub{padding-left:0}
+    .layout.sidecollapsed .navcat-arrow,.layout.sidecollapsed .navgroup,
+    .layout.sidecollapsed .poweredby,.layout.sidecollapsed .navlearn .cnt{display:none}
+    .layout.sidecollapsed .badge{position:absolute;transform:translate(14px,-10px);font-size:9px;padding:1px 5px}
+    .layout.sidecollapsed .nav{position:relative}
+  }
+  @media(max-width:860px){ .sidetoggle{display:none} }
+
+  /* ---- Panel de control consolidado ------------------------------------------- */
+  .dashsplit{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+  .dashgrid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px}
+  .dashcards{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:16px}
+  .dcard{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--ink-3);border-radius:13px;padding:14px 15px;box-shadow:var(--shadow)}
+  .dcard.good{border-left-color:var(--good)} .dcard.warn{border-left-color:var(--warn)} .dcard.crit{border-left-color:var(--crit)} .dcard.info{border-left-color:var(--primary)}
+  .dcard .l{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);font-weight:700;line-height:1.35;min-height:28px}
+  .dcard .v{font-family:"Sora",system-ui,sans-serif;font-size:30px;font-weight:800;letter-spacing:-.02em;margin:6px 0 2px}
+  .dcard .v small{font-size:13px;font-weight:700;color:var(--ink-3);margin-left:2px}
+  .dcard .s{font-size:11.5px;color:var(--ink-3)}
+  .dcard .duo{display:flex;gap:18px;align-items:flex-end}
+  .dcard .duo .v{font-size:24px;margin-bottom:0}
+  /* Filas con barra: cliente, courier, estado, embalaje. */
+  .dbar{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px}
+  .dbar .n{min-width:96px;flex:0 0 auto;color:var(--ink-2);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dbar .t{flex:1;height:8px;border-radius:99px;background:var(--surface-2);overflow:hidden}
+  .dbar .t i{display:block;height:100%;border-radius:99px;background:var(--primary)}
+  .dbar .t i.ok{background:var(--good)} .dbar .t i.warn{background:var(--warn)} .dbar .t i.crit{background:var(--crit)} .dbar .t i.mute{background:var(--ink-3)}
+  .dbar .q{min-width:74px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+  .dbar .q small{font-weight:500;color:var(--ink-3)}
+  .drank{display:flex;align-items:center;gap:11px;padding:8px 0;font-size:13px}
+  .drank .p{width:22px;height:22px;border-radius:50%;background:var(--surface-2);color:var(--ink-3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .drank .nm{flex:1;font-weight:600}
+  .drank .d{color:var(--ink-3);font-size:12px;font-variant-numeric:tabular-nums}
+  .dexc{display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .dexc:last-child{border-bottom:0}
+  .dexc .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--ink-3)}
+  .dexc .dot.warn{background:var(--warn)} .dexc .dot.crit{background:var(--crit)}
+  .dexc .tx{flex:1}
+  .dexc .tx small{display:block;color:var(--ink-3);font-size:11.5px;margin-top:1px}
+  .dexc .cl{font-size:11px;background:var(--surface-2);border-radius:6px;padding:2px 8px;color:var(--ink-2);white-space:nowrap}
+  .dexc .ag{font-size:11.5px;color:var(--ink-3);white-space:nowrap;min-width:56px;text-align:right}
+  .dpill{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px}
+  .dpill.crit{color:#fff;background:var(--crit)} .dpill.warn{color:var(--warn);background:var(--warn-wash)} .dpill.ok{color:var(--good);background:var(--good-wash)}
+  .dashnote{font-size:11.5px;color:var(--ink-3);margin-top:10px}
+  @media(max-width:1200px){ .dashcards{grid-template-columns:repeat(2,1fr)} .dashgrid3{grid-template-columns:1fr 1fr} }
+  @media(max-width:860px){
+    .dashsplit,.dashgrid3,.dashcards{grid-template-columns:1fr}
+    /* En el teléfono las filas se apilan: nombre arriba, barra y cifra abajo. */
+    .dbar{flex-wrap:wrap;gap:6px}
+    .dbar .n,.dbar span.n[style]{min-width:0!important;width:100%;flex:1 1 100%}
+    .dbar .t{flex:1 1 auto;min-width:80px}
+    .dbar .q,.dbar span.q[style]{min-width:0!important;flex:0 0 auto;white-space:nowrap}
+    .dexc{flex-wrap:wrap} .dexc .tx{flex:1 1 100%} .dexc .ag{min-width:0}
+    .drank .d[style]{min-width:0!important}
+  }
+
   .main{min-width:0;display:flex;flex-direction:column}
   .topbar{display:flex;align-items:center;gap:12px;padding:13px 24px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 80%, transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);position:sticky;top:0;z-index:8;flex-wrap:wrap}
   .topbar h2{font-size:19px;font-weight:800}
@@ -330,6 +401,17 @@
   .short-t td{padding:10px;border-bottom:1px solid var(--line-2);vertical-align:top}
   .short-t tr:last-child td{border-bottom:0}
   .short-hint{display:inline-block;font-size:12px;font-weight:600;color:var(--warn);background:var(--warn-wash);padding:2px 8px;border-radius:999px}
+  /* Deadline de preparación: cuánta holgura queda contra el compromiso de salida. */
+  .dl{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;letter-spacing:.01em}
+  .dl-vencido{color:#fff;background:var(--crit)}
+  .dl-critico{color:var(--crit);background:var(--crit-wash)}
+  .dl-riesgo{color:var(--warn);background:var(--warn-wash)}
+  .dl-ok{color:var(--ink-3);background:var(--surface-2)}
+  .dl-row{display:grid;grid-template-columns:1fr 84px auto 32px;gap:8px;align-items:center;margin-bottom:8px}
+  .dl-row input{padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);font-size:13px;width:100%}
+  .dl-d{display:flex;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3)}
+  .dl-d label{display:flex;align-items:center;gap:3px}
+  @media (max-width:760px){ .dl-row{grid-template-columns:1fr 1fr;} .dl-d{grid-column:1/-1} }
   .short-recs{margin-top:7px;display:grid;gap:4px}
   .short-rec{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;font-size:12px;line-height:1.35}
   .short-rec .rc{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-weight:600;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -542,6 +624,71 @@
       radial-gradient(760px 520px at 12% 96%, var(--glow-teal), transparent 60%),
       var(--bg);}
   .loginov.off{display:none}
+  /* Login: la caja se arma sola; el usuario la abre y de adentro sale el formulario. */
+  .loginstage{display:flex;flex-direction:column;align-items:center;width:100%;max-width:96vw}
+  .loginhero{--lh-1:#12B886; --lh-2:#0EA5A5; --lh-3:#6366F1; --lh-line:rgba(255,255,255,.55);
+    --lh-scan:rgba(255,255,255,.7); --lh-inner:#0B3B3F;
+    position:relative;display:block;width:300px;height:188px;padding:0;border:0;background:none;
+    filter:drop-shadow(0 30px 44px rgba(14,165,165,.3));transition:margin-bottom .7s cubic-bezier(.2,.9,.25,1), transform .35s ease}
+  .loginstage.closed .loginhero{cursor:pointer;margin-bottom:26px;animation:lh-breathe 2.8s ease-in-out 1.8s infinite}
+  .loginstage.closed .loginhero:hover{transform:translateY(-4px) scale(1.03)}
+  .loginstage.closed .loginhero:active{transform:translateY(-1px) scale(.99)}
+  .loginstage.open .loginhero{margin-bottom:-58px;cursor:default;animation:none}
+  .lh-svg{width:100%;height:100%;overflow:visible;display:block}
+  .lh-g{transform-box:fill-box;transform-origin:center}
+  .lh-body{animation:lh-rise 1s cubic-bezier(.2,.9,.25,1) both}
+  /* Armado: las solapas se pliegan al cargar. */
+  .lh-flapL{transform-origin:right bottom;animation:lh-fold 700ms cubic-bezier(.3,.9,.3,1) .75s both}
+  .lh-flapR{transform-origin:left bottom;animation:lh-fold 700ms cubic-bezier(.3,.9,.3,1) .9s both}
+  .lh-flapB{transform-origin:center bottom;opacity:0;animation:lh-fold 700ms cubic-bezier(.3,.9,.3,1) .6s both}
+  /* Apertura: solo cuando el usuario hace clic. */
+  .loginstage.open .lh-flapL{animation:lh-openL 750ms cubic-bezier(.3,.9,.3,1) forwards}
+  .loginstage.open .lh-flapR{animation:lh-openR 750ms cubic-bezier(.3,.9,.3,1) 80ms forwards}
+  .loginstage.open .lh-flapB{animation:lh-openB 750ms cubic-bezier(.3,.9,.3,1) forwards}
+  .lh-seam{stroke-dasharray:320;stroke-dashoffset:320;animation:lh-draw 900ms ease 350ms forwards}
+  .lh-seam2{stroke-dasharray:80;stroke-dashoffset:80;animation:lh-draw 600ms ease 700ms forwards}
+  .lh-glow{opacity:0;transform-box:fill-box;transform-origin:center}
+  .loginstage.open .lh-glow{animation:lh-glow 1.2s ease both}
+  .lh-hint{position:absolute;left:50%;bottom:-26px;transform:translateX(-50%);white-space:nowrap;
+    font-size:12.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);opacity:0;
+    animation:lh-fade 500ms ease 1.7s both}
+  .loginstage.open .lh-hint{display:none}
+  @keyframes lh-breathe{0%,100%{transform:none}50%{transform:translateY(-5px)}}
+  @keyframes lh-rise{from{opacity:0;transform:translateY(24px) scale(.94)}to{opacity:1;transform:none}}
+  @keyframes lh-fold{from{opacity:0;transform:rotateX(-92deg)}to{opacity:1;transform:none}}
+  @keyframes lh-openL{to{transform:rotate(-30deg) translate(-7px,4px)}}
+  @keyframes lh-openR{to{transform:rotate(30deg) translate(7px,4px)}}
+  @keyframes lh-openB{from{opacity:1}to{transform:translateY(-12px) scaleY(.55);opacity:.3}}
+  @keyframes lh-draw{to{stroke-dashoffset:0}}
+  @keyframes lh-glow{0%{opacity:0;transform:scale(.6)}45%{opacity:.9;transform:scale(1.06)}100%{opacity:.22;transform:scale(1)}}
+  /* La tarjeta vive DENTRO de la caja hasta que se abre. */
+  .loginstage.closed .loginbox{opacity:0;transform:translateY(-54px) scale(.6);pointer-events:none;height:0;overflow:hidden;padding:0;border:0;box-shadow:none}
+  .loginstage.open .loginbox{position:relative;z-index:2;transform-origin:top center;
+    animation:lh-emerge 850ms cubic-bezier(.16,.9,.3,1) 260ms both}
+  @keyframes lh-emerge{0%{opacity:0;transform:translateY(-54px) scale(.62)}55%{opacity:1}100%{opacity:1;transform:none}}
+  .lh-type{margin-top:26px;text-align:center;min-height:78px}
+  .loginstage.closed .lh-type{margin-top:34px}
+  @keyframes lh-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .lh-name{font-family:"Sora",system-ui,sans-serif;font-weight:800;font-size:40px;letter-spacing:-.03em;line-height:1.05;white-space:nowrap}
+  .lh-name .a{color:#12B886} .lh-name .b{color:var(--ink)}
+  .lh-slogan{margin-top:6px;font-size:14px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;
+    background:var(--aurora);-webkit-background-clip:text;background-clip:text;color:transparent;white-space:nowrap}
+  .lh-caret{display:inline-block;width:3px;height:.9em;vertical-align:-2px;margin-left:3px;background:#12B886;animation:lh-blink 1s steps(1) infinite}
+  .lh-caret2{height:.8em;background:#6366F1}
+  .lh-caret.done{display:none}
+  @keyframes lh-blink{50%{opacity:0}}
+  @media(max-width:720px){
+    .loginhero{width:220px;height:138px}
+    .loginstage.open .loginhero{margin-bottom:-44px}
+    .lh-name{font-size:30px} .lh-slogan{font-size:11.5px;letter-spacing:.14em}
+    .lh-type{margin-top:18px;min-height:62px}
+  }
+  @media(max-height:700px){ .loginstage.open .lh-type{display:none} }
+  @media (prefers-reduced-motion: reduce){
+    .lh-body,.lh-flapL,.lh-flapR,.lh-flapB,.lh-seam,.lh-seam2,.lh-glow,.lh-caret,.lh-hint,.loginstage .loginbox{animation:none}
+    .lh-seam,.lh-seam2{stroke-dashoffset:0} .lh-flapB{opacity:1}
+    .loginstage.open .loginbox{opacity:1;transform:none}
+  }
   .loginov::after{content:"";position:absolute;top:-1px;left:0;right:0;height:4px;background:var(--aurora)}
   .loginbox{width:360px;max-width:92vw;background:color-mix(in srgb,var(--surface) 88%, transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lg);padding:28px}
   .loginbox h1{font-family:"Sora",system-ui,sans-serif;font-size:23px;margin:0 0 4px;letter-spacing:-.02em}
@@ -656,7 +803,7 @@
 
 <div class="layout">
   <aside class="side">
-    <div class="brand"><div class="brandlogo" id="brandLogo" title="Ninja WMS"><svg class="brandlogo-svg" viewBox="0 0 208 46" role="img" aria-label="Ninja WMS" xmlns="http://www.w3.org/2000/svg"><text x="0" y="35" font-family="Sora, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.5"><tspan class="wm-a">Ninja</tspan><tspan class="wm-b" dx="8">WMS</tspan></text></svg></div></div>
+    <div class="brand"><button class="sidetoggle" id="side-toggle" type="button" title="Colapsar el menú" aria-label="Colapsar el menú">«</button><div class="brandlogo" id="brandLogo" title="Ninja WMS"><svg class="brandlogo-svg" viewBox="0 0 208 46" role="img" aria-label="Ninja WMS" xmlns="http://www.w3.org/2000/svg"><text x="0" y="35" font-family="Sora, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.5"><tspan class="wm-a">Ninja</tspan><tspan class="wm-b" dx="8">WMS</tspan></text></svg></div></div>
     <button class="nav on" data-pg="dashboard"><span class="ic">◧</span> Dashboard</button>
     <button class="nav" data-pg="copilot"><span class="ic">✨</span> Copiloto</button>
     <button class="nav" data-pg="voz"><span class="ic">🎧</span> Copiloto de voz</button>
@@ -688,8 +835,8 @@
     <button class="nav" data-pg="reports"><span class="ic">▧</span> Reportes</button>
     <button class="nav" data-pg="billing"><span class="ic">$</span> Facturación</button>
     <button class="nav" data-pg="costos"><span class="ic">📊</span> Rentabilidad</button>
-    <button class="nav" data-pg="chat"><span class="ic">💬</span> Mensajes <span class="badge" id="nav-chat"></span></button>
-    <button class="nav" data-pg="voicechannel"><span class="ic">🎙️</span> Canal de voz</button>
+    <button class="nav" data-pg="chat"><span class="ic">💬</span> Canal clientes <span class="badge" id="nav-chat"></span></button>
+    <button class="nav" data-pg="voicechannel"><span class="ic">🎙️</span> Canal operaciones</button>
     <button class="nav" data-pg="webhooks"><span class="ic">🔗</span> Webhooks</button>
     <div class="navgroup" data-admin>Administración</div>
     <button class="nav" data-pg="plan"><span class="ic">◆</span> Plan</button>
@@ -707,6 +854,7 @@
     <div class="spacer"></div>
     <button class="navlearn" id="nt-navcenter" title="Tutoriales y videos de cada sección"><span class="ic">🎓</span> Centro de aprendizaje <span class="cnt"></span></button>
     <div class="muted" style="padding:8px 11px 6px;font-size:11px">Vista previa · datos de demostración</div>
+    <button class="nav navout" id="side-logout" title="Cerrar sesión"><span class="ic">⏻</span> Salir</button>
     <div class="poweredby" id="poweredby">
       <span class="pb-label">Tecnología</span>
       <span class="pb-chip"><img src="brand/ninjahubs.png" alt="Ninja Hubs"></span>
@@ -747,7 +895,6 @@
       <div class="sel" id="seller-wrap"><label>Cliente</label><select id="seller"></select></div>
       <div class="who"><div><div class="nm" id="who-nm">—</div><div class="rl" id="who-rl">—</div></div><span class="av" id="who-av">A</span></div>
       <button class="btn" id="btn-mypass" title="Cambiar mi contraseña">🔑</button>
-      <button class="btn" id="btn-logout" title="Cerrar sesión">Salir</button>
     </div>
 
     <div class="content">
@@ -758,6 +905,10 @@
           <div class="opm-head">
             <div><h3 style="margin:0">Actividad operativa</h3><span class="muted" id="opm-sub">Últimas 24 horas · comparado con el período anterior</span></div>
             <div class="sp" style="flex:1"></div>
+            <div class="billtabs" id="dash-scope" style="margin:0 10px 0 0">
+              <button class="segbtn on" data-scope="op">Toda la operación</button>
+              <button class="segbtn" data-scope="seller">Cliente actual</button>
+            </div>
             <div class="billtabs" id="opm-toggle" style="margin:0">
               <button class="segbtn on" data-mw="24h">24 h</button>
               <button class="segbtn" data-mw="7d">7 días</button>
@@ -773,10 +924,40 @@
           </div>
           <div class="metricrow" id="opm-tiles"></div>
         </div>
+        <!-- Productividad de bodega + pre-facturación acumulada -->
+        <div class="dashsplit">
+          <div class="card"><div class="h"><h3>Productividad de bodega</h3><div class="sp"></div><span class="muted" id="dash-prod-sub"></span></div>
+            <div class="b" id="dash-prod"><div class="muted">Cargando…</div></div></div>
+          <div class="card"><div class="h"><h3>Pre-facturación — acumulado</h3><div class="sp"></div><b id="dash-prefac-total" style="color:var(--primary)"></b></div>
+            <div class="b" id="dash-prefac"><div class="muted">Cargando…</div></div></div>
+        </div>
+
+        <!-- Cinco tarjetas de control -->
+        <div class="dashcards" id="dash-cards"></div>
+
+        <!-- Carga por cliente · cola por courier · órdenes por estado -->
+        <div class="dashgrid3">
+          <div class="card"><div class="h"><h3>Carga pendiente por cliente</h3></div><div class="b" id="dash-carga"><div class="muted">Cargando…</div></div></div>
+          <div class="card"><div class="h"><h3>Cola de picking por prioridad de courier</h3></div><div class="b" id="dash-cola"><div class="muted">Cargando…</div></div></div>
+          <div class="card"><div class="h"><h3>Órdenes por estado</h3></div><div class="b" id="dash-estados"><div class="muted">Cargando…</div></div></div>
+        </div>
+
+        <!-- Reposición de material de embalaje -->
+        <div class="card" style="margin-top:16px">
+          <div class="h"><h3>Reposición de material de embalaje</h3><div class="sp"></div><span class="muted">Stock vs. mínimo · consumo de los últimos 30 días</span></div>
+          <div class="b" id="dash-embalaje"><div class="muted">Cargando…</div></div>
+        </div>
+
+        <!-- Excepciones -->
+        <div class="card" style="margin-top:16px">
+          <div class="h"><h3>Excepciones que requieren tu atención</h3><div class="sp"></div><span class="muted" id="dash-exc-sub"></span></div>
+          <div class="b" id="dash-excepciones"><div class="muted">Cargando…</div></div>
+        </div>
+
         <div class="kpis" id="kpis"></div>
         <div class="grid2">
           <div class="card"><div class="h"><h3>Unidades por zona</h3><div class="sp"></div><span class="muted" id="zone-total"></span></div><div class="b"><div class="chart" id="zone-chart"></div></div></div>
-          <div class="card"><div class="h"><h3>Órdenes por estado</h3></div><div class="b"><div class="chart" id="order-chart"></div></div></div>
+          <div class="card"><div class="h"><h3>Ocupación por zona</h3><div class="sp"></div><span class="muted" id="dash-occ-sub"></span></div><div class="b" id="dash-occzonas"><div class="muted">Cargando…</div></div></div>
         </div>
         <div class="card" style="margin-top:16px">
           <div class="h"><h3>Actividad reciente</h3><div class="sp"></div><span class="muted">Ledger inmutable</span></div>
@@ -895,7 +1076,7 @@
           <button class="btn" id="ord-export">Exportar</button>
         </div>
         <div class="card"><div class="tablewrap"><table>
-          <thead><tr><th class="selcol" data-action><input type="checkbox" id="ord-selall" aria-label="Seleccionar todas las órdenes visibles" title="Seleccionar todas"></th><th data-tk="orders" data-sk="orden">Orden</th><th data-tk="orders" data-sk="fecha">Fecha</th><th data-tk="orders" data-sk="canal">Canal</th><th data-tk="orders" data-sk="tipo">Tipo</th><th data-tk="orders" data-sk="lineas">Líneas</th><th data-tk="orders" data-sk="estado">Estado</th><th data-action></th></tr></thead>
+          <thead><tr><th class="selcol" data-action><input type="checkbox" id="ord-selall" aria-label="Seleccionar todas las órdenes visibles" title="Seleccionar todas"></th><th data-tk="orders" data-sk="orden">Orden</th><th data-tk="orders" data-sk="fecha">Fecha</th><th data-tk="orders" data-sk="deadline">Deadline</th><th data-tk="orders" data-sk="canal">Canal</th><th data-tk="orders" data-sk="tipo">Tipo</th><th data-tk="orders" data-sk="lineas">Líneas</th><th data-tk="orders" data-sk="estado">Estado</th><th data-action></th></tr></thead>
           <tbody id="ord-body"></tbody>
         </table></div></div>
       </section>
@@ -1122,7 +1303,7 @@
 
       <!-- Clientes (sellers) -->
       <section class="page" data-pg="clients">
-        <div class="toolbar"><span class="muted" id="cli-scope">Cuentas de cliente (sellers) de la operación.</span><div class="sp" style="flex:1"></div><button class="btn pri hidden" id="cli-new">＋ Nuevo cliente</button></div>
+        <div class="toolbar"><span class="muted" id="cli-scope">Cuentas de cliente (sellers) de la operación.</span><div class="sp" style="flex:1"></div><button class="btn hidden" id="cli-demo" title="Crea un cliente de juguete con órdenes, tareas y deadlines para ver al agente en acción">🧪 Sandbox de demostración</button><button class="btn pri hidden" id="cli-new">＋ Nuevo cliente</button></div>
         <div class="card"><div class="tablewrap"><table>
           <thead><tr><th>Cliente</th><th>ID</th><th>Picking</th><th>Conteo</th><th>Estado</th><th data-action></th></tr></thead>
           <tbody id="cli-body"></tbody>
@@ -1518,6 +1699,35 @@
 
 
 <div class="loginov" id="loginov">
+  <!-- La caja se arma sola. El usuario la abre y de adentro sale el formulario. -->
+  <div class="loginstage closed" id="loginstage">
+    <button class="loginhero" id="lh-open" type="button" aria-label="Abrir la caja para iniciar sesión">
+      <svg viewBox="0 0 240 150" class="lh-svg" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="lhCara" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="var(--lh-1)"/><stop offset="100%" stop-color="var(--lh-2)"/>
+          </linearGradient>
+          <linearGradient id="lhTapa" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="var(--lh-2)"/><stop offset="100%" stop-color="var(--lh-3)"/>
+          </linearGradient>
+        </defs>
+        <!-- Solapas traseras: se abren hacia atrás -->
+        <g class="lh-g lh-flapB"><path d="M46 44 L120 18 L194 44 L120 66 Z" fill="url(#lhTapa)" opacity=".8"/></g>
+        <!-- Cuerpo de la caja -->
+        <g class="lh-g lh-body">
+          <path d="M46 44 L120 70 L120 140 L46 114 Z" fill="url(#lhCara)"/>
+          <path d="M194 44 L120 70 L120 140 L194 114 Z" fill="url(#lhCara)" opacity=".74"/>
+          <path class="lh-mouth" d="M46 44 L120 70 L194 44 L120 20 Z" fill="var(--lh-inner)"/>
+        </g>
+        <!-- Solapas delanteras: se abren hacia adelante -->
+        <g class="lh-g lh-flapL"><path d="M46 44 L120 70 L120 84 L46 58 Z" fill="url(#lhTapa)" opacity=".92"/></g>
+        <g class="lh-g lh-flapR"><path d="M194 44 L120 70 L120 84 L194 58 Z" fill="url(#lhTapa)" opacity=".78"/></g>
+        <path class="lh-seam" d="M46 44 L120 70 L194 44" fill="none" stroke="var(--lh-line)" stroke-width="2.5" stroke-linecap="round"/>
+        <path class="lh-seam lh-seam2" d="M120 70 L120 140" fill="none" stroke="var(--lh-line)" stroke-width="2.5" stroke-linecap="round"/>
+        <ellipse class="lh-glow" cx="120" cy="46" rx="62" ry="17" fill="var(--lh-scan)"/>
+      </svg>
+      <span class="lh-hint" id="lh-hint">Toca la caja para entrar</span>
+    </button>
   <div class="loginbox">
 
     <!-- Vista: iniciar sesión -->
@@ -1587,6 +1797,11 @@
       <button class="b" data-go="login" hidden id="vf-btn">Iniciar sesión</button>
     </div>
 
+  </div>
+    <div class="lh-type" aria-hidden="true">
+      <div class="lh-name"><span id="lh-name"></span><i class="lh-caret"></i></div>
+      <div class="lh-slogan"><span id="lh-slogan"></span><i class="lh-caret lh-caret2"></i></div>
+    </div>
   </div>
 </div>
 

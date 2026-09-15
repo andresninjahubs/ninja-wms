@@ -111,6 +111,10 @@ export interface Seller {
   // Orden de prioridad de courier para la cola de preparación (nombres de courier,
   // el primero se prepara antes). Vacío = sin prioridad de courier (FIFO puro por antigüedad).
   courierPriority: string[];
+  // Promesa de preparación del cliente, en horas desde el ingreso de la orden. Se usa
+  // como deadline cuando el courier de la orden no tiene hora de corte configurada.
+  // null/0 = este cliente no tiene promesa horaria.
+  slaHoras?: number | null;
   // ¿Las órdenes de este cliente se RESERVAN de inmediato al ingresar, sin pasar por
   // revisión? Default false: la orden nace RECEIVED y un operador/admin la reserva.
   autoAllocateOnIngest: boolean;
@@ -256,6 +260,12 @@ export interface Operation {
   autoBalance?: boolean | null;
   /** Los operarios pueden TOMAR tareas sin asignar desde su app (configurable por el admin). */
   operatorSelfPickup?: boolean | null;
+  /**
+   * Deadlines de preparación: horas de corte por courier, desfase horario de la bodega
+   * y a cuántas horas del deadline una orden se considera "en riesgo".
+   * Ver `domain/deadline.ts`. null = la operación no usa deadlines.
+   */
+  deadlineConfig?: import('./deadline').DeadlineConfig | null;
 }
 
 /**
@@ -783,6 +793,23 @@ export interface PackingInfo {
   source: string | null; // origen de las etiquetas: 'oms-ninja' | 'manual'
   labeledAt: string | null; // ISO en que se adjuntaron las etiquetas
   materials: PackingMaterialUse[]; // insumos de embalaje consumidos por esta orden
+  /**
+   * Verificación de salida: lo que el operario contó al cerrar el bulto, contra lo
+   * que la orden mandaba preparar. Es la fuente de la PRECISIÓN DE PREPARACIÓN
+   * (pedidos que salieron sin error). null = se empacó sin verificar.
+   */
+  verification: PackVerification | null;
+}
+
+/** Resultado de contar el bulto antes de cerrarlo. */
+export interface PackVerification {
+  at: string; // ISO
+  by: string; // quién verificó
+  ok: boolean; // true si no hubo ninguna diferencia
+  lineasVerificadas: number;
+  lineasConError: number;
+  /** Solo las líneas que no calzaron: qué pedía la orden y qué se contó. */
+  diferencias: Array<{ sku: string; lot: string | null; esperado: number; contado: number }>;
 }
 
 /** Un insumo de embalaje consumido al empacar una orden (registro en la orden). */
@@ -807,6 +834,8 @@ export interface PackagingMaterial {
   name: string;
   unitPrice: number; // precio de cobro por unidad (por defecto)
   sellerPrices: Record<string, number>; // override de precio por seller (opcional)
+  /** Stock mínimo del insumo: bajo esta cantidad el panel pide reponer. 0 = sin mínimo. */
+  minStock?: number;
   active: boolean;
 }
 
@@ -1271,6 +1300,14 @@ export interface SalesOrder {
   packing: PackingInfo | null; // se llena al empacar (PACKED): bultos + tracking + etiquetas del OMS
   shipment: Shipment | null; // se llena al despachar
   createdAt: string;
+  /**
+   * Deadline de preparación: para cuándo la orden tiene que estar lista para salir.
+   * Lo resuelve la operación al ingresar (corte del courier o SLA del cliente), lo
+   * puede traer el OMS o fijarlo una persona. null = sin compromiso horario.
+   */
+  dueAt?: string | null;
+  /** De dónde salió el deadline: oms | manual | corte | sla. */
+  dueSource?: string | null;
   events: OrderEvent[]; // historial de auditoría (append-only)
 }
 

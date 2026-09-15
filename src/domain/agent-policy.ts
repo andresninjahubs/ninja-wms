@@ -46,6 +46,7 @@ export const ACTION_POLICIES: ActionPolicy[] = [
   { tool: 'crear_recepcion',        minLevel: 2, reversible: true,  requiresEvidence: false, category: 'inbound',  label: 'Crear recepción' },
   { tool: 'crear_orden',            minLevel: 2, reversible: true,  requiresEvidence: false, category: 'order',    label: 'Crear orden' },
   { tool: 'avanzar_estado_orden',   minLevel: 2, reversible: false, requiresEvidence: true,  category: 'order',    label: 'Avanzar estado de orden' },
+  { tool: 'fijar_deadline_orden',   minLevel: 2, reversible: true,  requiresEvidence: false, category: 'order',    label: 'Fijar deadline de preparación' },
 ];
 
 export function actionPolicy(tool: string): ActionPolicy | undefined {

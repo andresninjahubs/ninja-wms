@@ -30,6 +30,7 @@ export class SellersController {
       cycleCountStrategy: dto.cycleCountStrategy,
       consolidateByLocation: dto.consolidateByLocation,
       courierPriority: dto.courierPriority,
+      slaHoras: dto.slaHoras,
       autoAllocateOnIngest: dto.autoAllocateOnIngest,
     });
   }
@@ -43,6 +44,7 @@ export class SellersController {
       cycleCountStrategy: dto.cycleCountStrategy,
       consolidateByLocation: dto.consolidateByLocation,
       courierPriority: dto.courierPriority,
+      slaHoras: dto.slaHoras,
       autoAllocateOnIngest: dto.autoAllocateOnIngest,
     });
   }
@@ -63,6 +65,7 @@ export class SellersController {
         cycleCountStrategy: dto.cycleCountStrategy,
         consolidateByLocation: dto.consolidateByLocation,
         courierPriority: dto.courierPriority,
+        slaHoras: dto.slaHoras,
         autoAllocateOnIngest: dto.autoAllocateOnIngest,
         active: dto.active,
       },

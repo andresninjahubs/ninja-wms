@@ -38,6 +38,13 @@ export const AGENT_RULES: AgentRuleDef[] = [
     unit: 'horas', defaultThreshold: 12, defaultSeverity: 'crit', defaultCooldownMin: 90, link: 'orders',
   },
   {
+    key: 'deadline_riesgo',
+    name: 'Deadline de preparación en riesgo',
+    description: 'Órdenes abiertas cuyo compromiso de salida (corte del courier o SLA del cliente) vence dentro de N horas o ya venció.',
+    unit: 'horas', defaultThreshold: 2, defaultSeverity: 'crit', defaultCooldownMin: 45, link: 'pickqueue',
+    autoAction: { tool: 'balancear_carga', label: 'Balancear el trabajo entre operarios activos' },
+  },
+  {
     key: 'quiebre_stock',
     name: 'Quiebre inminente de stock',
     description: 'SKUs cuya cobertura proyectada cae por debajo del umbral de días.',

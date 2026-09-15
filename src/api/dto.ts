@@ -281,6 +281,13 @@ export class CreateSellerDto {
   @MaxLength(64, { each: true })
   courierPriority?: string[];
 
+  /** Promesa de preparación del cliente, en horas desde el ingreso (0 = sin promesa). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(720)
+  slaHoras?: number;
+
   @IsOptional()
   @IsBoolean()
   autoAllocateOnIngest?: boolean;
@@ -304,6 +311,13 @@ export class UpdateSellerPolicyDto {
   @IsString({ each: true })
   @MaxLength(64, { each: true })
   courierPriority?: string[];
+
+  /** Promesa de preparación del cliente, en horas desde el ingreso (0 = sin promesa). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(720)
+  slaHoras?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -334,6 +348,13 @@ export class UpdateSellerDto {
   @IsString({ each: true })
   @MaxLength(64, { each: true })
   courierPriority?: string[];
+
+  /** Promesa de preparación del cliente, en horas desde el ingreso (0 = sin promesa). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(720)
+  slaHoras?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -637,6 +658,17 @@ export class CreateOrderDto {
   @MaxLength(32)
   priority?: string;
 
+  // Deadline de preparación comprometido por el canal (ISO). Si no viene, la operación
+  // lo resuelve con la hora de corte del courier o el SLA del cliente.
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  dueAt?: string;
+
+  @IsOptional()
+  @IsIn(['oms', 'manual', 'corte', 'sla'])
+  dueSource?: string;
+
   @ValidateNested()
   @Type(() => ShipToDto)
   shipTo!: ShipToDto;
@@ -759,6 +791,24 @@ export class PackOrderDto {
   @ValidateNested({ each: true })
   @Type(() => PackMaterialDto)
   materials?: PackMaterialDto[];
+
+  /**
+   * Verificación de salida: lo que el operario contó en el bulto. Si viene, se compara
+   * con lo que la orden pedía y la diferencia queda registrada (precisión de preparación).
+   */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PackVerifyLineDto)
+  verify?: PackVerifyLineDto[];
+}
+
+export class PackVerifyLineDto {
+  @IsString() @MinLength(1) @MaxLength(64) sku!: string;
+
+  @IsOptional() @IsString() @MaxLength(64) lot?: string | null;
+
+  @IsInt() @Min(0) @Max(1000000) qty!: number;
 }
 
 // ---- Insumos de embalaje (packaging, nivel operación) ----------------------
@@ -789,6 +839,13 @@ export class CreatePackagingDto {
   @Min(0)
   unitPrice?: number;
 
+  /** Stock mínimo del insumo: bajo esto el dashboard pide reponer (0 = sin mínimo). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1000000)
+  minStock?: number;
+
   @IsOptional()
   @IsBoolean()
   active?: boolean;
@@ -810,6 +867,13 @@ export class UpdatePackagingDto {
   @IsInt()
   @Min(0)
   unitPrice?: number;
+
+  /** Stock mínimo del insumo: bajo esto el dashboard pide reponer (0 = sin mínimo). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1000000)
+  minStock?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -1346,4 +1410,58 @@ export class CopilotSettingsDto {
   @IsOptional() @IsString() @MaxLength(64) operationId?: string;
 
   @IsIn(['confirm', 'direct']) actionMode!: 'confirm' | 'direct';
+}
+
+
+// ---- Deadline de preparación -------------------------------------------------
+
+export class SetDueDateDto {
+  /** ISO del compromiso de salida; null o vacío lo quita. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  dueAt?: string | null;
+
+  @IsOptional()
+  @IsIn(['oms', 'manual', 'corte', 'sla'])
+  source?: string;
+}
+
+export class CourierCutoffDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  courier!: string;
+
+  /** Hora local de corte, "HH:MM". */
+  @IsString()
+  @MaxLength(5)
+  hora!: string;
+
+  /** Días en que aplica (0 = domingo … 6 = sábado). Vacío = todos. */
+  @IsOptional()
+  @IsArray()
+  dias?: number[];
+}
+
+export class DeadlineConfigDto {
+  /** Desfase horario de la bodega respecto de UTC (Chile: −3 o −4). */
+  @IsOptional()
+  @IsInt()
+  @Min(-12)
+  @Max(14)
+  offsetHoras?: number;
+
+  /** A cuántas horas del deadline una orden se considera "en riesgo". */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(72)
+  riesgoHoras?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CourierCutoffDto)
+  cortes?: CourierCutoffDto[];
 }

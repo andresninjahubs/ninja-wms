@@ -101,13 +101,18 @@ export const COPILOT_TOOLS: ToolSpec[] = [
     parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional)'), maxHoras: int('horas detenido para marcar riesgo (opcional, def 24)'), limite: int('máx. resultados (opcional, def 50)') } },
   },
   {
+    name: 'ordenes_por_vencer',
+    description: 'Órdenes con el DEADLINE DE PREPARACIÓN vencido o por vencer: mira hacia adelante (cuánta holgura queda contra el compromiso de salida: corte del courier o SLA del cliente), a diferencia de ordenes_en_riesgo que mira cuánto llevan detenidas. Úsalo para "¿qué tiene que salir hoy?", "¿qué está por incumplir?", "¿qué priorizo ahora?".',
+    parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional)'), horas: int('ventana en horas hacia adelante (opcional, def 4)'), limite: int('máx. resultados (opcional, def 50)') } },
+  },
+  {
     name: 'brief_ejecutivo',
     description: 'Resumen ejecutivo de la operación para gerencia: throughput y su variación vs. período anterior, exactitud de inventario, top de operarios por productividad, quiebres inminentes y órdenes en riesgo. Úsalo para "dame el resumen de la bodega" o "¿cómo venimos este mes?".',
     parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional; si se omite, toda la operación)') } },
   },
   {
     name: 'alertas_activas',
-    description: 'Alertas abiertas del agente proactivo: qué necesita atención ahora (órdenes estancadas, SLA de despacho en riesgo, quiebres, operarios inactivos con carga, lotes por vencer), con su severidad y sugerencia. Úsalo para "¿qué hay pendiente urgente?", "¿qué alertas tengo?".',
+    description: 'Alertas abiertas del agente proactivo: qué necesita atención ahora (órdenes estancadas, deadlines de preparación en riesgo, SLA de despacho, quiebres, operarios inactivos con carga, lotes por vencer), con su severidad y sugerencia. Úsalo para "¿qué hay pendiente urgente?", "¿qué alertas tengo?".',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -193,6 +198,11 @@ export const COPILOT_TOOLS: ToolSpec[] = [
  * se proponen para confirmación del usuario.
  */
 export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
+  {
+    name: 'fijar_deadline_orden',
+    description: 'Fija o quita el deadline de preparación de una orden (compromiso de salida). Úsalo cuando el courier mueve su hora de retiro o cuando una orden debe adelantarse. Requiere sellerId, orden y la fecha/hora ISO; dueAt vacío quita el deadline.',
+    parameters: { type: 'object', required: ['sellerId', 'orden'], properties: { sellerId: str('id del cliente'), orden: str('N° de orden externo o id interno'), dueAt: str('fecha y hora ISO del compromiso; vacío para quitarlo') } },
+  },
   {
     name: 'guardar_instruccion',
     description: 'Guarda una directriz del administrador para el agente de bodega (ej. "hoy priorizar Chilexpress", "no despachar el cliente X hasta que apruebe"). Queda vigente en los próximos ciclos del agente hasta que se retire o venza.',

@@ -20,6 +20,8 @@ export interface CreatePackagingInput {
   name: string;
   barcode?: string | null;
   unitPrice?: number;
+  /** Stock mínimo: bajo esta cantidad el panel pide reponer (0 = sin mínimo). */
+  minStock?: number;
   active?: boolean;
 }
 
@@ -76,6 +78,7 @@ export class PackagingService {
       barcode: input.barcode ? this.norm(input.barcode) : null,
       name: this.norm(input.name),
       unitPrice: price,
+      minStock: Math.max(0, Math.floor(input.minStock ?? 0)),
       sellerPrices: {},
       active: input.active ?? true,
     };
@@ -86,7 +89,7 @@ export class PackagingService {
   async updateMaterial(
     operationId: string,
     sku: string,
-    patch: { name?: string; barcode?: string | null; unitPrice?: number; active?: boolean },
+    patch: { name?: string; barcode?: string | null; unitPrice?: number; minStock?: number; active?: boolean },
   ): Promise<PackagingMaterial> {
     const cur = await this.mustGet(operationId, sku);
     const next: PackagingMaterial = {
@@ -94,6 +97,7 @@ export class PackagingService {
       name: patch.name != null && this.norm(patch.name) ? this.norm(patch.name) : cur.name,
       barcode: patch.barcode !== undefined ? (patch.barcode ? this.norm(patch.barcode) : null) : cur.barcode,
       unitPrice: patch.unitPrice != null ? patch.unitPrice : cur.unitPrice,
+      minStock: patch.minStock != null ? Math.max(0, Math.floor(patch.minStock)) : (cur.minStock ?? 0),
       active: patch.active != null ? patch.active : cur.active,
     };
     if (!(next.unitPrice >= 0)) throw new ValidationError('El precio no puede ser negativo');

@@ -51,7 +51,7 @@
     paintSort(key);
   }
   // Extractores de valor por columna para cada tabla ordenable.
-  var ORD_COLS={orden:function(o){return o.externalOrderId||o.id;},fecha:function(o){return o.createdAt||"";},canal:function(o){return CH_LABEL[o.salesChannel]||o.salesChannel;},tipo:function(o){return (o.orderType||"");},lineas:function(o){return o.lines.length;},estado:function(o){return STN[o.status]||o.status;}};
+  var ORD_COLS={orden:function(o){return o.externalOrderId||o.id;},fecha:function(o){return o.createdAt||"";},deadline:function(o){return o.dueAt||"9999";},canal:function(o){return CH_LABEL[o.salesChannel]||o.salesChannel;},tipo:function(o){return (o.orderType||"");},lineas:function(o){return o.lines.length;},estado:function(o){return STN[o.status]||o.status;}};
   var RET_COLS={dev:function(r){return r.id;},orden:function(r){return r.originalOrderRef||"";},fecha:function(r){return r.createdAt||"";},lineas:function(r){return r.lines.length;},estado:function(r){return RET_ST[r.status]||r.status;}};
   var INB_COLS={orden:function(o){return o.id;},prov:function(o){return o.supplier||"";},ref:function(o){return o.reference||"";},fecha:function(o){return o.createdAt||"";},lineas:function(o){return o.lines?o.lines.length:0;},estado:function(o){return o.status;}};
   // CSS autocontenido para la ventana de impresión del manifiesto de recepción.
@@ -216,6 +216,7 @@
     $("#usr-new").classList.toggle("hidden",!can('user'));
     $("#ops-new").classList.toggle("hidden",!can('operation'));
     $("#cli-new").classList.toggle("hidden",!can('seller'));
+    if($("#cli-demo"))$("#cli-demo").classList.toggle("hidden",!can('master'));
     $("#ord-new").classList.toggle("hidden",!can('order'));
     if($("#ord-import"))$("#ord-import").classList.toggle("hidden",!can('order'));
     if($("#ord-reserve-all"))$("#ord-reserve-all").classList.toggle("hidden",!can('fulfill'));
@@ -246,6 +247,7 @@
     var pUsers = (role==="PLATFORM_ADMIN"||role==="ADMIN") ? api('/users').catch(function(){return [];}) : Promise.resolve([]);
     var pPkg = api('/packaging?operationId='+encodeURIComponent(op)).catch(function(){return [];});
     var pBrand = api('/operations/'+encodeURIComponent(op)+'/branding').catch(function(){return null;});
+    loadDeadlineConfig(); // cortes de courier y ventana de riesgo (para los chips de deadline)
     return Promise.all([pSellers,pLocs,pUsers,pPkg,pBrand]).then(function(res){
       D.sellers=res[0]; D.locations=res[1]; D.users=res[2]; D.packaging=res[3]||[]; D.brand=res[4]||null; applyOperationBranding(D.brand);
       locByCode={}; locById={}; D.locations.forEach(function(l){locByCode[l.code]=l;locById[l.id]=l;});
@@ -426,7 +428,12 @@
   }
   $("#op").addEventListener("change",function(){op=this.value;seller=null;loadOp().catch(err);});
   $("#seller").addEventListener("change",function(){ if(this.value==='__all__'){ mcEnter(); return; } mcMode=false; seller=this.value; loadSeller(); });
-  $$("#opm-toggle .segbtn").forEach(function(b){b.addEventListener("click",function(){opmWindow=b.getAttribute("data-mw");$$("#opm-toggle .segbtn").forEach(function(x){x.classList.toggle("on",x===b);});if($("#opm-range"))$("#opm-range").classList.toggle("hidden",opmWindow!=="custom");if(opmWindow!=="custom")paintOpMetrics();});});
+  $$("#dash-scope .segbtn").forEach(function(b){b.addEventListener("click",function(){
+    dashOnlySeller=b.getAttribute("data-scope")==='seller';
+    $$("#dash-scope .segbtn").forEach(function(x){x.classList.toggle("on",x===b);});
+    loadDash();
+  });});
+  $$("#opm-toggle .segbtn").forEach(function(b){b.addEventListener("click",function(){opmWindow=b.getAttribute("data-mw");$$("#opm-toggle .segbtn").forEach(function(x){x.classList.toggle("on",x===b);});if($("#opm-range"))$("#opm-range").classList.toggle("hidden",opmWindow!=="custom");if(opmWindow!=="custom")loadDash();});});
   if($("#opm-apply"))$("#opm-apply").addEventListener("click",applyOpmRange);
   $$("#usg-toggle .segbtn").forEach(function(b){b.addEventListener("click",function(){usgWindow=b.getAttribute("data-uw");$$("#usg-toggle .segbtn").forEach(function(x){x.classList.toggle("on",x===b);});if($("#usg-range"))$("#usg-range").classList.toggle("hidden",usgWindow!=="custom");if(usgWindow!=="custom")renderUsage();});});
   if($("#usg-apply"))$("#usg-apply").addEventListener("click",renderUsage);
@@ -505,7 +512,7 @@
   if($("#live-btn"))$("#live-btn").addEventListener('click',function(){ liveRefresh(true); });
 
   // ---- Render ---------------------------------------------------------------
-  function renderAll(){ renderOpMetrics();renderAlerts();renderKpis();renderZone();renderOrderChart();renderActivity();renderMovements();renderInv();renderProducts();renderPackaging();renderOrdFilters();renderOrders();renderPickQueue();renderInbound();renderReturns();renderPutaway();renderAssembly();renderLocations();renderCounts();renderReports();renderBilling();renderClients();renderUsers();renderOps();chatPoll();pollAnnouncement();syncWebhookNav();injectTableExporters();renderOnboarding(); }
+  function renderAll(){ renderOpMetrics();renderAlerts();renderKpis();renderZone();renderActivity();renderMovements();renderInv();renderProducts();renderPackaging();renderOrdFilters();renderOrders();renderPickQueue();renderInbound();renderReturns();renderPutaway();renderAssembly();renderLocations();renderCounts();renderReports();renderBilling();renderClients();renderUsers();renderOps();chatPoll();pollAnnouncement();syncWebhookNav();injectTableExporters();renderOnboarding(); }
   // El CLIENT solo ve el nav "Webhooks" si su operador habilitó el panel (flag por seller).
   function syncWebhookNav(){ $$('.nav[data-pg="webhooks"]').forEach(function(n){ var allowed=(NAV_BY_ROLE[role]||[]).indexOf("webhooks")>=0; n.classList.toggle("hidden", !(allowed&&whManage())); }); }
   // Oculta una categoría del sidebar si el rol no tiene NINGÚN sub-ítem visible.
@@ -561,16 +568,14 @@
   var OPM_LABEL={'24h':['Últimas 24 horas','las 24 h previas'],'7d':['Últimos 7 días','los 7 días previos'],'30d':['Últimos 30 días','los 30 días previos'],'90d':['Últimos 90 días','los 90 días previos']};
   function dOnly(iso){try{return new Date(iso).toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric'});}catch(e){return iso;}}
   function applyOpmRange(){
-    if(!seller){toast("Selecciona un cliente primero");return;}
     var f=$("#opm-from").value, t=$("#opm-to").value;
     if(!f||!t){toast("Elige ambas fechas");return;}
     if(f>t){toast("La fecha 'Desde' no puede ser mayor que 'Hasta'");return;}
     // 'to' inclusivo: sumamos un día para cubrir todo el día final.
     var toEx=new Date(t+'T00:00:00'); toEx.setDate(toEx.getDate()+1);
     var fromIso=new Date(f+'T00:00:00').toISOString(), toIso=toEx.toISOString();
-    api('/sellers/'+seller+'/metrics?from='+encodeURIComponent(fromIso)+'&to='+encodeURIComponent(toIso))
-      .then(function(d){opmCustom=d;opmWindow='custom';paintOpMetrics();})
-      .catch(function(e){toast(e.message);});
+    dashRange={from:fromIso,to:toIso}; opmWindow='custom';
+    loadDash().catch(function(e){toast(e.message);});
   }
   function fmtInt(n){try{return (n||0).toLocaleString('es-CL');}catch(e){return ''+(n||0);}}
   function deltaChip(mv){
@@ -579,37 +584,162 @@
     if(mv.pct<0)return '<span class="chg down">▼ '+mv.pct+'%</span>';
     return '<span class="chg flat">— 0%</span>';
   }
+  // ===== Panel de control consolidado de la operación ==========================
+  // Una sola llamada trae todo lo que muestra la pantalla, y se refresca sola cada
+  // 30 s mientras el Dashboard está a la vista (no corre en segundo plano).
+  var DASH=null, dashTimer=null, DASH_MS=30000;
+  // El panel arranca consolidado (toda la operación); el cliente es un filtro opcional.
+  var dashOnlySeller=false;
+  function dashScope(){ return (dashOnlySeller&&seller) ? ('&sellerId='+encodeURIComponent(seller)) : ''; }
+  function loadDash(){
+    if(!op||!$("#dash-cards"))return Promise.resolve();
+    var q='window='+(opmWindow==='custom'?'24h':opmWindow)+dashScope();
+    if(opmWindow==='custom'&&dashRange)q+='&from='+encodeURIComponent(dashRange.from)+'&to='+encodeURIComponent(dashRange.to);
+    return api('/operations/'+op+'/dashboard?'+q).then(function(d){ DASH=d; renderDash(); paintOpMetrics(); }).catch(function(){});
+  }
+  var dashRange=null;
+  function dashTick(){
+    clearTimeout(dashTimer);
+    var visible=document.querySelector('.page[data-pg="dashboard"].on');
+    if(!visible)return; // fuera del dashboard no se consulta
+    dashTimer=setTimeout(function(){ loadDash().then(dashTick); }, DASH_MS);
+  }
+  function money(n,cur){ try{ return (n||0).toLocaleString('es-CL',{style:'currency',currency:cur||'CLP',maximumFractionDigits:0}); }catch(e){ return '$'+fmtInt(n); } }
+  function bar(pct,cls){ return '<div class="t"><i class="'+(cls||'')+'" style="width:'+Math.max(0,Math.min(100,pct||0))+'%"></i></div>'; }
+  function hace(min){
+    if(min==null)return '';
+    if(min<60)return 'hace '+min+'m';
+    var h=Math.floor(min/60); if(h<24)return 'hace '+h+'h';
+    return 'hace '+Math.floor(h/24)+'d';
+  }
+  function renderDash(){
+    var d=DASH; if(!d)return;
+    // --- Las cinco tarjetas de control ---
+    var p=d.precision, t=d.tiempos, oc=d.ocupacion, de=d.despacho;
+    var cards=[
+      {cls: de.atrasadas?'good':'good', l:'Órdenes por despachar a tiempo', v:fmtInt(de.aTiempo),
+       s:'de '+fmtInt(de.conCompromiso)+' con compromiso · '+fmtInt(de.sinCompromiso)+' sin deadline'},
+      {cls: de.atrasadas?'crit':'good', l:'Órdenes por despachar atrasadas', v:fmtInt(de.atrasadas),
+       s: de.atrasadas? 'requieren atención inmediata':'ninguna pasada de su deadline'},
+      {cls:'info', l:'Precisión de preparación', v:(p.pct==null?'—':p.pct+'%'),
+       s:(p.pct==null? 'aún sin pedidos verificados al empacar'
+          : fmtInt(p.pedidosVerificados)+' verificados · '+fmtInt(p.pedidosConError)+' con diferencia · '+p.ventanaDias+' días')},
+      {cls:'info', duo:[{v:(t.b2bMin==null?'—':t.b2bMin), l:'min B2B'},{v:(t.b2cMin==null?'—':t.b2cMin), l:'min B2C'}],
+       l:'Tiempo de preparación', s:'promedio de reserva a empaque · últimos '+t.ventanaDias+' días'},
+      {cls:(oc.pct==null?'info':oc.pct>=90?'crit':oc.pct>=75?'warn':'good'), l:'Ocupación de bodega',
+       v:(oc.pct==null?'—':oc.pct+'%'), s:fmtInt(oc.usado)+' de '+fmtInt(oc.capacidad)+' '+oc.unidad+' · '+oc.ubicaciones+' ubicaciones'}
+    ];
+    $("#dash-cards").innerHTML=cards.map(function(c){
+      var cuerpo=c.duo
+        ? '<div class="duo">'+c.duo.map(function(x){return '<div><div class="v">'+x.v+'</div><div class="s">'+x.l+'</div></div>';}).join('')+'</div>'
+        : '<div class="v">'+c.v+'</div>';
+      return '<div class="dcard '+c.cls+'"><div class="l">'+esc(c.l)+'</div>'+cuerpo+'<div class="s">'+esc(c.s)+'</div></div>';
+    }).join('');
+
+    // --- Productividad ---
+    var prod=d.productividad||[];
+    $("#dash-prod-sub").textContent=prod.length?('ventana de '+(d.ventana.dias||'')+' día(s)'):'';
+    $("#dash-prod").innerHTML=prod.length?prod.map(function(o,i){
+      return '<div class="drank"><span class="p">'+(i+1)+'</span><span class="nm">'+esc(o.nombre)+'</span>'
+        +'<span class="d">'+fmtInt(o.unidades)+' u. · '+(o.minPorTarea==null?'—':o.minPorTarea+' min/tarea')+'</span></div>';
+    }).join(''):'<div class="muted">Sin tareas registradas en esta ventana.</div>';
+
+    // --- Pre-facturación ---
+    var pf=d.prefacturacion, max=Math.max.apply(null,[1].concat((pf.porCliente||[]).map(function(x){return x.monto;})));
+    $("#dash-prefac-total").textContent=money(pf.total,pf.moneda);
+    $("#dash-prefac").innerHTML=(pf.porCliente||[]).length?(pf.porCliente.map(function(c){
+      return '<div class="dbar"><span class="n">'+esc(c.nombre)+'</span>'+bar(c.monto/max*100)+'<span class="q">'+money(c.monto,pf.moneda)+'</span></div>';
+    }).join('')+'<div class="dashnote">Acumulado del período '+esc(pf.periodo)+', aún sin emitir.</div>')
+      :'<div class="muted">Sin tarifario configurado para los clientes de esta operación.</div>';
+
+    // --- Carga por cliente ---
+    var cg=d.cargaPorCliente||[], maxU=Math.max.apply(null,[1].concat(cg.map(function(x){return x.unidades;})));
+    $("#dash-carga").innerHTML=cg.length?cg.map(function(c){
+      return '<div class="dbar"><span class="n">'+esc(c.nombre)+'</span>'+bar(c.unidades/maxU*100)+'<span class="q">'+fmtInt(c.unidades)+' <small>u</small></span></div>';
+    }).join(''):'<div class="muted">Sin órdenes abiertas.</div>';
+
+    // --- Cola por courier ---
+    var cc=d.colaPorCourier||[], maxC=Math.max.apply(null,[1].concat(cc.map(function(x){return x.ordenes;})));
+    $("#dash-cola").innerHTML=cc.length?cc.map(function(c,i){
+      return '<div class="drank"><span class="p">'+(i+1)+'</span><span class="nm">'+esc(c.courier)+'</span>'
+        +'<span class="d" style="min-width:120px">'+bar(c.ordenes/maxC*100)+'</span><b style="min-width:26px;text-align:right">'+c.ordenes+'</b></div>';
+    }).join(''):'<div class="muted">Nada en cola de preparación.</div>';
+
+    // --- Órdenes por estado ---
+    var est=d.ordenesPorEstado||{}, keys=Object.keys(est), maxE=Math.max.apply(null,[1].concat(keys.map(function(k){return est[k];})));
+    var CLS={RECEIVED:'mute',ALLOCATED:'ok',PICKING:'warn',PICKED:'warn',PACKED:'warn',SHIPPED:'ok',CANCELLED:'crit'};
+    $("#dash-estados").innerHTML=keys.length?keys.sort(function(a,b){return est[b]-est[a];}).map(function(k){
+      return '<div class="dbar"><span class="n"><span class="chip st-'+k+'" style="font-size:10px"><span class="dot"></span>'+(STN[k]||k)+'</span></span>'
+        +bar(est[k]/maxE*100,CLS[k]||'')+'<span class="q">'+fmtInt(est[k])+'</span></div>';
+    }).join(''):'<div class="muted">Sin órdenes.</div>';
+
+    // --- Embalaje ---
+    var em=d.embalaje||[], maxS=Math.max.apply(null,[1].concat(em.map(function(x){return Math.max(x.stock,x.minStock);})));
+    $("#dash-embalaje").innerHTML=em.length?em.map(function(m){
+      var cls=m.estado==='critico'?'crit':m.estado==='bajo'?'warn':'ok';
+      var pill=m.sugerido>0?'<span class="dpill '+cls+'">reponer '+fmtInt(m.sugerido)+'</span>':'<span class="dpill ok">ok</span>';
+      return '<div class="dbar"><span class="n" style="min-width:190px">'+esc(m.nombre)+'</span>'+bar(m.stock/maxS*100,cls)
+        +'<span class="q" style="min-width:150px">'+fmtInt(m.stock)+' uds <small>· mín. '+(m.minStock||'—')+'</small></span>'+pill+'</div>';
+    }).join(''):'<div class="muted">No hay insumos de embalaje cargados en esta operación.</div>';
+
+    // --- Excepciones ---
+    var ex=d.excepciones||[];
+    $("#dash-exc-sub").textContent=ex.length?(ex.length+' abierta(s)'):'nada pendiente';
+    $("#dash-excepciones").innerHTML=ex.length?ex.map(function(e){
+      return '<div class="dexc"><span class="dot '+esc(e.severidad)+'"></span>'
+        +'<span class="tx">'+esc(e.titulo)+'<small>'+esc(e.accion||'')+'</small></span>'
+        +'<span class="cl">'+esc(e.cliente)+'</span><span class="ag">'+esc(hace(e.minutos))+'</span></div>';
+    }).join(''):'<div class="muted">Sin excepciones abiertas. 👍</div>';
+
+    // --- Ocupación por zona ---
+    var pz=(d.ocupacion&&d.ocupacion.porZona)||{};
+    $("#dash-occ-sub").textContent=(d.ocupacion.pct==null?'':d.ocupacion.pct+'% del total');
+    $("#dash-occzonas").innerHTML=Object.keys(pz).map(function(z){
+      var x=pz[z], p=x.capacidad>0?Math.round(x.usado/x.capacidad*100):null;
+      return '<div class="dbar"><span class="n">'+esc(zoneName(z))+'</span>'
+        +bar(p==null?0:p, p==null?'mute':p>=90?'crit':p>=75?'warn':'ok')
+        +'<span class="q">'+(p==null?'sin límite':p+'%')+' <small>'+fmtInt(x.usado)+' u</small></span></div>';
+    }).join('')||'<div class="muted">Sin ubicaciones.</div>';
+
+    // Los KPIs viejos son "del cliente actual": en vista consolidada confunden.
+    var kp=$("#kpis"); if(kp)kp.classList.toggle('hidden', !!d.alcance.consolidado);
+
+    // Lo que el sistema todavía no mide se dice, no se inventa.
+    if(d.faltantes&&d.faltantes.length&&$("#dash-excepciones")){
+      $("#dash-excepciones").insertAdjacentHTML('beforeend','<div class="dashnote">Pendiente de configurar: '+esc(d.faltantes.join(' · '))+'</div>');
+    }
+  }
+
   function renderOpMetrics(){
-    if(!$("#opm-tiles")||!seller)return;
-    api('/sellers/'+seller+'/metrics').then(function(d){opmData=d;paintOpMetrics();}).catch(function(){});
+    if(!$("#opm-tiles"))return;
+    loadDash().then(dashTick);
   }
   function paintOpMetrics(){
-    if(!$("#opm-tiles"))return;
-    var w, sub;
-    if(opmWindow==='custom'){
-      w=opmCustom&&opmCustom.windows&&opmCustom.windows[0];
-      if(!w)return;
-      // 'to' es exclusivo (día siguiente); restamos un día para mostrarlo inclusivo.
-      var toShow=new Date(w.to); toShow.setDate(toShow.getDate()-1);
-      sub='Del '+dOnly(w.from)+' al '+dOnly(toShow.toISOString())+' · comparado con el período previo equivalente';
+    if(!$("#opm-tiles")||!DASH)return;
+    var a=DASH.actividad, sub;
+    if(DASH.ventana.tipo==='personalizado'){
+      var toShow=new Date(DASH.ventana.hasta); toShow.setDate(toShow.getDate()-1);
+      sub='Del '+dOnly(DASH.ventana.desde)+' al '+dOnly(toShow.toISOString())+' · comparado con el período previo equivalente';
     } else {
-      if(!opmData)return;
-      w=(opmData.windows||[]).filter(function(x){return x.window===opmWindow;})[0];
-      if(!w)return;
-      var lab=OPM_LABEL[opmWindow]||['',''];
+      var lab=OPM_LABEL[DASH.ventana.tipo]||['',''];
       sub=lab[0]+' · comparado con '+lab[1];
     }
-    if($("#opm-sub"))$("#opm-sub").textContent=sub;
+    // El encabezado dice de quién son los números: toda la operación o un cliente.
+    var alcance=DASH.alcance.consolidado
+      ? 'Operación consolidada — todos los clientes ('+DASH.alcance.clientes+')'
+      : 'Cliente: '+esc((byId(D.sellers||[],DASH.alcance.sellerId)||{}).name||DASH.alcance.sellerId);
+    if($("#opm-sub"))$("#opm-sub").textContent=alcance+' · '+sub;
     var defs=[
-      {l:'Órdenes preparadas',mv:w.ordersPrepared},
-      {l:'Unidades preparadas',mv:w.unitsPrepared},
-      {l:'Órdenes recibidas',mv:w.ordersReceived},
-      {l:'Unidades recibidas',mv:w.unitsReceived},
-      {l:'Movimientos',mv:w.movements}
+      {l:'Órdenes preparadas',mv:a.ordenesPreparadas},
+      {l:'Unidades preparadas',mv:a.unidadesPreparadas},
+      {l:'Órdenes recibidas',mv:a.ordenesRecibidas},
+      {l:'Unidades recibidas',mv:a.unidadesRecibidas},
+      {l:'Movimientos',mv:a.movimientos}
     ];
     $("#opm-tiles").innerHTML=defs.map(function(x){
-      return '<div class="mtile"><div class="ml">'+x.l+'</div><div class="mv">'+fmtInt(x.mv.current)+'</div>'
-        +'<div class="mdelta">'+deltaChip(x.mv)+'<span class="prev">ant.: '+fmtInt(x.mv.previous)+'</span></div></div>';
+      var mv={current:x.mv.valor,previous:x.mv.anterior,pct:x.mv.cambioPct};
+      return '<div class="mtile"><div class="ml">'+x.l+'</div><div class="mv">'+fmtInt(mv.current)+'</div>'
+        +'<div class="mdelta">'+deltaChip(mv)+'<span class="prev">ant.: '+fmtInt(mv.previous)+'</span></div></div>';
     }).join("");
   }
 
@@ -2602,8 +2732,8 @@
         +(canReactivate?'<button class="mini pri" data-react="'+o.id+'">Reactivar</button>':'')
         +'</div>';
       var selCell=bulkEnabled()?'<td class="selcol"><input type="checkbox" class="bulk-ck" data-bk="'+o.id+'" '+(bulkSel[o.id]?'checked':'')+' aria-label="Seleccionar orden"></td>':'';
-      return '<tr class="click'+(bulkSel[o.id]?' selected':'')+'" data-o="'+o.id+'">'+selCell+'<td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td><td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span></td><td style="text-align:right">'+acts+'</td></tr>';
-    }).join(""):'<tr><td colspan="'+(bulkEnabled()?8:7)+'" class="empty">Sin órdenes en este estado.</td></tr>';
+      return '<tr class="click'+(bulkSel[o.id]?' selected':'')+'" data-o="'+o.id+'">'+selCell+'<td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td><td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td style="white-space:nowrap">'+dlChip(o)+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span></td><td style="text-align:right">'+acts+'</td></tr>';
+    }).join(""):'<tr><td colspan="'+(bulkEnabled()?9:8)+'" class="empty">Sin órdenes en este estado.</td></tr>';
     var selTh=$("#ord-selall"); if(selTh)selTh.closest('th').classList.toggle('hidden',!bulkEnabled());
     var selM=$("#ord-selall-m"); if(selM)selM.classList.toggle('hidden',!bulkEnabled()||!os.length);
     syncBulkHeader(os); paintBulkBar();
@@ -2699,6 +2829,100 @@
   // ===== Cola de preparación (picking queue) =====
   // Orden forzado: prioridad de courier (según el cliente) y, dentro de cada courier,
   // del pedido más antiguo al más nuevo (FIFO). Espeja la lógica del backend.
+  // ---- Deadline de preparación (espeja domain/deadline.ts) --------------------
+  // El compromiso de salida de una orden: cuánta holgura queda y qué tan grave es.
+  // La ventana de riesgo la define la operación (DL.riesgoHoras); por defecto 4 h.
+  var DL={riesgoHoras:4,offsetHoras:-3,cortes:[]};
+  function dlState(dueAt){
+    if(!dueAt)return{level:'sin',min:null,texto:''};
+    var due=Date.parse(dueAt); if(isNaN(due))return{level:'sin',min:null,texto:''};
+    var min=Math.round((due-Date.now())/60000);
+    var riesgo=(DL.riesgoHoras==null?4:DL.riesgoHoras)*60;
+    var level=min<0?'vencido':min<=60?'critico':min<=riesgo?'riesgo':'ok';
+    var abs=Math.abs(min), h=Math.floor(abs/60), r=abs%60;
+    var dur=h>0?(h+' h'+(r?' '+r+' min':'')):(r+' min');
+    return{level:level,min:min,texto:(min<0?'vencida hace ':'vence en ')+dur};
+  }
+  var DL_LABEL={oms:'del canal',manual:'fijado a mano',corte:'corte del courier',sla:'SLA del cliente'};
+  /** Chip de deadline para tablas y listas. */
+  function dlChip(o){
+    // Una orden despachada o cancelada ya no tiene cuenta regresiva: mostrarla sería ruido.
+    if(o&&(o.status==='SHIPPED'||o.status==='CANCELLED'))return '<span class="muted" style="font-size:12px">—</span>';
+    var st=dlState(o&&o.dueAt);
+    if(st.level==='sin')return '<span class="muted" style="font-size:12px">—</span>';
+    var hora=fmtDate(o.dueAt);
+    return '<span class="dl dl-'+st.level+'" title="'+esc(hora+' · '+(DL_LABEL[o.dueSource]||o.dueSource||''))+'">'+esc(st.texto)+'</span>';
+  }
+  /** Valor para un <input type="datetime-local"> a partir de un ISO. */
+  function isoToLocalInput(iso){
+    if(!iso)return '';
+    var d=new Date(iso); if(isNaN(d.getTime()))return '';
+    var p=function(n){return String(n).padStart(2,'0');};
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
+  }
+  function localInputToIso(v){ if(!v)return null; var t=Date.parse(v); return isNaN(t)?null:new Date(t).toISOString(); }
+
+  /**
+   * Tarjeta de configuración de deadlines (solo para quien administra la operación):
+   * horas de corte por courier y a cuántas horas se considera "en riesgo".
+   */
+  function dlConfigCard(){
+    if(!can('master'))return '';
+    var cortes=(DL.cortes||[]);
+    var txt=cortes.length
+      ? cortes.map(function(c){return esc(c.courier)+' '+esc(c.hora);}).join(' · ')
+      : 'sin horas de corte configuradas';
+    return '<div class="card" style="padding:12px;margin:0 0 12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+      +'<div style="flex:1;min-width:240px"><b>Deadlines de preparación</b>'
+      +'<div class="muted" style="font-size:12px">Cortes: '+txt+' · en riesgo a '+(DL.riesgoHoras==null?4:DL.riesgoHoras)+' h del compromiso.</div></div>'
+      +'<button class="btn mini" id="dl-cfg">Configurar cortes</button></div>';
+  }
+  /** Carga la configuración de deadlines de la operación (una vez por sesión/operación). */
+  function loadDeadlineConfig(){
+    if(!op)return Promise.resolve();
+    return api('/operations/'+op+'/deadline-config').then(function(c){ DL=c||{}; if(DL.riesgoHoras==null)DL.riesgoHoras=4; if(!DL.cortes)DL.cortes=[]; }).catch(function(){});
+  }
+  var DIAS=[['1','Lun'],['2','Mar'],['3','Mié'],['4','Jue'],['5','Vie'],['6','Sáb'],['0','Dom']];
+  function openDeadlineConfig(){
+    var cortes=JSON.parse(JSON.stringify(DL.cortes||[]));
+    function rowHtml(c,i){
+      return '<div class="dl-row" data-i="'+i+'">'
+        +'<input class="dl-c" value="'+esc(c.courier||'')+'" placeholder="Courier (ej: Chilexpress)">'
+        +'<input class="dl-h mono2" value="'+esc(c.hora||'')+'" placeholder="14:00" maxlength="5">'
+        +'<div class="dl-d">'+DIAS.map(function(d){
+            var on=!c.dias||!c.dias.length||c.dias.indexOf(Number(d[0]))>=0;
+            return '<label><input type="checkbox" data-d="'+d[0]+'" '+(on?'checked':'')+'> '+d[1]+'</label>';
+          }).join('')+'</div>'
+        +'<button class="mini danger dl-x" title="Quitar">✕</button></div>';
+    }
+    function paint(){ $("#dl-rows").innerHTML=cortes.length?cortes.map(rowHtml).join(''):'<div class="empty">Sin cortes. Agrega uno o deja que el deadline salga del SLA de cada cliente.</div>'; bind(); }
+    function read(){
+      cortes=$$("#dl-rows .dl-row").map(function(r){
+        var dias=$$('[data-d]',r).filter(function(ck){return ck.checked;}).map(function(ck){return Number(ck.getAttribute('data-d'));});
+        return {courier:$('.dl-c',r).value.trim(), hora:$('.dl-h',r).value.trim(), dias:dias.length===7?undefined:dias};
+      }).filter(function(c){return c.courier&&/^\d{1,2}:\d{2}$/.test(c.hora);});
+    }
+    function bind(){
+      $$("#dl-rows .dl-x").forEach(function(b){b.addEventListener('click',function(){ read(); cortes.splice(Number(b.closest('.dl-row').getAttribute('data-i')),1); paint(); });});
+    }
+    openModal('Deadlines de preparación',
+      '<p class="muted" style="margin:0 0 12px">La hora de corte es cuándo pasa el courier a retirar. Una orden que entra con ese courier queda comprometida para el próximo corte; si el courier de la orden no está en esta lista, el deadline sale del <b>SLA en horas</b> del cliente.</p>'
+      +'<div id="dl-rows"></div>'
+      +'<div style="margin:10px 0"><button class="btn mini" id="dl-add">＋ Agregar courier</button></div>'
+      +'<div class="fld"><label>Marcar "en riesgo" a cuántas horas del deadline</label><input id="dl-riesgo" type="number" min="0" max="72" value="'+(DL.riesgoHoras==null?4:DL.riesgoHoras)+'"></div>'
+      +'<div class="fld"><label>Desfase horario de la bodega respecto de UTC (Chile: −3 en verano, −4 en invierno)</label><input id="dl-off" type="number" min="-12" max="14" value="'+(DL.offsetHoras==null?-3:DL.offsetHoras)+'"></div>'
+      +'<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button class="btn" id="m-no">Cancelar</button><button class="btn pri" id="dl-save">Guardar</button></div>', true);
+    paint();
+    $("#dl-add").addEventListener('click',function(){ read(); cortes.push({courier:'',hora:'14:00',dias:[1,2,3,4,5]}); paint(); });
+    $("#m-no").addEventListener('click',closeModal);
+    $("#dl-save").addEventListener('click',function(){
+      read();
+      api('/operations/'+op+'/deadline-config',{method:'PATCH',body:{cortes:cortes,riesgoHoras:Number($("#dl-riesgo").value)||0,offsetHoras:Number($("#dl-off").value)}})
+        .then(function(c){ DL=c||{}; if(!DL.cortes)DL.cortes=[]; closeModal(); toast('Deadlines actualizados'); renderPickQueue(); })
+        .catch(function(e){ toast(e.message); });
+    });
+  }
+
   var pqFlow=false; // true mientras se prepara "en cadena" desde la cola
   function normCourier(s){return String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]/g,"");}
   function computePickQueue(){
@@ -2706,7 +2930,16 @@
     var prio=(s.courierPriority||[]).map(normCourier);
     function rank(carrier){var n=normCourier(carrier);if(!n)return prio.length+1;var i=prio.indexOf(n);return i>=0?i:prio.length;}
     var ready=(D.ord||[]).filter(function(o){return o.status==="ALLOCATED"||o.status==="PICKING";});
-    ready.sort(function(a,b){var ra=rank(a.carrier),rb=rank(b.carrier);if(ra!==rb)return ra-rb;return a.createdAt<b.createdAt?-1:(a.createdAt>b.createdAt?1:0);});
+    // Deadline primero: lo vencido o en riesgo se atiende por compromiso (el más
+    // apretado antes), por encima de la prioridad de courier. El resto, como siempre.
+    var enRiesgo=function(o){var l=dlState(o.dueAt).level;return l==='vencido'||l==='critico'||l==='riesgo';};
+    ready.sort(function(a,b){
+      var ra1=enRiesgo(a)?0:1, rb1=enRiesgo(b)?0:1;
+      if(ra1!==rb1)return ra1-rb1;
+      if(ra1===0)return (dlState(a.dueAt).min||0)-(dlState(b.dueAt).min||0);
+      var ra=rank(a.carrier),rb=rank(b.carrier);if(ra!==rb)return ra-rb;
+      return a.createdAt<b.createdAt?-1:(a.createdAt>b.createdAt?1:0);
+    });
     return ready;
   }
   function renderPickQueue(){
@@ -2715,11 +2948,12 @@
     var prio=(s.courierPriority||[]);
     var q=computePickQueue();
     var head='<div class="hint" style="margin:0 0 10px">'
+      +'Primero lo que tiene el <b>deadline de preparación</b> vencido o por vencer (de menor a mayor holgura). '
       +(prio.length
-        ? 'Orden forzado: <b>'+prio.map(esc).join(' → ')+'</b> → resto, y dentro de cada courier del más antiguo al más nuevo (FIFO).'
-        : 'Orden forzado por antigüedad (FIFO). Configura la prioridad de courier en el mantenedor del cliente para reordenar la cola.')
-      +'</div>';
-    if(!q.length){body.innerHTML=head+'<div class="empty">No hay órdenes reservadas listas para preparar. Reserva órdenes (o usa la reserva masiva) y aparecerán aquí en orden.</div>';return;}
+        ? 'Después: <b>'+prio.map(esc).join(' → ')+'</b> → resto, y dentro de cada courier del más antiguo al más nuevo (FIFO).'
+        : 'Después, por antigüedad (FIFO). Configura la prioridad de courier en el mantenedor del cliente para reordenar la cola.')
+      +'</div>'+dlConfigCard();
+    if(!q.length){body.innerHTML=head+'<div class="empty">No hay órdenes reservadas listas para preparar. Reserva órdenes (o usa la reserva masiva) y aparecerán aquí en orden.</div>';if($("#dl-cfg"))$("#dl-cfg").addEventListener('click',openDeadlineConfig);return;}
     var rows=q.map(function(o,i){
       var units=(o.lines||[]).reduce(function(a,l){return a+(l.qty||0);},0);
       var inprog=o.status==="PICKING";
@@ -2729,11 +2963,13 @@
           +(inprog?' <span class="chip st-PICKING" style="font-size:10px">EN PICKING</span>':'')+'</div>'
           +'<div class="muted" style="font-size:12px">'
           +(o.carrier?('Courier: <b>'+esc(o.carrier)+'</b> · '):'Sin courier · ')
-          +units+' un · '+(o.lines||[]).length+' línea(s) · '+esc(fmtDate(o.createdAt))+'</div></div>'
+          +units+' un · '+(o.lines||[]).length+' línea(s) · '+esc(fmtDate(o.createdAt))
+          +(o.dueAt?' · '+dlChip(o):'')+'</div></div>'
         +'<button class="btn pri mini" data-pqgo="'+esc(o.id)+'">'+(inprog?'Continuar':'Preparar')+'</button>'
         +'</div>';
     }).join("");
     body.innerHTML=head+'<div>'+rows+'</div>';
+    if($("#dl-cfg"))$("#dl-cfg").addEventListener('click',openDeadlineConfig);
     $$("#pq-body [data-pqgo]").forEach(function(b){b.addEventListener("click",function(){
       pqFlow=true;
       var o=byId(D.ord,b.getAttribute("data-pqgo"));
@@ -2959,6 +3195,9 @@
       +'<div class="fld"><label>Prioridad</label><select id="of-prio"><option value="normal"'+((order&&order.priority==="normal")||!order?' selected':'')+'>Normal</option><option value="alta"'+(order&&order.priority==="alta"?' selected':'')+'>Alta</option></select></div></div>'
       +'<div class="row2"><div class="fld"><label>Tipo de documento</label><select id="of-doc">'+docTypeOptions(order?order.documentType:'')+'</select></div>'
       +'<div class="fld"><label>Courier / transporte</label><input id="of-carrier" list="carrier-list" value="'+esc(order&&order.carrier||'')+'" placeholder="Ej: Chilexpress, Rapiboy, DHL"></div></div>'
+      // Deadline: si se deja vacío lo resuelve la operación (hora de corte del courier o SLA del cliente).
+      +'<div class="fld"><label>Deadline de preparación (opcional)</label><input id="of-due" type="datetime-local" value="'+esc(order?isoToLocalInput(order.dueAt):'')+'">'
+      +'<div class="hint">Si lo dejas vacío, se calcula solo: hora de corte del courier y, si ese courier no tiene corte, el SLA en horas del cliente.</div></div>'
       +'<datalist id="carrier-list"><option value="Chilexpress"></option><option value="BlueExpress"></option><option value="Starken"></option><option value="Correos de Chile"></option><option value="DHL"></option><option value="Rapiboy"></option><option value="Uber Flash"></option><option value="Samex"></option><option value="Retiro en tienda"></option></datalist>'
       +'<div class="row2"><div class="fld"><label>Destinatario</label><input id="of-name" value="'+esc(st.name||'')+'" placeholder="Nombre de quien recibe"></div>'
       +'<div class="fld"><label>Comuna / ciudad (opcional)</label><input id="of-comuna" value="'+esc(st.comuna||'')+'"></div></div>'
@@ -3084,6 +3323,7 @@
       var body={externalOrderId:ext,salesChannel:$("#of-ch").value,orderType:$("#of-type").value,priority:$("#of-prio").value,shipTo:shipTo,lines:lines};
       var docv=$("#of-doc")?$("#of-doc").value:""; if(docv)body.documentType=docv;
       var carv=$("#of-carrier")?$("#of-carrier").value.trim():""; if(carv)body.carrier=carv;
+      var duev=$("#of-due")?localInputToIso($("#of-due").value):null; if(duev){body.dueAt=duev;body.dueSource='manual';}
       var p=isEdit?api('/sellers/'+seller+'/orders/'+order.id,{method:'PATCH',body:body}):api('/sellers/'+seller+'/orders',{method:'POST',body:body});
       var btn=this; btn.disabled=true;
       p.then(function(o){closeModal();toast(isEdit?((order.status==="ALLOCATED")?"Orden actualizada y stock reservado de nuevo":"Orden actualizada"):"Orden creada");return loadSeller();})
@@ -3355,7 +3595,13 @@
       +(st.comuna?'<div class="kv"><span>Comuna</span><b>'+esc(st.comuna)+'</b></div>':'')
       +(st.address?'<div class="kv"><span>Dirección</span><b>'+esc(st.address)+'</b></div>':'')
       +(o.purchaseOrderRef?'<div class="kv"><span>OC (B2B)</span><b>'+esc(o.purchaseOrderRef)+'</b></div>':'')
-      +'<div class="kv"><span>Creada</span><b>'+esc(fmtDate(o.createdAt))+'</b></div>';
+      +'<div class="kv"><span>Creada</span><b>'+esc(fmtDate(o.createdAt))+'</b></div>'
+      // Deadline de preparación: cuándo se comprometió la salida y de dónde salió ese compromiso.
+      +'<div class="kv"><span>Deadline</span><b>'+(o.dueAt
+          ? esc(fmtDate(o.dueAt))+' <span class="muted" style="font-weight:400">('+esc(DL_LABEL[o.dueSource]||o.dueSource||'')+')</span><br>'+dlChip(o)
+          : '<span class="muted" style="font-weight:400">sin compromiso</span>')
+        +(can('order')&&['SHIPPED','CANCELLED'].indexOf(o.status)<0?' <button class="mini" id="dr-due" style="margin-left:6px">Cambiar</button>':'')
+        +'</b></div>';
     var evs=(o.events||[]).slice().reverse();
     var hist=evs.length?('<ul class="tl">'+evs.map(function(e){
       return '<li><div class="te">'+esc(EVN[e.type]||e.type)+'</div><div class="tw">'+esc(fmtDate(e.at))+' · '+esc(actorName(e.actor))+'</div>'+(e.detail?'<div class="td">'+esc(e.detail)+'</div>':'')+'</li>';
@@ -3383,9 +3629,35 @@
       +'</div>'
     +'</div>';
     if($("#dr-print-lbl"))$("#dr-print-lbl").addEventListener("click",function(){printLabels(o.packing);});
+    if($("#dr-due"))$("#dr-due").addEventListener("click",function(){openDueForm(o);});
     renderOrderTasks(o.id);
     $("#drawer").classList.add("on");
   }
+  /**
+   * Cambia el deadline de una orden ya creada. Se puede en cualquier estado abierto:
+   * que el courier mueva su hora de retiro no cambia las líneas ni el stock.
+   */
+  function openDueForm(o){
+    var st=dlState(o.dueAt);
+    openModal('Deadline de preparación · '+esc(o.externalOrderId||o.id.slice(0,8)),
+      '<div class="form">'
+      +'<p class="muted" style="margin:0 0 12px">Para cuándo esta orden tiene que estar lista para salir. Manda sobre la prioridad de courier en la cola de preparación.'
+      +(o.dueAt?' Ahora: <b>'+esc(fmtDate(o.dueAt))+'</b> ('+esc(st.texto)+').':'')+'</p>'
+      +'<div class="fld"><label>Fecha y hora del compromiso</label><input id="due-at" type="datetime-local" value="'+esc(isoToLocalInput(o.dueAt))+'"></div>'
+      +'<div style="display:flex;gap:10px;justify-content:space-between;margin-top:14px">'
+      +'<button class="btn" id="due-clear">Quitar deadline</button>'
+      +'<div style="display:flex;gap:10px"><button class="btn" id="m-no">Cancelar</button><button class="btn pri" id="due-save">Guardar</button></div></div></div>');
+    $("#m-no").addEventListener('click',closeModal);
+    var send=function(iso){
+      api('/sellers/'+seller+'/orders/'+o.id+'/due-date',{method:'PATCH',body:{dueAt:iso,source:'manual'}})
+        .then(function(){ closeModal(); toast(iso?'Deadline actualizado':'Deadline quitado'); return loadSeller(); })
+        .then(function(){ var f=byId(D.ord,o.id); if(f)openOrder(f); })
+        .catch(function(e){ toast(e.message); });
+    };
+    $("#due-save").addEventListener('click',function(){ send(localInputToIso($("#due-at").value)); });
+    $("#due-clear").addEventListener('click',function(){ send(null); });
+  }
+
   var TASK_TYPE={RESERVE:"Reserva",PICK:"Picking",PACK:"Packing",SHIP:"Despacho",PUTAWAY:"Guardado",RESTOCK:"Reposición",RECEIVE:"Recepción",COUNT:"Conteo",RESLOT:"Re-slotting"};
   var TASK_STATE={pending:"Pendiente",assigned:"Asignada",in_progress:"En curso",done:"Hecha",cancelled:"Cancelada"};
   function renderOrderTasks(orderId){
@@ -5252,6 +5524,8 @@
       +'<div class="fld"><label>Estrategia de conteo</label><select id="sf-count">'+countOpts+'</select></div></div>'
       +'<label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:11px 12px"><input type="checkbox" id="sf-consol"'+((s&&s.consolidateByLocation)?' checked':'')+' style="width:auto;margin-top:2px"><span><b style="font-size:13.5px">Consolidar por ubicación al reservar</b><br><span class="hint">Prefiere tomar todo de una sola ubicación cuando alcance (menos recorrido y menos "puntas"). Respeta FIFO/FEFO como desempate; si ninguna ubicación alcanza sola, combina varias.</span></span></label>'
       +'<div class="fld"><label>Prioridad de courier en la cola de preparación</label><textarea id="sf-courier" rows="4" placeholder="Un courier por línea, en orden de prioridad. Ej:\nRapiboy\nDHL\nBlueExpress\nChilexpress" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);font-family:inherit;font-size:13px">'+esc(((s&&s.courierPriority)||[]).join("\n"))+'</textarea><span class="hint">La cola de preparación ordena primero por estos couriers (el de arriba primero) y, dentro de cada uno, del pedido más antiguo al más nuevo (FIFO). Si lo dejas vacío, la cola va solo por antigüedad.</span></div>'
+      // SLA del cliente: deadline de preparación cuando el courier no tiene hora de corte.
+      +'<div class="fld"><label>SLA de preparación (horas desde el ingreso)</label><input id="sf-sla" type="number" min="0" max="720" value="'+esc((s&&s.slaHoras)||'')+'" placeholder="Ej: 6 — vacío = sin promesa horaria"><span class="hint">Cuando una orden de este cliente entra con un courier que no tiene hora de corte configurada en la operación, su deadline de preparación es el ingreso más estas horas.</span></div>'
       +'<label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:11px 12px"><input type="checkbox" id="sf-autoalloc"'+((s&&s.autoAllocateOnIngest)?' checked':'')+' style="width:auto;margin-top:2px"><span><b style="font-size:13.5px">Reservar stock apenas ingresa la orden</b><br><span class="hint">Las órdenes de este cliente se reservan de inmediato al ingresar, sin pasar por revisión (quedan en Reservada, listas para pickear). Si no hay stock suficiente, la orden queda Ingresada para revisar.</span></span></label>'
       +'<div class="ferr" id="sf-err"></div>'
       +'<div class="acts"><span class="hint">Operación: '+esc(opName(op))+'</span><div style="display:flex;gap:10px"><button class="btn" id="sf-cancel">Cancelar</button><button class="btn pri" id="sf-save">'+(isEdit?'Guardar':'Crear cliente')+'</button></div></div>'
@@ -5262,7 +5536,7 @@
       var name=$("#sf-name").value.trim();
       if(!name){$("#sf-err").textContent="El nombre es obligatorio.";return;}
       var courierPriority=($("#sf-courier")?$("#sf-courier").value:"").split(/[\n,;]+/).map(function(x){return x.trim();}).filter(Boolean);
-      var body={name:name,pickingStrategy:$("#sf-pick").value,cycleCountStrategy:$("#sf-count").value,consolidateByLocation:$("#sf-consol").checked,courierPriority:courierPriority,autoAllocateOnIngest:$("#sf-autoalloc").checked};
+      var body={name:name,pickingStrategy:$("#sf-pick").value,cycleCountStrategy:$("#sf-count").value,consolidateByLocation:$("#sf-consol").checked,courierPriority:courierPriority,slaHoras:Number(($("#sf-sla")||{}).value||0)||0,autoAllocateOnIngest:$("#sf-autoalloc").checked};
       var p;
       if(isEdit){p=api('/sellers/'+s.id,{method:'PATCH',body:body});}
       else{var id=$("#sf-id").value.trim();p=api('/sellers',{method:'POST',body:Object.assign({operationId:op},id?{id:id}:{},body)});}
@@ -5663,10 +5937,10 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],reports:["Reportes","KPIs del cliente"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Mensajes","Chat interno con clientes"],voicechannel:["Canal de voz","Mensajes de voz operador ↔ administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],reports:["Reportes","KPIs del cliente"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
-    if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
+    if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="dashboard"){loadDash().then(dashTick);}else{clearTimeout(dashTimer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});
@@ -5678,6 +5952,42 @@
   $("#inb-new").addEventListener("click",function(){openReceiveForm();});
   if($("#inb-import"))$("#inb-import").addEventListener("click",openReceiptImport);
   $("#cli-new").addEventListener("click",function(){openSellerForm(null);});
+  if($("#cli-demo"))$("#cli-demo").addEventListener("click",openDemoSandbox);
+  /**
+   * Sandbox de demostración del agente: crea un cliente de juguete con productos,
+   * ubicaciones, stock, 20 órdenes en todos los estados con deadlines variados y
+   * tareas pendientes de todos los tipos, para mostrar al agente trabajando sobre
+   * datos reales sin tocar a los clientes de verdad.
+   */
+  function openDemoSandbox(){
+    confirmBox('Sandbox de demostración del agente',
+      '<p style="margin:0 0 10px">Se creará un <b>cliente nuevo</b> llamado «Demo sandbox» con:</p>'
+      +'<ul style="margin:0 0 10px 18px;padding:0"><li>5 productos y 10 ubicaciones propias (todo con prefijo DEMO-)</li>'
+      +'<li>20 órdenes repartidas en todos los estados, con deadlines vencidos, críticos, en riesgo, holgados y sin compromiso</li>'
+      +'<li>tareas pendientes de picking, empaque, despacho, recepción, guardado, reposición y conteo</li>'
+      +'<li>tres operarios de demostración: uno cargado, uno ocioso y uno inactivo con tareas abiertas</li>'
+      +'<li>un lote por vencer y una orden sin stock suficiente</li></ul>'
+      +'<p class="muted" style="margin:0">No toca a tus clientes reales: todo vive en el cliente nuevo. Puedes desactivarlo después desde este mismo mantenedor.</p>',
+      'Crear sandbox', function(){
+        toast('Sembrando datos de demostración…');
+        api('/operations/'+op+'/demo-sandbox',{method:'POST',body:{}}).then(function(r){
+          return loadOp().then(function(){return r;});
+        }).then(function(r){
+          var t=r.tareasPendientes||{}, d=r.deadlines||{};
+          openModal('Sandbox listo · '+esc(r.sellerName||''),
+            '<p class="muted" style="margin:0 0 12px">Ya puedes cambiar al cliente <b>'+esc(r.sellerName||'')+'</b> en el selector de arriba y mirar el agente, la cola de preparación y las alertas.</p>'
+            +'<div class="kv"><span>Productos</span><b>'+r.productos+'</b></div>'
+            +'<div class="kv"><span>Ubicaciones</span><b>'+r.ubicaciones+'</b></div>'
+            +'<div class="kv"><span>Órdenes</span><b>'+r.ordenes+' · '+esc(Object.keys(r.porEstado||{}).map(function(k){return (STN[k]||k)+' '+r.porEstado[k];}).join(' · '))+'</b></div>'
+            +'<div class="kv"><span>Deadlines</span><b>'+d.vencidas+' vencidas · '+d.criticas+' críticas · '+d.enRiesgo+' en riesgo · '+d.holgadas+' holgadas · '+d.sinDeadline+' sin compromiso</b></div>'
+            +'<div class="kv"><span>Tareas pendientes</span><b>'+esc(Object.keys(t).filter(function(k){return t[k];}).map(function(k){return (ASG_TYPE_LABEL[k]||k)+' '+t[k];}).join(' · ')||'—')+'</b></div>'
+            +'<div class="kv"><span>Operarios</span><b>'+esc((r.operarios||[]).join(' · '))+'</b></div>'
+            +((r.avisos||[]).length?'<p class="muted" style="margin:12px 0 0;font-size:12.5px">'+esc(r.avisos.join(' · '))+'</p>':'')
+            +'<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn pri" id="m-ok">Cerrar</button></div>');
+          $("#m-ok").addEventListener('click',closeModal);
+        }).catch(function(e){ toast(e.message); });
+      });
+  }
   if($("#wh-new"))$("#wh-new").addEventListener("click",function(){openWebhookForm(null);});
   $("#ord-new").addEventListener("click",function(){openOrderForm(null);});
   if($("#ord-import"))$("#ord-import").addEventListener("click",openBulkImport);
@@ -5689,11 +5999,39 @@
   wireSort('returns','fecha',-1,renderReturns);
   wireSort('inbound','fecha',-1,renderInbound);
   $("#inv-move").addEventListener("click",function(){openPutawayForm();});
-  $("#btn-logout").addEventListener("click",function(){
+  // Salir vive al final del sidebar (antes estaba en la barra superior).
+  function cerrarSesion(){
     token=null;me=null;role=null;op=null;seller=null;
     $("#lg-email").value="";$("#lg-pass").value="";$("#lg-err").textContent="";
+    // Al volver, la portada arranca de nuevo con la caja cerrada.
+    var st=$("#loginstage"); if(st){ st.classList.remove('open'); st.classList.add('closed'); }
     $("#loginov").classList.remove("off");
-  });
+  }
+  if($("#btn-logout"))$("#btn-logout").addEventListener("click",cerrarSesion);
+  if($("#side-logout"))$("#side-logout").addEventListener("click",cerrarSesion);
+
+  /**
+   * Sidebar colapsable: en pantallas grandes se puede reducir a solo iconos para
+   * ganar ancho. La preferencia se recuerda en el navegador de cada persona.
+   */
+  (function sidebarCollapse(){
+    var KEY='wms.admin.sidecollapsed';
+    var layout=document.querySelector('.layout'), btn=$("#side-toggle");
+    if(!layout||!btn)return;
+    function pinta(on){
+      layout.classList.toggle('sidecollapsed',on);
+      btn.textContent=on?'»':'«';
+      btn.title=on?'Expandir el menú':'Colapsar el menú';
+      btn.setAttribute('aria-label',btn.title);
+    }
+    var guardado=false; try{ guardado=localStorage.getItem(KEY)==='1'; }catch(e){}
+    pinta(guardado);
+    btn.addEventListener('click',function(){
+      var on=!layout.classList.contains('sidecollapsed');
+      pinta(on);
+      try{ localStorage.setItem(KEY,on?'1':'0'); }catch(e){}
+    });
+  })();
   $("#btn-mypass").addEventListener("click",function(){
     var html='<div class="form">'
       +'<div class="fld"><label>Contraseña actual</label><input id="mp-cur" type="password" autocomplete="current-password"></div>'
@@ -5719,6 +6057,62 @@
     ["lg-err","rg-err","fg-err","rs-err"].forEach(function(id){ var e=$("#"+id); if(e)e.textContent=""; });
   }
   $$("#loginov [data-go]").forEach(function(b){ b.addEventListener("click",function(){ lgShow(b.getAttribute("data-go")); }); });
+
+  /**
+   * Portada del login: el nombre y el eslogan se escriben solos, después de que la
+   * caja se arma y el formulario sale de adentro. Puro adorno: si algo falla, el
+   * texto queda completo igual y nadie se queda sin poder entrar.
+   */
+  (function heroType(){
+    var nm=document.getElementById('lh-name'), sl=document.getElementById('lh-slogan');
+    if(!nm||!sl)return;
+    var reduce=false; try{ reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){}
+    var NOMBRE=[['Ninja','a'],[' WMS','b']], SLOGAN='AI Native WMS';
+    function full(){
+      nm.innerHTML='<span class="a">Ninja</span><span class="b"> WMS</span>';
+      sl.textContent=SLOGAN;
+      $$('#loginov .lh-caret').forEach(function(c){c.classList.add('done');});
+    }
+    if(reduce)full();
+    var plano=NOMBRE.map(function(x){return x[0];}).join(''), i=0;
+    var tecleando=!reduce;
+    function pintaNombre(n){
+      var out='', usado=0;
+      for(var k=0;k<NOMBRE.length;k++){
+        var txt=NOMBRE[k][0], toma=Math.max(0,Math.min(txt.length,n-usado));
+        if(toma>0)out+='<span class="'+NOMBRE[k][1]+'">'+txt.slice(0,toma)+'</span>';
+        usado+=txt.length;
+      }
+      nm.innerHTML=out;
+    }
+    function tecleaNombre(){
+      i++; pintaNombre(i);
+      if(i<plano.length)return setTimeout(tecleaNombre, 85);
+      var c1=$$('#loginov .lh-caret')[0]; if(c1)c1.classList.add('done');
+      setTimeout(tecleaSlogan, 320);
+    }
+    var j=0;
+    function tecleaSlogan(){
+      j++; sl.textContent=SLOGAN.slice(0,j);
+      if(j<SLOGAN.length)return setTimeout(tecleaSlogan, 62);
+    }
+    if(tecleando)setTimeout(tecleaNombre, 1500); // apenas la caja termina de armarse
+
+    // La caja se abre con un clic (o con el teclado). Si alguien se queda mirando,
+    // se abre sola a los 12 s: nadie puede quedarse afuera por no entender el gesto.
+    var stage=document.getElementById('loginstage'), boton=document.getElementById('lh-open');
+    if(!stage||!boton)return;
+    var abierta=false;
+    function abrir(){
+      if(abierta)return; abierta=true;
+      stage.classList.remove('closed'); stage.classList.add('open');
+      setTimeout(function(){ var e=document.getElementById('lg-email'); if(e&&window.innerWidth>720)e.focus(); }, 900);
+    }
+    boton.addEventListener('click',abrir);
+    document.addEventListener('keydown',function(e){ if(!abierta&&(e.key==='Enter'||e.key===' '))abrir(); });
+    setTimeout(abrir, 12000);
+    if(reduce)abrir();
+  })();
 
   // Aterrizaje común tras autenticarse (login o registro).
   function afterAuth(r){ token=r.token; me=r.user; role=me.role; $("#loginov").classList.add("off"); init(); syncVerifyBar(); }

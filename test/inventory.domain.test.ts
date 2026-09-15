@@ -18,6 +18,7 @@ import { PackagingService } from '../src/domain/packaging.service';
 import { OpsChannelService, classifyHeuristic, insightsHeuristic } from '../src/domain/ops-channel.service';
 import { parseCopilotIntent, buildInsights } from '../src/domain/copilot';
 import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS } from '../src/domain/copilot-tools';
+import { deadlineBoost, deadlineState, nextCutoff, resolveDueAt } from '../src/domain/deadline';
 import { InMemoryOpsChannelRepository } from '../src/infra/memory/in-memory.repositories';
 import { MetricsService } from '../src/domain/metrics.service';
 import { RollupService } from '../src/domain/rollup.service';
@@ -2428,7 +2429,7 @@ async function run() {
     const { facade } = buildFacade();
     await facade.createOperation({ id: 'op1', name: 'Op 1' });
     const rules = await facade.agentRules('op1');
-    assert.equal(rules.length, 5, 'cinco reglas en el catálogo');
+    assert.equal(rules.length, 6, 'seis reglas en el catálogo');
     assert.ok(rules.every((r) => typeof r.enabled === 'boolean' && r.threshold >= 0), 'cada regla trae config efectiva');
     const upd = await facade.updateAgentRule('op1', 'orden_estancada', { threshold: 6, enabled: false }, 'ana');
     assert.equal(upd.threshold, 6); assert.equal(upd.enabled, false);
@@ -4176,6 +4177,232 @@ async function run() {
     assert.equal(mine[0].type, 'SHIP', 'el despacho listo va primero');
     const view = await f.facade.operatorActivities('op1', 'pedro');
     assert.equal(view.tareas[0].tipo, 'SHIP'); assert.ok(view.tareas[0].motivo);
+  });
+
+  // ---- Deadline de preparación (v99) ----------------------------------------
+
+  await test('deadline: la próxima hora de corte del courier respeta día y huso', () => {
+    // Bodega en Chile (UTC−3). Jueves 14:00 local = 17:00 UTC.
+    const jueves9 = '2026-09-17T12:00:00.000Z'; // 09:00 local
+    const at = nextCutoff(jueves9, '14:00', undefined, -3);
+    assert.equal(at, '2026-09-17T17:00:00.000Z', 'mismo día si el corte aún no pasa');
+    // Si ya pasó, el corte es el del día siguiente.
+    const jueves16 = '2026-09-17T19:00:00.000Z'; // 16:00 local
+    assert.equal(nextCutoff(jueves16, '14:00', undefined, -3), '2026-09-18T17:00:00.000Z');
+    // Con días hábiles (lunes a viernes), un viernes tarde salta al lunes.
+    const viernes16 = '2026-09-18T19:00:00.000Z';
+    assert.equal(nextCutoff(viernes16, '14:00', [1, 2, 3, 4, 5], -3), '2026-09-21T17:00:00.000Z');
+    assert.equal(nextCutoff(jueves9, '99:99', undefined, -3), null, 'hora inválida → sin deadline');
+  });
+
+  await test('deadline: se resuelve por corte del courier, luego por SLA del cliente, luego nada', () => {
+    const now = '2026-09-17T12:00:00.000Z'; // jueves 09:00 en Chile
+    const config = { offsetHoras: -3, cortes: [{ courier: 'Chilexpress', hora: '14:00' }] };
+    // 1) explícito (lo que mandó el OMS) gana sobre todo.
+    const oms = resolveDueAt({ nowIso: now, carrier: 'Chilexpress', config, slaHoras: 24, explicito: '2026-09-17T15:30:00.000Z', fuenteExplicita: 'oms' });
+    assert.equal(oms.dueSource, 'oms');
+    assert.equal(oms.dueAt, '2026-09-17T15:30:00.000Z');
+    // 2) corte del courier (tolera mayúsculas y espacios en el nombre).
+    const corte = resolveDueAt({ nowIso: now, carrier: '  CHILEXPRESS ', config, slaHoras: 24 });
+    assert.equal(corte.dueSource, 'corte');
+    assert.equal(corte.dueAt, '2026-09-17T17:00:00.000Z');
+    // 3) sin corte para ese courier → SLA del cliente.
+    const sla = resolveDueAt({ nowIso: now, carrier: 'Starken', config, slaHoras: 6 });
+    assert.equal(sla.dueSource, 'sla');
+    assert.equal(sla.dueAt, '2026-09-17T18:00:00.000Z');
+    // 4) sin corte y sin SLA → la orden no tiene compromiso horario.
+    assert.deepEqual(resolveDueAt({ nowIso: now, carrier: 'Starken', config }), { dueAt: null, dueSource: null });
+  });
+
+  await test('deadline: nivel, texto e impulso de prioridad según la holgura', () => {
+    const now = '2026-09-17T12:00:00.000Z';
+    assert.equal(deadlineState(null, now).level, 'sin');
+    const vencida = deadlineState('2026-09-17T11:20:00.000Z', now);
+    assert.equal(vencida.level, 'vencido');
+    assert.equal(vencida.holguraMin, -40);
+    assert.match(vencida.texto, /vencida hace 40 min/);
+    assert.equal(deadlineBoost(vencida), -900);
+    const critica = deadlineState('2026-09-17T12:45:00.000Z', now);
+    assert.equal(critica.level, 'critico');
+    assert.match(critica.texto, /vence en 45 min/);
+    assert.equal(deadlineBoost(critica), -700);
+    const riesgo = deadlineState('2026-09-17T14:30:00.000Z', now);
+    assert.equal(riesgo.level, 'riesgo');
+    assert.match(riesgo.texto, /vence en 2 h 30/);
+    assert.equal(deadlineBoost(riesgo), -450);
+    // La ventana de riesgo es configurable por operación.
+    assert.equal(deadlineState('2026-09-17T20:00:00.000Z', now).level, 'ok');
+    assert.equal(deadlineState('2026-09-17T20:00:00.000Z', now, 12).level, 'riesgo');
+  });
+
+  await test('deadline: la orden nace con el compromiso del corte y el editar lo recalcula', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z'); // jueves 09:00 en Chile
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.setDeadlineConfig('op1', { offsetHoras: -3, riesgoHoras: 4, cortes: [{ courier: 'Chilexpress', hora: '14:00' }, { courier: 'Starken', hora: '17:00' }] });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME', slaHoras: 8 });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
+
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'D-1', salesChannel: 'web', carrier: 'Chilexpress', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 2 }] }, 'ana');
+    assert.equal(o.dueAt, '2026-09-17T17:00:00.000Z', 'corte de Chilexpress de hoy');
+    assert.equal(o.dueSource, 'corte');
+
+    // Cambiar de courier cambia el compromiso.
+    const e = await f.facade.updateOrder('acme', o.id, { externalOrderId: 'D-1', salesChannel: 'web', carrier: 'Starken', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 2 }] }, 'ana');
+    assert.equal(e.dueAt, '2026-09-17T20:00:00.000Z', 'corte de Starken');
+
+    // Un courier sin corte configurado cae al SLA del cliente (8 h desde el ingreso).
+    const sinCorte = await f.facade.createOrder('acme', { externalOrderId: 'D-2', salesChannel: 'web', carrier: 'Rapiboy', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 1 }] }, 'ana');
+    assert.equal(sinCorte.dueSource, 'sla');
+    assert.equal(sinCorte.dueAt, '2026-09-17T20:00:00.000Z');
+
+    // Fijarlo a mano gana, y se puede hacer aunque la orden ya esté reservada.
+    await f.facade.allocateOrder('acme', o.id, 'ana');
+    const fijada = await f.facade.setOrderDueAt('acme', o.id, '2026-09-17T13:00:00.000Z', 'manual', 'ana');
+    assert.equal(fijada.dueSource, 'manual');
+    assert.ok((fijada.events || []).some((ev) => ev.type === 'DUE_SET'), 'queda auditado');
+    // Una orden despachada ya no cambia su compromiso.
+    await f.facade.confirmPick('acme', o.id, 'ana');
+    await f.facade.packOrder('acme', o.id, { bultos: 1, materials: [] }, 'ana');
+    await f.facade.shipOrder('acme', o.id, { carrier: 'Chilexpress', trackingNumber: 'T1' }, 'ana');
+    await assert.rejects(() => f.facade.setOrderDueAt('acme', o.id, '2026-09-18T13:00:00.000Z', 'manual', 'ana'), /despachada/);
+  });
+
+  await test('deadline: lo que está por vencer se salta la cola y sube en la bandeja del operario', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.setDeadlineConfig('op1', { offsetHoras: -3, riesgoHoras: 4, cortes: [] });
+    // El cliente prioriza Chilexpress: sin deadlines, una orden de Chilexpress va primero.
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME', courierPriority: ['Chilexpress'] });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
+    await f.facade.createUser({ id: 'pedro', name: 'Pedro', email: 'p@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+
+    const mk = async (ref: string, carrier: string, due: string | null) => {
+      const o = await f.facade.createOrder('acme', { externalOrderId: ref, salesChannel: 'web', carrier, dueAt: due, dueSource: due ? 'oms' : null, shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 1 }] }, 'ana');
+      await f.facade.allocateOrder('acme', o.id, 'ana');
+      return o;
+    };
+    const chx = await mk('CHX-1', 'Chilexpress', null);        // courier prioritario, sin compromiso
+    const stk = await mk('STK-1', 'Starken', '2026-09-17T13:00:00.000Z'); // vence en 1 h
+
+    const cola = await f.facade.getPickingQueue('acme');
+    assert.deepEqual(cola.map((o) => o.externalOrderId), ['STK-1', 'CHX-1'], 'el compromiso manda sobre la prioridad de courier');
+    assert.equal(cola[0].deadline?.level, 'critico');
+
+    // Y lo mismo en la bandeja del operario: el motivo explica por qué.
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: chx.id, entityRef: 'CHX-1', sellerId: 'acme', operator: 'pedro', unitsEstimate: 1, by: 'ana' });
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: stk.id, entityRef: 'STK-1', sellerId: 'acme', operator: 'pedro', unitsEstimate: 1, by: 'ana' });
+    (f.facade as any).prioritiesAt.clear();
+    const mine = await f.facade.getOperatorTasks('op1', 'pedro');
+    assert.deepEqual(mine.map((x) => x.entityRef), ['STK-1', 'CHX-1']);
+    assert.match(mine[0].priorityReason || '', /vence en/);
+
+    // El agente la ve como riesgo ANTES de incumplir, con su holgura.
+    const due = await f.facade.getOrdersDueSoon('op1', { withinHours: 2 });
+    assert.equal(due.total, 1);
+    assert.equal(due.items[0].orden, 'STK-1');
+    assert.equal(due.items[0].holguraMin, 60);
+    assert.equal(due.items[0].vencida, false);
+    // Una hora y media después ya está vencida.
+    f.clock.set('2026-09-17T13:30:00.000Z');
+    const tarde = await f.facade.getOrdersDueSoon('op1', { withinHours: 2 });
+    assert.equal(tarde.vencidas, 1);
+    assert.match(tarde.items[0].texto, /vencida hace 30 min/);
+  });
+
+  // ---- Verificación al empacar y panel consolidado (v100) --------------------
+
+  await test('verificación al empacar: registra la diferencia y alimenta la precisión de preparación', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.createSku('acme', { sku: 'PAN', description: 'Pantalón' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 50, locationId: stg.id });
+    await f.facade.receive('acme', { sku: 'PAN', qty: 50, locationId: stg.id });
+
+    const prep = async (ref: string) => {
+      const o = await f.facade.createOrder('acme', { externalOrderId: ref, salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 3 }, { sku: 'PAN', qty: 2 }] }, 'ana');
+      await f.facade.allocateOrder('acme', o.id, 'ana');
+      await f.facade.confirmPick('acme', o.id, 'ana');
+      return o;
+    };
+
+    // 1) Lo contado calza con lo que pedía la orden.
+    const ok = await prep('V-1');
+    const packOk = await f.facade.packOrder('acme', ok.id, { bultos: 1, verify: [{ sku: 'CAM', qty: 3 }, { sku: 'PAN', qty: 2 }] }, 'pedro');
+    assert.equal(packOk.packing?.verification?.ok, true);
+    assert.equal(packOk.packing?.verification?.lineasConError, 0);
+
+    // 2) Falta una unidad: queda registrado el esperado vs. contado, y el empaque NO se bloquea.
+    const mal = await prep('V-2');
+    const packMal = await f.facade.packOrder('acme', mal.id, { bultos: 1, verify: [{ sku: 'CAM', qty: 2 }, { sku: 'PAN', qty: 2 }] }, 'pedro');
+    assert.equal(packMal.status, OrderStatus.PACKED, 'la orden igual se empaca');
+    assert.equal(packMal.packing?.verification?.ok, false);
+    assert.deepEqual(packMal.packing?.verification?.diferencias, [{ sku: 'CAM', lot: null, esperado: 3, contado: 2 }]);
+    const ev = (packMal.events || []).find((e) => e.type === 'PACKED');
+    assert.match(ev?.detail || '', /VERIFICACIÓN CON DIFERENCIAS/);
+
+    // 3) Empacar sin verificar sigue siendo válido: queda sin verificación.
+    const sin = await prep('V-3');
+    const packSin = await f.facade.packOrder('acme', sin.id, { bultos: 1 }, 'pedro');
+    assert.equal(packSin.packing?.verification, null);
+
+    // 4) El panel consolidado lo convierte en precisión de preparación: 1 de 2 con error.
+    const dash: any = await f.facade.operationDashboard('op1', { window: '24h' });
+    assert.equal(dash.precision.pedidosVerificados, 2);
+    assert.equal(dash.precision.pedidosConError, 1);
+    assert.equal(dash.precision.pct, 50);
+    assert.equal(dash.precision.empacadosEnVentana, 3);
+    assert.equal(dash.precision.coberturaPct, 66.7, 'dos de cada tres empaques se verificaron');
+  });
+
+  await test('panel consolidado: suma toda la operación y explica lo que todavía no mide', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.setDeadlineConfig('op1', { offsetHoras: -3, riesgoHoras: 4, cortes: [] });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await f.facade.createSeller({ id: 'globex', operationId: 'op1', name: 'Globex' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 100 });
+    for (const sid of ['acme', 'globex']) {
+      await f.facade.createSku(sid, { sku: 'CAM', description: 'Camisa' });
+      await f.facade.receive(sid, { sku: 'CAM', qty: 20, locationId: stg.id });
+    }
+    // Una orden vencida en un cliente y una a tiempo en el otro.
+    const a = await f.facade.createOrder('acme', { externalOrderId: 'A-1', salesChannel: 'web', carrier: 'Starken', dueAt: '2026-09-17T10:00:00.000Z', dueSource: 'oms', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 4 }] }, 'ana');
+    await f.facade.allocateOrder('acme', a.id, 'ana');
+    const g = await f.facade.createOrder('globex', { externalOrderId: 'G-1', salesChannel: 'web', carrier: 'Chilexpress', dueAt: '2026-09-17T18:00:00.000Z', dueSource: 'oms', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 6 }] }, 'ana');
+    await f.facade.allocateOrder('globex', g.id, 'ana');
+
+    const d: any = await f.facade.operationDashboard('op1', { window: '24h' });
+    assert.equal(d.alcance.consolidado, true);
+    assert.equal(d.alcance.clientes, 2);
+    assert.equal(d.despacho.atrasadas, 1);
+    assert.equal(d.despacho.aTiempo, 1);
+    assert.equal(d.cargaPorCliente.length, 2, 'los dos clientes tienen carga abierta');
+    assert.equal(d.cargaPorCliente[0].unidades, 6, 'ordenado por unidades');
+    assert.deepEqual(d.colaPorCourier.map((c: any) => c.courier).sort(), ['Chilexpress', 'Starken']);
+    assert.equal(d.ordenesPorEstado.ALLOCATED, 2);
+    assert.equal(d.ocupacion.usado, 40);
+    assert.equal(d.ocupacion.capacidad, 100);
+    assert.equal(d.ocupacion.pct, 40);
+    // Sin verificaciones todavía: el panel lo dice en vez de inventar un 100%.
+    assert.equal(d.precision.pct, null);
+    assert.ok(d.faltantes.some((x: string) => x.startsWith('precision-preparacion')));
+
+    // Filtrado por cliente: solo ese cliente.
+    const solo: any = await f.facade.operationDashboard('op1', { window: '24h', sellerId: 'globex' });
+    assert.equal(solo.alcance.consolidado, false);
+    assert.equal(solo.despacho.atrasadas, 0);
+    assert.equal(solo.cargaPorCliente.length, 1);
   });
 
   // ---- Resumen --------------------------------------------------------------

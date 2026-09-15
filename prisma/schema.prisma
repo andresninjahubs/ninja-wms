@@ -27,6 +27,7 @@ model Operation {
   assignmentMode String? // 'advisory' | 'strict' (Camino B); null = advisory
   autoBalance Boolean  @default(false) // auto-balanceo continuo
   operatorSelfPickup Boolean @default(false) // operarios pueden tomar tareas disponibles desde la app
+  deadlineConfig Json? // deadlines de preparación: { offsetHoras, riesgoHoras, cortes: [{courier, hora, dias}] }
   createdAt   DateTime  @default(now())
 
   packagingMaterials PackagingMaterial[] // FK PackagingMaterial → Operation (G8)
@@ -300,6 +301,7 @@ model Seller {
   cycleCountStrategy String   @default("ABC") // ABC | LOCATION | RANDOM
   consolidateByLocation Boolean @default(false) // preferir una sola ubicación al reservar
   courierPriority    Json     @default("[]") // orden de prioridad de courier para la cola de preparación
+  slaHoras           Int? // promesa de preparación del cliente, en horas desde el ingreso
   autoAllocateOnIngest Boolean @default(false) // reservar stock apenas ingresa la orden (sin revisión)
   active             Boolean  @default(true)
   // ¿El admin habilitó a este cliente para ver/usar el panel de webhooks?
@@ -381,6 +383,7 @@ model PackagingMaterial {
   barcode      String?
   name         String
   unitPrice    Int      @default(0) // precio de cobro por unidad (por defecto)
+  minStock     Int      @default(0) // stock mínimo: bajo esto el panel pide reponer (0 = sin mínimo)
   sellerPrices Json     @default("{}") // override de precio por seller { sellerId: precio }
   active       Boolean  @default(true)
 
@@ -735,6 +738,8 @@ model SalesOrder {
   packing          Json? // { packedAt, bultos, trackingNumber, carrier, labelStatus, labels[] }
   shipment         Json? // { mode, carrier, trackingNumber, shippedAt }
   events           Json     @default("[]") // historial de auditoría [{ type, at, actor, detail }] — lo lee facturación (SHIPPED), métricas y actividad
+  dueAt            DateTime? // deadline de preparación: para cuándo tiene que estar lista
+  dueSource        String? // oms | manual | corte | sla
   createdAt        DateTime
 
   seller Seller      @relation(fields: [sellerId], references: [id])

@@ -50,6 +50,7 @@ export class PackagingController {
       name: dto.name,
       barcode: dto.barcode ?? null,
       unitPrice: dto.unitPrice,
+      minStock: dto.minStock,
       active: dto.active,
     });
   }
@@ -61,6 +62,7 @@ export class PackagingController {
       name: dto.name,
       barcode: dto.barcode,
       unitPrice: dto.unitPrice,
+      minStock: dto.minStock,
       active: dto.active,
     });
   }

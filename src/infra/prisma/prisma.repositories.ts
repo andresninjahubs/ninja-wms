@@ -284,6 +284,7 @@ export class PrismaOperationRepository implements OperationRepository {
       assignmentMode: (o.assignmentMode as any) ?? null,
       autoBalance: o.autoBalance ?? false,
       operatorSelfPickup: o.operatorSelfPickup ?? false,
+      deadlineConfig: (o.deadlineConfig as any) ?? null,
     };
   }
   async findById(id: string): Promise<Operation | null> {
@@ -298,6 +299,7 @@ export class PrismaOperationRepository implements OperationRepository {
       assignmentMode: op.assignmentMode ?? null,
       autoBalance: op.autoBalance ?? false,
       operatorSelfPickup: op.operatorSelfPickup ?? false,
+      deadlineConfig: (op.deadlineConfig ?? null) as unknown as object,
     };
     await this.db.operation.upsert({
       where: { id: op.id },
@@ -324,6 +326,7 @@ export class PrismaSellerRepository implements SellerRepository {
           cycleCountStrategy: s.cycleCountStrategy as CycleCountStrategy,
           consolidateByLocation: !!s.consolidateByLocation,
           courierPriority: Array.isArray(s.courierPriority) ? s.courierPriority : [],
+          slaHoras: s.slaHoras ?? null,
           autoAllocateOnIngest: !!s.autoAllocateOnIngest,
           active: s.active,
           webhooksClientEnabled: !!s.webhooksClientEnabled,
@@ -338,6 +341,7 @@ export class PrismaSellerRepository implements SellerRepository {
       cycleCountStrategy: seller.cycleCountStrategy,
       consolidateByLocation: !!seller.consolidateByLocation,
       courierPriority: seller.courierPriority as unknown as object,
+      slaHoras: seller.slaHoras ?? null,
       autoAllocateOnIngest: !!seller.autoAllocateOnIngest,
       active: seller.active,
       webhooksClientEnabled: !!seller.webhooksClientEnabled,
@@ -352,6 +356,8 @@ export class PrismaSellerRepository implements SellerRepository {
       cycleCountStrategy: s.cycleCountStrategy as CycleCountStrategy,
       consolidateByLocation: !!s.consolidateByLocation,
       courierPriority: Array.isArray(s.courierPriority) ? s.courierPriority : [],
+      slaHoras: s.slaHoras ?? null,
+      autoAllocateOnIngest: !!s.autoAllocateOnIngest,
       active: s.active,
       webhooksClientEnabled: !!s.webhooksClientEnabled,
     }));
@@ -554,6 +560,7 @@ export class PrismaPackagingRepository implements PackagingRepository {
       barcode: m.barcode,
       name: m.name,
       unitPrice: m.unitPrice,
+      minStock: m.minStock ?? 0,
       sellerPrices: m.sellerPrices as unknown as object,
       active: m.active,
     };
@@ -621,6 +628,7 @@ export class PrismaPackagingRepository implements PackagingRepository {
       barcode: m.barcode ?? null,
       name: m.name,
       unitPrice: m.unitPrice,
+      minStock: m.minStock ?? 0,
       sellerPrices: (m.sellerPrices as Record<string, number>) ?? {},
       active: m.active,
     };
@@ -1298,6 +1306,8 @@ export class PrismaOrderRepository implements OrderRepository {
           shipTo: order.shipTo as unknown as object,
           status: order.status,
           createdAt: new Date(order.createdAt),
+          dueAt: order.dueAt ? new Date(order.dueAt) : null,
+          dueSource: order.dueSource ?? null,
           // Historial de auditoría en la cabecera: lo leen facturación (evento SHIPPED del
           // período), métricas y actividad. Antes no se persistía y en producción (Prisma)
           // toda orden volvía con events=[] → despacho/picking facturados en 0.
@@ -1308,6 +1318,8 @@ export class PrismaOrderRepository implements OrderRepository {
         update: {
           status: order.status,
           priority: order.priority,
+          dueAt: order.dueAt ? new Date(order.dueAt) : null,
+          dueSource: order.dueSource ?? null,
           purchaseOrderRef: order.purchaseOrderRef,
           documentType: order.documentType,
           carrier: order.carrier,
@@ -1389,6 +1401,8 @@ export class PrismaOrderRepository implements OrderRepository {
       packing: (o.packing as any) ?? null,
       shipment: (o.shipment as Shipment) ?? null,
       createdAt: (o.createdAt as Date).toISOString(),
+      dueAt: o.dueAt ? (o.dueAt as Date).toISOString() : null,
+      dueSource: o.dueSource ?? null,
       events: (o.events as any) ?? [], // historial de auditoría (columna JSON opcional)
       lines: (o.lines as any[]).map((l) => ({
         lineNo: l.lineNo,

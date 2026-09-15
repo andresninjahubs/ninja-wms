@@ -28,6 +28,7 @@ import {
   OrderStatus,
   OrderType,
   PackingInfo,
+  PackVerification,
   PickTask,
   StockState,
   SalesOrder,
@@ -63,6 +64,10 @@ export interface CreateOrderInput {
   priority?: string;
   shipTo: ShipTo;
   lines: CreateOrderLineInput[];
+  /** Deadline de preparación ya resuelto (lo calcula el facade con la config de la operación). */
+  dueAt?: string | null;
+  /** De dónde salió ese deadline: oms | manual | corte | sla. */
+  dueSource?: string | null;
 }
 
 export class OrderService {
@@ -146,11 +151,58 @@ export class OrderService {
       packing: null,
       shipment: null,
       createdAt: this.clock.now(),
+      dueAt: input.dueAt ?? null,
+      dueSource: input.dueAt ? (input.dueSource ?? 'manual') : null,
       events: [],
     };
     order.events.push(this.ev('CREATED', actor, `${lines.length} línea(s) · ${this.unitsOf(order)} un`));
     await this.orders.save(order);
     return order;
+  }
+
+  /**
+   * Fija o quita el deadline de preparación de una orden ya creada.
+   * A diferencia de editar la orden, esto se puede hacer en cualquier estado abierto:
+   * que el courier mueva su hora de retiro no tiene nada que ver con las líneas ni
+   * con el stock comprometido. Solo se bloquea en órdenes ya cerradas.
+   */
+  async setDueAt(sellerId: string, orderId: string, dueAt: string | null, source: string | null, actor?: string): Promise<SalesOrder> {
+    const order = await this.mustGet(sellerId, orderId);
+    if (order.status === OrderStatus.SHIPPED || order.status === OrderStatus.CANCELLED) {
+      throw new ValidationError(`No se puede cambiar el deadline de una orden ${order.status === OrderStatus.SHIPPED ? 'ya despachada' : 'cancelada'}.`);
+    }
+    let iso: string | null = null;
+    if (dueAt) {
+      const t = Date.parse(dueAt);
+      if (Number.isNaN(t)) throw new ValidationError(`Fecha de deadline inválida: ${dueAt}`);
+      iso = new Date(t).toISOString();
+    }
+    const antes = order.dueAt || 'sin deadline';
+    const updated: SalesOrder = {
+      ...order,
+      dueAt: iso,
+      dueSource: iso ? (source || 'manual') : null,
+      events: (order.events || []).concat(this.ev('DUE_SET', actor, `${antes} → ${iso || 'sin deadline'}`)),
+    };
+    await this.orders.save(updated);
+    return updated;
+  }
+
+  /**
+   * SOLO PARA DATOS DE DEMOSTRACIÓN: corre hacia atrás las fechas de una orden
+   * (creación e historial) para poder mostrar órdenes "detenidas hace N horas"
+   * sin esperar N horas. No toca stock, estado ni líneas.
+   */
+  async backdateForDemo(sellerId: string, orderId: string, horas: number): Promise<SalesOrder> {
+    const order = await this.mustGet(sellerId, orderId);
+    const shift = (iso: string) => new Date(Date.parse(iso) - horas * 3600000).toISOString();
+    const updated: SalesOrder = {
+      ...order,
+      createdAt: shift(order.createdAt),
+      events: (order.events || []).map((e) => ({ ...e, at: shift(e.at) })),
+    };
+    await this.orders.save(updated);
+    return updated;
   }
 
   /** Libera TODAS las reservas pendientes de una orden (lo ya recolectado no vuelve). */
@@ -229,6 +281,8 @@ export class OrderService {
       shipTo: input.shipTo,
       lines,
       status: OrderStatus.RECEIVED,
+      dueAt: input.dueAt ?? null,
+      dueSource: input.dueAt ? (input.dueSource ?? 'manual') : null,
     };
     const despues = `${lines.length} línea(s) · ${this.unitsOf(updated)} un`;
     updated.events = (order.events || []).concat(
@@ -529,7 +583,7 @@ export class OrderService {
   async packOrder(
     sellerId: string,
     orderId: string,
-    input: { bultos?: number; materials?: { sku: string; name: string; qty: number }[] } = {},
+    input: { bultos?: number; materials?: { sku: string; name: string; qty: number }[]; verify?: Array<{ sku: string; lot?: string | null; qty: number }> | null } = {},
     actor?: string,
   ): Promise<SalesOrder> {
     const order = await this.mustGet(sellerId, orderId);
@@ -538,6 +592,7 @@ export class OrderService {
     }
     const bultos = Math.max(1, Math.floor(input.bultos ?? 1));
     const materials = input.materials ?? [];
+    const verification = input.verify ? this.verifyPack(order, input.verify, actor) : null;
     const packing: PackingInfo = {
       packedAt: this.clock.now(),
       bultos,
@@ -550,15 +605,49 @@ export class OrderService {
       source: null,
       labeledAt: null,
       materials,
+      verification,
     };
     order.packing = packing;
     order.status = OrderStatus.PACKED;
     const matNote = materials.length ? ` · embalaje: ${materials.map((m) => `${m.qty}× ${m.name}`).join(', ')}` : '';
+    const verNote = verification
+      ? (verification.ok
+        ? ' · verificado: calza'
+        : ` · VERIFICACIÓN CON DIFERENCIAS: ${verification.diferencias.map((d) => `${d.sku} pedía ${d.esperado}, contado ${d.contado}`).join('; ')}`)
+      : '';
     order.events = (order.events || []).concat(
-      this.ev('PACKED', actor, `${bultos} bulto(s) · esperando etiquetas del OMS${matNote}`),
+      this.ev('PACKED', actor, `${bultos} bulto(s) · esperando etiquetas del OMS${matNote}${verNote}`),
     );
     await this.orders.save(order);
     return order;
+  }
+
+  /**
+   * Compara lo que el operario contó al cerrar el bulto contra lo que la orden pedía.
+   * No bloquea el empaque: registra la diferencia, que es lo que después mide la
+   * PRECISIÓN DE PREPARACIÓN. Un pedido con cualquier diferencia cuenta como error.
+   */
+  private verifyPack(order: SalesOrder, contado: Array<{ sku: string; lot?: string | null; qty: number }>, actor?: string): PackVerification {
+    const key = (sku: string, lot: string | null | undefined) => `${sku}|${lot || ''}`;
+    const esperado = new Map<string, number>();
+    for (const l of order.lines) esperado.set(key(l.sku, l.lot), (esperado.get(key(l.sku, l.lot)) || 0) + l.qty);
+    const real = new Map<string, number>();
+    for (const c of contado) real.set(key(c.sku, c.lot), (real.get(key(c.sku, c.lot)) || 0) + Math.max(0, Math.floor(c.qty || 0)));
+    const diferencias: PackVerification['diferencias'] = [];
+    for (const k of new Set([...esperado.keys(), ...real.keys()])) {
+      const e = esperado.get(k) || 0, r = real.get(k) || 0;
+      if (e === r) continue;
+      const [sku, lot] = k.split('|');
+      diferencias.push({ sku, lot: lot || null, esperado: e, contado: r });
+    }
+    return {
+      at: this.clock.now(),
+      by: actor || 'system',
+      ok: diferencias.length === 0,
+      lineasVerificadas: esperado.size,
+      lineasConError: diferencias.length,
+      diferencias,
+    };
   }
 
   /**

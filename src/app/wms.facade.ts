@@ -22,6 +22,7 @@ import { PlatformUsageService } from '../domain/platform-usage.service';
 import { AnnouncementInput, AnnouncementPatch, AnnouncementService } from '../domain/announcement.service';
 import { CreateWebhookInput, UpdateWebhookInput, WebhookService } from '../domain/webhook.service';
 import { WebhookEventType } from '../domain/types';
+import { DeadlineConfig, DeadlineState, deadlineBoost, deadlineState, enRiesgo, resolveDueAt } from '../domain/deadline';
 import { ChatSender, ChatService } from '../domain/chat.service';
 import { PutawayAdvisor } from '../domain/putaway.advisor';
 import { CycleCountService } from '../domain/cyclecount.service';
@@ -623,6 +624,19 @@ export class WmsFacade {
       }
       return { requiresConfirmation: true, resumen: `Propuesta registrada: ${args.accion} la orden ${ordenRef} (${plan.from} → ${plan.to}). El usuario la confirmará; NO la des por ejecutada. Puedes proponer más órdenes si corresponde.` };
     }
+    // Deadline de preparación: mueve el compromiso de salida de una orden (reversible).
+    if (name === 'fijar_deadline_orden') {
+      if (!canWrite) return { error: 'No tienes permisos para cambiar deadlines.' };
+      const resolved = await this.copilotResolveOrder(operationId, sellerId, args?.orden);
+      if (!resolved) return { error: 'Orden no encontrada.' };
+      const due = String(args?.dueAt || '').trim() || null;
+      try {
+        const o = await this.setOrderDueAt(resolved.sellerId, resolved.order.id, due, 'manual', actor?.id || 'copiloto');
+        const ref = o.externalOrderId || o.id;
+        await this.recordAgentAction({ operationId, sellerId: resolved.sellerId, agent: 'copilot', decision: `deadline ${ref} → ${due || 'sin deadline'}`, actor: actor?.id || 'copiloto', orderRef: ref, result: 'ok', recommendationId: null });
+        return { ok: true, orden: ref, deadline: o.dueAt || 'sin deadline' };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo fijar el deadline' }; }
+    }
     // Asignación de tareas (Camino B): son reversibles (reasignar/liberar), así que
     // la IA las ejecuta directo y quedan auditadas. Soporta los 7 tipos de tarea.
     if (name === 'asignar_tarea') {
@@ -760,6 +774,7 @@ export class WmsFacade {
       case 'crear_recepcion': return `recepción ${a.referencia || ''} ${(a.lineas || []).length} línea(s)${a.sellerId ? ' cliente ' + a.sellerId : ''}`.trim();
       case 'crear_orden': return `orden ${a.referencia || ''} ${(a.lineas || []).length} línea(s) para ${a.destinatario?.nombre || '?'}`.trim();
       case 'avanzar_estado_orden': return `${a.accion || '?'} orden ${a.orden || '?'}`;
+      case 'fijar_deadline_orden': return `orden ${a.orden || '?'} → ${a.dueAt || 'sin deadline'}`;
       case 'guardar_instruccion': return String(a.texto || a.instruccion || '').slice(0, 80);
       default: return JSON.stringify(a).slice(0, 120);
     }
@@ -990,6 +1005,12 @@ export class WmsFacade {
           return this.getStockoutRisk(operationId, {
             sellerId: sid, coverDays: Number(a.diasCobertura) || undefined,
             windowDays: Number(a.ventanaDias) || undefined, limit: Number(a.limite) || undefined,
+          });
+        }
+        case 'ordenes_por_vencer': {
+          const sid = pickSeller(a.sellerId);
+          return this.getOrdersDueSoon(operationId, {
+            sellerId: sid, withinHours: Number(a.horas) || undefined, limit: Number(a.limite) || undefined,
           });
         }
         case 'ordenes_en_riesgo': {
@@ -2215,10 +2236,79 @@ export class WmsFacade {
   }
 
   /** Operación a la que pertenece un seller (para resolver bins por código). */
+  /** Operación dueña de un cliente (uso público: controladores que necesitan el tenant). */
+  async operationIdOfSeller(sellerId: string): Promise<string> {
+    return this.operationOfSeller(sellerId);
+  }
+
   private async operationOfSeller(sellerId: string): Promise<string> {
     const seller = await this.sellers.findById(sellerId);
     if (!seller) throw new NotFoundError(`Seller no encontrado: ${sellerId}`);
     return seller.operationId;
+  }
+
+  // ---- Deadline de preparación ----------------------------------------------
+
+  /** Configuración de deadlines de una operación (cortes de courier, riesgo, huso). */
+  async getDeadlineConfig(operationId: string): Promise<DeadlineConfig> {
+    const op = await this.operationsService.get(operationId).catch(() => null);
+    return (op?.deadlineConfig as DeadlineConfig) || {};
+  }
+
+  /** Guarda la configuración de deadlines de la operación. */
+  async setDeadlineConfig(operationId: string, cfg: DeadlineConfig): Promise<DeadlineConfig> {
+    const op = await this.operationsService.setDeadlineConfig(operationId, cfg);
+    this.prioritiesAt.delete(operationId);
+    return (op.deadlineConfig as DeadlineConfig) || {};
+  }
+
+  /** Estado del deadline de una orden (holgura, nivel y texto para la UI). */
+  async deadlineOf(order: SalesOrder, operationId?: string | null): Promise<DeadlineState> {
+    if (!order.dueAt) return deadlineState(null, this.clockNow());
+    const cfg = operationId ? await this.getDeadlineConfig(operationId).catch(() => ({} as DeadlineConfig)) : {};
+    return deadlineState(order.dueAt, this.clockNow(), cfg.riesgoHoras);
+  }
+
+  /**
+   * Resuelve el deadline de una orden que entra (o que se edita): lo explícito gana;
+   * si no, la hora de corte del courier; si no, el SLA del cliente; si no, nada.
+   */
+  private async resolveDue(sellerId: string, input: CreateOrderInput): Promise<{ dueAt: string | null; dueSource: string | null }> {
+    const seller = await this.sellers.findById(sellerId).catch(() => null);
+    const cfg = seller ? await this.getDeadlineConfig(seller.operationId).catch(() => ({} as DeadlineConfig)) : {};
+    return resolveDueAt({
+      nowIso: this.clockNow(),
+      carrier: input.carrier ?? null,
+      config: cfg,
+      slaHoras: seller?.slaHoras ?? null,
+      explicito: input.dueAt ?? null,
+      fuenteExplicita: (input.dueSource as any) || 'manual',
+    });
+  }
+
+  /** Corre hacia atrás las fechas de una orden — SOLO para datos de demostración. */
+  async backdateOrderForDemo(sellerId: string, orderId: string, horas: number): Promise<SalesOrder> {
+    return this.orders.backdateForDemo(sellerId, orderId, horas);
+  }
+
+  /**
+   * Siembra un sandbox de demostración del agente dentro de esta operación:
+   * un cliente de juguete con productos, ubicaciones, stock, 20 órdenes en todos
+   * los estados con deadlines variados y tareas pendientes de todos los tipos.
+   * Lo dispara el administrador de la operación desde el panel. Ver `demo-seed.ts`.
+   */
+  async seedAgentSandbox(operationId: string, actor: string) {
+    await this.operationsService.mustGet(operationId);
+    const { seedAgentSandbox } = await import('./demo-seed');
+    return seedAgentSandbox(this, operationId, actor);
+  }
+
+  /** Fija o quita el deadline de una orden ya creada. */
+  async setOrderDueAt(sellerId: string, orderId: string, dueAt: string | null, source: string | null, actor?: string): Promise<SalesOrder> {
+    const order = await this.orders.setDueAt(sellerId, orderId, dueAt, source, actor);
+    const opId = await this.operationOfSeller(sellerId).catch(() => null);
+    if (opId) this.prioritiesAt.delete(opId);
+    return order;
   }
 
   // ---- Usuarios, roles y autorización ---------------------------------------
@@ -2416,6 +2506,7 @@ export class WmsFacade {
     cycleCountStrategy?: CycleCountStrategy;
     consolidateByLocation?: boolean;
     courierPriority?: string[];
+    slaHoras?: number | null;
     autoAllocateOnIngest?: boolean;
   }): Promise<Seller> {
     await this.operationsService.mustGet(input.operationId); // la operación debe existir y estar activa
@@ -2428,6 +2519,7 @@ export class WmsFacade {
       cycleCountStrategy: input.cycleCountStrategy ?? CycleCountStrategy.ABC,
       consolidateByLocation: input.consolidateByLocation ?? false,
       courierPriority: input.courierPriority ?? [],
+      slaHoras: input.slaHoras ?? null,
       autoAllocateOnIngest: input.autoAllocateOnIngest ?? false,
       active: true,
       // El acceso del cliente al panel de webhooks nace apagado; lo activa el admin.
@@ -2440,7 +2532,7 @@ export class WmsFacade {
   /** Actualiza la política operativa del seller (estrategias de picking y conteo). */
   async updateSellerPolicy(
     sellerId: string,
-    input: { pickingStrategy?: PickingStrategy; cycleCountStrategy?: CycleCountStrategy; consolidateByLocation?: boolean; courierPriority?: string[]; autoAllocateOnIngest?: boolean },
+    input: { pickingStrategy?: PickingStrategy; cycleCountStrategy?: CycleCountStrategy; consolidateByLocation?: boolean; courierPriority?: string[]; slaHoras?: number | null; autoAllocateOnIngest?: boolean },
   ): Promise<Seller> {
     const seller = await this.sellers.findById(sellerId);
     if (!seller) throw new Error(`Seller no encontrado: ${sellerId}`);
@@ -2450,6 +2542,7 @@ export class WmsFacade {
       cycleCountStrategy: input.cycleCountStrategy ?? seller.cycleCountStrategy,
       consolidateByLocation: input.consolidateByLocation ?? seller.consolidateByLocation,
       courierPriority: input.courierPriority ?? seller.courierPriority,
+      slaHoras: input.slaHoras === undefined ? (seller.slaHoras ?? null) : (input.slaHoras || null),
       autoAllocateOnIngest: input.autoAllocateOnIngest ?? seller.autoAllocateOnIngest,
     };
     await this.sellers.save(updated);
@@ -2462,7 +2555,7 @@ export class WmsFacade {
    */
   async updateSeller(
     sellerId: string,
-    input: { name?: string; pickingStrategy?: PickingStrategy; cycleCountStrategy?: CycleCountStrategy; consolidateByLocation?: boolean; courierPriority?: string[]; autoAllocateOnIngest?: boolean; active?: boolean },
+    input: { name?: string; pickingStrategy?: PickingStrategy; cycleCountStrategy?: CycleCountStrategy; consolidateByLocation?: boolean; courierPriority?: string[]; slaHoras?: number | null; autoAllocateOnIngest?: boolean; active?: boolean },
     actor?: User | null,
   ): Promise<Seller> {
     const seller = await this.sellers.findById(sellerId);
@@ -2477,6 +2570,7 @@ export class WmsFacade {
       cycleCountStrategy: input.cycleCountStrategy ?? seller.cycleCountStrategy,
       consolidateByLocation: input.consolidateByLocation ?? seller.consolidateByLocation,
       courierPriority: input.courierPriority ?? seller.courierPriority,
+      slaHoras: input.slaHoras === undefined ? (seller.slaHoras ?? null) : (input.slaHoras || null),
       autoAllocateOnIngest: input.autoAllocateOnIngest ?? seller.autoAllocateOnIngest,
       active: input.active != null ? input.active : seller.active,
     };
@@ -2933,6 +3027,39 @@ export class WmsFacade {
     }
     items.sort((a, b) => b.horasDetenida - a.horasDetenida);
     return { umbralHoras: maxHours, enRiesgo: items.length, porEstado, items: items.slice(0, limit) };
+  }
+
+  /**
+   * Órdenes abiertas con deadline de preparación vencido o próximo a vencer.
+   * Es la contracara de `getOrdersAtRisk`: aquella mira hacia atrás (cuánto lleva
+   * detenida), esta mira hacia adelante (cuánto le queda para incumplir).
+   */
+  async getOrdersDueSoon(
+    operationId: string,
+    opts?: { sellerId?: string | null; withinHours?: number; limit?: number },
+  ): Promise<{ ventanaHoras: number; total: number; vencidas: number; items: Array<{ orden: string; orderId: string; sellerId: string; estado: string; dueAt: string; dueSource: string | null; holguraMin: number; texto: string; vencida: boolean; nivel: string; courier: string | null; unidades: number }> }> {
+    const within = opts?.withinHours ?? 2;
+    const limit = Math.min(opts?.limit ?? 50, 500);
+    const sellers = opts?.sellerId ? [opts.sellerId] : (await this.listSellers(operationId)).map((s) => s.id);
+    const cfg = await this.getDeadlineConfig(operationId).catch(() => ({} as DeadlineConfig));
+    const now = this.clockNow();
+    const TERMINAL = new Set(['SHIPPED', 'CANCELLED']);
+    const items: Array<{ orden: string; orderId: string; sellerId: string; estado: string; dueAt: string; dueSource: string | null; holguraMin: number; texto: string; vencida: boolean; nivel: string; courier: string | null; unidades: number }> = [];
+    for (const sid of sellers) {
+      for (const o of await this.orders.listOrders(sid)) {
+        if (TERMINAL.has(o.status) || !o.dueAt) continue;
+        const st = deadlineState(o.dueAt, now, cfg.riesgoHoras);
+        if (st.holguraMin == null || st.holguraMin > within * 60) continue;
+        items.push({
+          orden: o.externalOrderId || o.id, orderId: o.id, sellerId: sid, estado: o.status,
+          dueAt: o.dueAt, dueSource: o.dueSource ?? null,
+          holguraMin: st.holguraMin, texto: st.texto, vencida: st.holguraMin < 0, nivel: st.level,
+          courier: o.carrier ?? null, unidades: (o.lines || []).reduce((t, l) => t + l.qty, 0),
+        });
+      }
+    }
+    items.sort((a, b) => a.holguraMin - b.holguraMin);
+    return { ventanaHoras: within, total: items.length, vencidas: items.filter((i) => i.vencida).length, items: items.slice(0, limit) };
   }
 
   /**
@@ -3466,6 +3593,21 @@ export class WmsFacade {
         action: 'Despáchalo antes del corte del courier.',
       }));
     }
+    if (def.key === 'deadline_riesgo') {
+      // A diferencia de las otras dos reglas de órdenes, esta no mide tiempo transcurrido
+      // sino HOLGURA contra el compromiso de salida: avisa ANTES de incumplir.
+      const r = await this.getOrdersDueSoon(operationId, { sellerId: sid, withinHours: cfg.threshold, limit: 100 });
+      return r.items.map((i) => ({
+        sellerId: i.sellerId, entityRef: i.orden, entityType: 'ORDER' as const,
+        title: i.vencida
+          ? `Orden ${i.orden} pasada de su deadline (${i.texto})`
+          : `Orden ${i.orden} ${i.texto} y sigue en ${i.estado}`,
+        detail: `${cl(i.sellerId)} · ${i.unidades} un${i.courier ? ' · ' + i.courier : ''} · compromiso ${i.dueAt.slice(0, 16).replace('T', ' ')} (${i.dueSource || 'manual'}).`,
+        action: i.estado === 'RECEIVED' ? 'Reserva su stock ahora: es lo único que falta para que entre a la cola.'
+          : i.estado === 'PACKED' ? 'Despáchala: está lista y el courier pasa pronto.'
+          : 'Ponla adelante en la cola y asígnala a un operario disponible.',
+      }));
+    }
     if (def.key === 'quiebre_stock') {
       const r = await this.getStockoutRisk(operationId, { sellerId: sid, coverDays: cfg.threshold, limit: 50 });
       return r.items.map((i) => ({
@@ -3851,7 +3993,8 @@ export class WmsFacade {
     if (!this.assignments) return { recalculadas: 0, cambiadas: 0 };
     const open = (await this.assignments.list(operationId, { limit: 5000 })).filter((a) => a.status === 'assigned' || a.status === 'in_progress');
     if (!open.length) return { recalculadas: 0, cambiadas: 0 };
-    const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, COUNT: 6, RESLOT: 7 };
+    const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, RESTOCK: 6, COUNT: 7, RESLOT: 8 };
+    const dlCfg = await this.getDeadlineConfig(operationId).catch(() => ({} as DeadlineConfig));
     // Posición dentro de la cola de cada tipo (normalizada a 1..n).
     const rank = new Map<string, number>();
     const types = [...new Set(open.map((a) => a.type))];
@@ -3887,7 +4030,12 @@ export class WmsFacade {
           if (carrier) why.push(o.carrier as string);
           if (carrier && boostsCourier.some((c) => carrier.includes(c))) { prio -= 500; why.push('instrucción: priorizar courier'); }
           if (o.priority === 'alta') { prio -= 300; why.push('prioridad alta'); }
-          if (o.status === 'PACKED') { const ev = (o.events || []).find((e) => e.type === 'PACKED'); const h = ev ? (nowMs - Date.parse(ev.at)) / 3600000 : 0; if (h >= 6) { prio -= 200; why.push(`empacada hace ${Math.round(h)} h`); } }
+          // Deadline de preparación: manda la HOLGURA contra el compromiso, no el tiempo
+          // transcurrido. Sin deadline se cae al criterio viejo (empacada hace +6 h).
+          const dl = deadlineState(o.dueAt ?? null, this.clockNow(), dlCfg.riesgoHoras);
+          const boost = deadlineBoost(dl);
+          if (boost) { prio += boost; why.push(dl.texto); }
+          else if (!o.dueAt && o.status === 'PACKED') { const ev = (o.events || []).find((e) => e.type === 'PACKED'); const h = ev ? (nowMs - Date.parse(ev.at)) / 3600000 : 0; if (h >= 6) { prio -= 200; why.push(`empacada hace ${Math.round(h)} h`); } }
         }
       }
       if (a.sellerId && boostsSeller.includes(a.sellerId)) { prio -= 400; why.push('instrucción: priorizar cliente'); }
@@ -4259,6 +4407,16 @@ export class WmsFacade {
     const to = new Date(Date.UTC(year, month, 1)).toISOString();
     return this.costing.laborEfficiency(operationId, from, to, groupBy || 'operator');
   }
+  /**
+   * Panel de control consolidado de la operación (todos los clientes, o uno como
+   * filtro). Devuelve en una sola llamada todo lo que muestra la pantalla; lo que
+   * el sistema todavía no mide viene en `faltantes`. Ver `operation-dashboard.ts`.
+   */
+  async operationDashboard(operationId: string, opts?: { sellerId?: string | null; window?: '24h' | '7d' | '30d' | '90d'; from?: string | null; to?: string | null }) {
+    const { buildOperationDashboard } = await import('./operation-dashboard');
+    return buildOperationDashboard(this, operationId, opts || {});
+  }
+
   dashboardMetrics(sellerId: string) {
     return this.metrics.forSeller(sellerId);
   }
@@ -4693,7 +4851,10 @@ export class WmsFacade {
       if (existing) return existing;
     }
     await this.assertQuotaBySeller(sellerId, 'ordersPerMonth');
-    const order = await this.orders.createOrder(sellerId, input, actor);
+    // Deadline de preparación: lo que trae la orden, o la hora de corte del courier,
+    // o el SLA del cliente. Ver `domain/deadline.ts`.
+    const due = await this.resolveDue(sellerId, input).catch(() => ({ dueAt: null, dueSource: null }));
+    const order = await this.orders.createOrder(sellerId, { ...input, dueAt: due.dueAt, dueSource: due.dueSource }, actor);
     // Reserva inmediata al ingreso si el cliente está configurado para ello (sin revisión).
     // Best-effort: si no hay stock suficiente, la orden queda RECEIVED para revisión/espera.
     const seller = await this.sellers.findById(sellerId).catch(() => null);
@@ -4706,7 +4867,10 @@ export class WmsFacade {
 
   /** Edita una orden aún en estado RECEIVED (antes de reservar stock). */
   async updateOrder(sellerId: string, orderId: string, input: CreateOrderInput, actor?: string): Promise<SalesOrder> {
-    const order = await this.orders.updateOrder(sellerId, orderId, input, actor);
+    // Si la edición no trae deadline explícito, se vuelve a resolver: cambiar el courier
+    // cambia la hora de corte, y con ella el compromiso de salida.
+    const due = await this.resolveDue(sellerId, input).catch(() => ({ dueAt: null, dueSource: null }));
+    const order = await this.orders.updateOrder(sellerId, orderId, { ...input, dueAt: due.dueAt, dueSource: due.dueSource }, actor);
     // Si la orden ya estaba asignada a un operario, su estimación de trabajo cambió
     // con las líneas nuevas: se actualiza para que el balanceo no use un número viejo.
     const opId = await this.operationOfSeller(sellerId).catch(() => null);
@@ -4768,8 +4932,10 @@ export class WmsFacade {
    * el más antiguo primero). Si el seller no define prioridad de courier, queda FIFO puro.
    * Devuelve cada orden con su posición en la cola y el rank de courier aplicado.
    */
-  async getPickingQueue(sellerId: string): Promise<Array<SalesOrder & { queuePosition: number; courierRank: number }>> {
+  async getPickingQueue(sellerId: string): Promise<Array<SalesOrder & { queuePosition: number; courierRank: number; deadline?: DeadlineState }>> {
     const seller = await this.sellers.findById(sellerId);
+    const cfg = seller ? await this.getDeadlineConfig(seller.operationId).catch(() => ({} as DeadlineConfig)) : {};
+    const now = this.clockNow();
     const priority = (seller?.courierPriority ?? []).map((c) => this.normCourier(c));
     const rankOf = (carrier: string | null): number => {
       const n = this.normCourier(carrier || '');
@@ -4779,7 +4945,15 @@ export class WmsFacade {
     };
     const all = await this.orders.listOrders(sellerId);
     const ready = all.filter((o) => o.status === OrderStatus.ALLOCATED || o.status === OrderStatus.PICKING);
+    // Deadline primero: lo vencido o en riesgo se atiende por compromiso (earliest due date),
+    // por encima de la prioridad de courier. El resto conserva el orden de siempre
+    // (prioridad de courier del cliente y, a igualdad, FIFO por antigüedad).
+    const st = new Map(ready.map((o) => [o.id, deadlineState(o.dueAt ?? null, now, cfg.riesgoHoras)] as const));
     ready.sort((a, b) => {
+      const sa = st.get(a.id)!, sb = st.get(b.id)!;
+      const ra1 = enRiesgo(sa) ? 0 : 1, rb1 = enRiesgo(sb) ? 0 : 1;
+      if (ra1 !== rb1) return ra1 - rb1;
+      if (ra1 === 0) return (sa.holguraMin ?? 0) - (sb.holguraMin ?? 0); // el más apretado primero
       const ra = rankOf(a.carrier), rb = rankOf(b.carrier);
       if (ra !== rb) return ra - rb;
       // FIFO: más antiguo primero.
@@ -4787,7 +4961,7 @@ export class WmsFacade {
       if (a.createdAt > b.createdAt) return 1;
       return 0;
     });
-    return ready.map((o, idx) => ({ ...o, queuePosition: idx + 1, courierRank: rankOf(o.carrier) }));
+    return ready.map((o, idx) => ({ ...o, queuePosition: idx + 1, courierRank: rankOf(o.carrier), deadline: st.get(o.id) }));
   }
 
   /** Normaliza el nombre de un courier para comparar (minúsculas, sin espacios ni signos). */
@@ -4967,7 +5141,7 @@ export class WmsFacade {
   async packOrder(
     sellerId: string,
     orderId: string,
-    input: { bultos?: number; materials?: { sku: string; qty: number }[] } = {},
+    input: { bultos?: number; materials?: { sku: string; qty: number }[]; verify?: Array<{ sku: string; lot?: string | null; qty: number }> | null } = {},
     actor?: string,
   ): Promise<SalesOrder> {
     // Insumos de embalaje consumidos (opcional). Se validan ANTES de empacar; el stock
@@ -4981,7 +5155,7 @@ export class WmsFacade {
       if (!seller) throw new NotFoundError(`Seller no encontrado: ${sellerId}`);
       prepared = await this.packaging.resolveUse(seller.operationId, sellerId, orderId, input.materials, actor);
     }
-    const packed = await this.orders.packOrder(sellerId, orderId, { bultos: input.bultos, materials: prepared.used }, actor);
+    const packed = await this.orders.packOrder(sellerId, orderId, { bultos: input.bultos, materials: prepared.used, verify: input.verify ?? null }, actor);
     if (this.packaging && prepared.movements.length) await this.packaging.commit(prepared.movements);
     this.fireOrderWebhook(sellerId, packed); // order.packed → OMS
     if (opId) {
@@ -4995,12 +5169,12 @@ export class WmsFacade {
   }
 
   // ---- Insumos de embalaje (packaging, nivel operación) ---------------------
-  async createPackaging(operationId: string, input: { sku: string; name: string; barcode?: string | null; unitPrice?: number; active?: boolean }) {
+  async createPackaging(operationId: string, input: { sku: string; name: string; barcode?: string | null; unitPrice?: number; minStock?: number; active?: boolean }) {
     if (!this.packaging) throw new ValidationError('Embalaje no disponible');
     await this.assertFeature(operationId, 'packaging_materials', 'Los insumos de embalaje');
     return this.packaging.createMaterial(operationId, input);
   }
-  updatePackaging(operationId: string, sku: string, patch: { name?: string; barcode?: string | null; unitPrice?: number; active?: boolean }) {
+  updatePackaging(operationId: string, sku: string, patch: { name?: string; barcode?: string | null; unitPrice?: number; minStock?: number; active?: boolean }) {
     if (!this.packaging) throw new ValidationError('Embalaje no disponible');
     return this.packaging.updateMaterial(operationId, sku, patch);
   }

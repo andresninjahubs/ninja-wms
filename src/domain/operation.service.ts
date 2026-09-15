@@ -5,6 +5,7 @@
  */
 import { NotFoundError, ValidationError } from './errors';
 import { IdGenerator, OperationRepository } from './ports';
+import { DeadlineConfig } from './deadline';
 import { Operation } from './types';
 
 export class OperationService {
@@ -77,6 +78,30 @@ export class OperationService {
       name: patch.name != null && patch.name.trim() ? patch.name.trim() : op.name,
       active: patch.active != null ? patch.active : op.active,
     };
+    await this.operations.save(updated);
+    return updated;
+  }
+
+  /**
+   * Guarda la configuración de deadlines de preparación (cortes de courier, ventana de
+   * riesgo y desfase horario de la bodega). Ver `domain/deadline.ts`.
+   */
+  async setDeadlineConfig(operationId: string, cfg: DeadlineConfig): Promise<Operation> {
+    const op = await this.operations.findById(operationId);
+    if (!op) throw new NotFoundError(`Operación no encontrada: ${operationId}`);
+    const cortes = (cfg.cortes || [])
+      .filter((c) => c && String(c.courier || '').trim() && /^\d{1,2}:\d{2}$/.test(String(c.hora || '').trim()))
+      .map((c) => ({
+        courier: String(c.courier).trim(),
+        hora: String(c.hora).trim(),
+        dias: Array.isArray(c.dias) && c.dias.length ? c.dias.map((d) => Number(d)).filter((d) => d >= 0 && d <= 6) : undefined,
+      }));
+    const limpia: DeadlineConfig = {
+      ...(cfg.offsetHoras == null ? {} : { offsetHoras: Number(cfg.offsetHoras) }),
+      ...(cfg.riesgoHoras == null ? {} : { riesgoHoras: Math.max(0, Number(cfg.riesgoHoras)) }),
+      cortes,
+    };
+    const updated: Operation = { ...op, deadlineConfig: limpia };
     await this.operations.save(updated);
     return updated;
   }
