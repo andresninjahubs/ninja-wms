@@ -3,7 +3,7 @@
  * Cachea el "shell" de la app para que abra sin conexión; las llamadas a la API
  * van siempre a la red (el stock no se cachea, debe ser fresco).
  */
-const CACHE = 'wms-operador-v2';
+const CACHE = 'wms-operador-v3';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -18,8 +18,9 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  // Nunca cachear la API: red directa.
-  if (/\/(sellers|auth|locations|users)(\/|$)/.test(url.pathname)) return;
-  // Shell: cache-first.
+  // Solo el SHELL de la app (bajo el scope del service worker) va cache-first.
+  // TODO lo demás (API: sellers, assignments, operations, auth, labor…) va SIEMPRE a la red.
+  const scope = new URL(self.registration.scope).pathname;
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin || !url.pathname.startsWith(scope)) return;
   e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));
 });

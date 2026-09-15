@@ -89,6 +89,35 @@
     .pl-empty{color:var(--crit);font-size:13px;background:rgba(217,112,94,.1);border:1px solid rgba(217,112,94,.35);border-radius:12px;padding:11px 13px}
     .warnrow{color:var(--crit)!important}
     a{color:var(--primary-2)}
+    .tabs{display:flex;gap:6px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:4px}
+    .tab{flex:1;border:0;background:transparent;border-radius:10px;padding:10px 6px;font-weight:700;font-size:13.5px;color:var(--ink-2);display:flex;align-items:center;justify-content:center;gap:6px}
+    .tab.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+    .tab .cnt{font-size:11.5px;background:var(--line);border-radius:999px;padding:1px 7px;color:var(--ink-2)}
+    .tab.on .cnt{background:var(--primary);color:#fff}
+    .pane{display:none;flex-direction:column;gap:12px}
+    .pane.on{display:flex}
+    .task{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:13px 14px;display:flex;gap:12px;align-items:flex-start;box-shadow:var(--shadow)}
+    .task .num{min-width:30px;height:30px;border-radius:15px;background:var(--surface-2);border:1px solid var(--line);color:var(--ink-2);display:grid;place-items:center;font-weight:800;font-size:13px}
+    .task .tt{font-weight:700;font-size:15px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .task .ref{font-family:ui-monospace,Menlo,monospace}
+    .task .meta{font-size:12.5px;color:var(--ink-3);margin-top:2px}
+    .task .why{font-size:12.5px;color:var(--ink-2);margin-top:4px}
+    .task .act{margin-left:auto;align-self:center;flex:none}
+    .task .act button{border:0;border-radius:10px;padding:9px 12px;font-weight:700;font-size:13px;background:var(--surface-2);color:var(--ink)}
+    .task.running{border-color:var(--primary-2)}
+    .next{background:var(--surface);border:2px solid var(--primary);border-radius:18px;padding:16px;box-shadow:0 14px 30px -18px rgba(18,183,106,.55)}
+    .next .lbl{font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--primary)}
+    .next .tt{font-family:var(--sans);font-size:20px;font-weight:800;margin-top:4px}
+    .next .meta{font-size:13px;color:var(--ink-2);margin-top:4px}
+    .next .why{font-size:12.5px;color:var(--ink-3);margin-top:6px}
+    .next .btn{margin-top:12px;padding:14px}
+    .typechip{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);color:var(--ink-2)}
+    .typechip.PICK{background:#E6F7EF;color:#0F9D5B;border-color:#bfe9d3} .typechip.SHIP{background:#EDE9FE;color:#6D5BD0;border-color:#d6cffa} .typechip.PACK{background:#E0F4F4;color:#0B8080;border-color:#b9e4e4} .typechip.RECEIVE{background:#FFF3E0;color:#B36B00;border-color:#f7dcb0} .typechip.PUTAWAY{background:#EEF2FF;color:#3B4FCB;border-color:#cdd5fb}
+    .taskctx{background:#E6F7EF;border:1px solid #bfe9d3;border-radius:12px;padding:10px 12px;font-size:13px}
+    .taskctx b{display:block;margin-bottom:2px}
+    .taskctx .lines{margin-top:6px;display:flex;flex-direction:column;gap:3px}
+    .taskctx .ln{display:flex;justify-content:space-between;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+    .taskctx .ln.done{opacity:.55;text-decoration:line-through}
     .pwa-brand-home{display:flex;align-items:center;margin-right:10px}
     .pwa-brand-home:empty{display:none}
     .pwa-brand-home img{border-radius:6px}
@@ -102,9 +131,9 @@
       <div class="body">
         <div id="pwa-brand-login" style="margin-bottom:6px"></div>
         <h1 id="pwa-title">WMS Operador</h1>
-        <p class="muted">Ingresa para operar la bodega con tu lector de códigos.</p>
+        <p class="muted">Ingresa para ver tus tareas en orden y operar con el lector de códigos.</p>
         <div><label for="cfg-api">Servidor (API del WMS)</label><input id="cfg-api" placeholder="https://tu-servidor:3000" inputmode="url"></div>
-        <div><label for="cfg-seller">Cliente (seller)</label><input id="cfg-seller" placeholder="acme"></div>
+        <div><label for="cfg-seller">Cliente (opcional, solo para operar libre)</label><input id="cfg-seller" placeholder="Déjalo vacío si trabajas por tareas"></div>
         <div><label for="cfg-email">Email</label><input id="cfg-email" placeholder="pedro@nh.cl" inputmode="email" autocomplete="username"></div>
         <div><label for="cfg-pass">Contraseña</label><input id="cfg-pass" type="password" placeholder="••••••••" autocomplete="current-password"></div>
         <button class="btn" id="btn-login">Entrar</button>
@@ -112,26 +141,60 @@
       </div>
     </section>
 
-    <!-- Home -->
+    <!-- Home: bandeja de tareas del operario -->
     <section id="home" class="screen">
       <header>
         <div id="pwa-brand-home" class="pwa-brand-home"></div>
         <div><div class="title" id="h-user">—</div><div class="sub" id="h-seller">—</div></div>
         <div class="spacer"></div>
+        <button class="iconbtn" id="btn-refresh" title="Actualizar">↻</button>
         <button class="iconbtn" id="btn-logout" title="Salir">⎋</button>
       </header>
+      <div class="body" style="gap:12px">
+        <div class="tabs">
+          <button class="tab on" data-tab="mine">Mis tareas <span class="cnt" id="cnt-mine">0</span></button>
+          <button class="tab" data-tab="available" id="tab-available" style="display:none">Disponibles <span class="cnt" id="cnt-available">0</span></button>
+          <button class="tab" data-tab="free">Operar libre</button>
+        </div>
+
+        <div id="pane-mine" class="pane on">
+          <div id="board-next"></div>
+          <div id="board-list"></div>
+          <div id="board-empty" class="card" style="display:none;text-align:center;padding:26px 16px">
+            <div style="font-size:34px">✅</div>
+            <div style="font-weight:700;margin-top:6px">Sin tareas asignadas</div>
+            <div class="muted" style="margin-top:4px">Cuando el supervisor o el agente te asignen trabajo aparecerá aquí, en orden de ejecución.</div>
+          </div>
+        </div>
+
+        <div id="pane-available" class="pane">
+          <p class="muted" style="margin:0">Tareas sin asignar de la bodega, en orden de prioridad. Toca <b>Tomar</b> para agregarla a tu bandeja.</p>
+          <div id="avail-list"></div>
+        </div>
+
+        <div id="pane-free" class="pane">
+          <p class="muted" style="margin:0">Operación libre (sin tarea asignada). El supervisor verá el movimiento igual.</p>
+          <div class="ops">
+            <button class="op" data-op="receive"><span class="em">📦</span><span class="t">Recepción</span></button>
+            <button class="op" data-op="putaway"><span class="em">⇄</span><span class="t">Guardado</span></button>
+            <button class="op" data-op="pick"><span class="em">🛒</span><span class="t">Picking</span></button>
+            <button class="op" data-op="stock"><span class="em">🔎</span><span class="t">Consultar stock</span></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Acción rápida de una tarea (empacar / despachar) -->
+    <section id="quick" class="screen">
+      <header>
+        <button class="iconbtn" id="btn-qback">‹</button>
+        <div><div class="title" id="q-title">Tarea</div><div class="sub" id="q-sub">—</div></div>
+      </header>
       <div class="body">
-        <div id="mytasks" style="display:none;margin-bottom:14px">
-          <p class="muted" style="margin:0 0 6px">🧑‍🏭 Mis tareas asignadas:</p>
-          <div id="mytasks-list"></div>
-        </div>
-        <p class="muted">Elige una operación:</p>
-        <div class="ops">
-          <button class="op" data-op="receive"><span class="em">📦</span><span class="t">Recepción</span></button>
-          <button class="op" data-op="putaway"><span class="em">⇄</span><span class="t">Guardado</span></button>
-          <button class="op" data-op="pick"><span class="em">🛒</span><span class="t">Picking</span></button>
-          <button class="op" data-op="stock"><span class="em">🔎</span><span class="t">Consultar stock</span></button>
-        </div>
+        <div class="card" id="q-card"></div>
+        <div id="q-form"></div>
+        <button class="btn good" id="btn-qconfirm">Confirmar</button>
+        <button class="btn alt" id="btn-qcancel">Volver a mis tareas</button>
       </div>
     </section>
 
@@ -142,6 +205,7 @@
         <div><div class="title" id="s-title">Escanear</div><div class="sub" id="s-step">Apunta al código</div></div>
       </header>
       <div class="body">
+        <div class="taskctx" id="taskctx" style="display:none"></div>
         <div class="cam" id="cam">
           <video id="video" playsinline muted></video>
           <div class="frame"></div><div class="laser"></div>
@@ -178,6 +242,10 @@
         <div class="card" id="result" style="display:none">
           <div class="big" id="res-big">—</div>
           <div class="muted" id="res-sub"></div>
+        </div>
+        <div id="after" style="display:none;flex-direction:column;gap:10px">
+          <button class="btn" id="btn-again">Siguiente producto de esta tarea</button>
+          <button class="btn alt" id="btn-finish">Terminar y volver a mis tareas</button>
         </div>
       </div>
     </section>

@@ -3737,6 +3737,63 @@ export class WmsFacade {
     return sorted.map((a, i) => ({ ...a, priority: a.priority ?? 0, priorityReason: a.priorityReason ?? null, position: i + 1, next: i === 0 }));
   }
 
+  // ---- Bandeja del operario (PWA): tablero, tomar tareas, iniciar ----------------------
+  async getOperatorSelfPickup(operationId: string): Promise<boolean> {
+    const op = await this.operationsService.get(operationId);
+    return !!op?.operatorSelfPickup;
+  }
+  async setOperatorSelfPickup(operationId: string, on: boolean): Promise<{ operatorSelfPickup: boolean }> {
+    await this.operationsService.setOperatorSelfPickup(operationId, on);
+    return { operatorSelfPickup: on };
+  }
+  /**
+   * Tablero del operario: sus tareas en orden de ejecución (con estado y nombre del cliente)
+   * y, si el administrador lo permite, las tareas disponibles (sin asignar) para tomar.
+   */
+  async operatorBoard(operationId: string, operator: string): Promise<{ operator: string; selfPickup: boolean; mode: 'advisory' | 'strict'; mine: Array<WorkAssignment & { next?: boolean; position?: number; estado: 'in_progress' | 'assigned'; cliente: string | null }>; available: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; cliente: string | null; unidades: number; prioridad: number; motivo: string }> }> {
+    const [selfPickup, mode, mine] = await Promise.all([this.getOperatorSelfPickup(operationId), this.getAssignmentMode(operationId), this.getOperatorTasks(operationId, operator)]);
+    const sname = new Map<string, string>();
+    try { for (const x of await this.listSellers(operationId)) sname.set(x.id, x.name); } catch { /* ignore */ }
+    const ledger = this.taskLedger ? await this.taskLedger.list(operationId, { limit: 2000 }) : [];
+    const running = new Set(ledger.filter((t) => t.state === 'in_progress').map((t) => `${t.type}:${t.entityId}`));
+    const mineOut = mine.map((a) => ({ ...a, estado: (running.has(`${a.type}:${a.entityId}`) ? 'in_progress' : 'assigned') as 'in_progress' | 'assigned', cliente: a.sellerId ? sname.get(a.sellerId) || a.sellerId : null }));
+    const available: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; cliente: string | null; unidades: number; prioridad: number; motivo: string }> = [];
+    if (selfPickup) {
+      const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, COUNT: 6, RESLOT: 7 };
+      const LABEL: Record<string, string> = { SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: 'cola de picking', RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' };
+      for (const t of ['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
+        const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: 30 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
+        pool.forEach((p, i) => available.push({ type: t, entityId: p.entityId, entityRef: p.entityRef, sellerId: p.sellerId, cliente: sname.get(p.sellerId) || p.sellerId, unidades: p.unidades, prioridad: (TYPE_W[t] ?? 8) * 1000 + i + 1, motivo: `${LABEL[t]} #${i + 1}` }));
+      }
+      available.sort((a, b) => a.prioridad - b.prioridad);
+    }
+    return { operator, selfPickup, mode, mine: mineOut, available: available.slice(0, 40) };
+  }
+  /** El operario TOMA una tarea disponible (solo si el administrador lo permite y sigue sin asignar). */
+  async takeTask(operationId: string, operator: string, input: { type: WorkTaskType; entityId: string }): Promise<WorkAssignment> {
+    if (!(await this.getOperatorSelfPickup(operationId))) throw new ForbiddenError('El administrador no permite tomar tareas desde la app; espera a que te asignen.');
+    if (!this.assignments) throw new ValidationError('Asignaciones no disponibles');
+    const cur = await this.assignments.get(`${input.type}:${input.entityId}`);
+    if (cur && (cur.status === 'assigned' || cur.status === 'in_progress')) {
+      if (cur.operator === operator) return cur;
+      throw new ValidationError('Esa tarea ya la tomó otro operario.');
+    }
+    const pool = await this.getTaskPool(operationId, input.type, { limit: 5000 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
+    const item = pool.find((p) => p.entityId === input.entityId);
+    if (!item) throw new NotFoundError('La tarea ya no está disponible.');
+    const a = await this.assignTask(operationId, { type: input.type, entityId: item.entityId, entityRef: item.entityRef, sellerId: item.sellerId, operator, unitsEstimate: item.unidades, by: operator, note: 'tomada desde la app', skipOperatorCheck: true });
+    return a;
+  }
+  /** El operario INICIA una tarea de su bandeja: pasa a in_progress en el ledger (y en la asignación). */
+  async startTask(operationId: string, operator: string, input: { type: WorkTaskType; entityId: string }): Promise<{ ok: true; assignment: WorkAssignment | null }> {
+    if (!this.assignments) return { ok: true, assignment: null };
+    const a = await this.assignments.get(`${input.type}:${input.entityId}`);
+    if (a && a.operator !== operator && (await this.getAssignmentMode(operationId)) === 'strict') throw new ForbiddenError('Tarea asignada a otro operario (modo estricto).');
+    if (a && (a.status === 'assigned')) await this.assignments.save({ ...a, status: 'in_progress' });
+    await this.advanceTask(operationId, input.type as WorkTaskStage, input.entityId, { state: 'in_progress', operator, assignmentId: a ? a.id : undefined });
+    return { ok: true, assignment: a ? { ...a, status: 'in_progress' } : null };
+  }
+
   private prioritiesAt = new Map<string, number>();
   /** Recalcula las prioridades si llevan más de 60 s sin actualizarse (barato: se llama desde la PWA). */
   private async ensureAssignmentPriorities(operationId: string): Promise<void> {

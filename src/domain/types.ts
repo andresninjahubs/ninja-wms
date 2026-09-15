@@ -252,6 +252,8 @@ export interface Operation {
   // Auto-balanceo continuo: cuando está activo, el sistema asigna el trabajo nuevo al
   // operario menos cargado a medida que entra, y reparte lo pendiente al liberarse alguien.
   autoBalance?: boolean | null;
+  /** Los operarios pueden TOMAR tareas sin asignar desde su app (configurable por el admin). */
+  operatorSelfPickup?: boolean | null;
 }
 
 /**

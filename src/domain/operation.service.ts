@@ -49,6 +49,13 @@ export class OperationService {
     return updated;
   }
 
+  async setOperatorSelfPickup(operationId: string, on: boolean): Promise<Operation> {
+    const op = await this.operations.findById(operationId);
+    if (!op) throw new NotFoundError(`Operación no encontrada: ${operationId}`);
+    const updated: Operation = { ...op, operatorSelfPickup: on };
+    await this.operations.save(updated);
+    return updated;
+  }
   async setAutoBalance(operationId: string, on: boolean): Promise<Operation> {
     const op = await this.operations.findById(operationId);
     if (!op) throw new NotFoundError(`Operación no encontrada: ${operationId}`);

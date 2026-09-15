@@ -98,6 +98,36 @@ export class AssignmentsController {
     return this.wms.setAssignmentMode(actorOperation(user, body?.operationId), body?.mode === 'strict' ? 'strict' : 'advisory');
   }
 
+  /** Tablero del operario (PWA): sus tareas en orden de ejecución + disponibles para tomar. */
+  @Get('board')
+  @RequirePermission('stock:read')
+  board(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('operator') operator?: string) {
+    return this.wms.operatorBoard(actorOperation(user, operationId), operator || actorOf(user));
+  }
+  /** El operario toma una tarea disponible (si el admin lo permite). */
+  @Post('take')
+  @RequirePermission('stock:read')
+  take(@CurrentUser() user: User | null, @Body() body: { operationId?: string; type: WorkTaskType; entityId: string }) {
+    return this.wms.takeTask(actorOperation(user, body?.operationId), actorOf(user), { type: body.type, entityId: body.entityId });
+  }
+  /** El operario inicia una tarea de su bandeja. */
+  @Post('start')
+  @RequirePermission('stock:read')
+  start(@CurrentUser() user: User | null, @Body() body: { operationId?: string; type: WorkTaskType; entityId: string }) {
+    return this.wms.startTask(actorOperation(user, body?.operationId), actorOf(user), { type: body.type, entityId: body.entityId });
+  }
+  /** ¿Pueden los operarios tomar tareas disponibles desde la app? (configurable por el admin) */
+  @Get('self-pickup')
+  @RequirePermission('stock:read')
+  async getSelfPickup(@CurrentUser() user: User | null, @Query('operationId') operationId?: string) {
+    return { operatorSelfPickup: await this.wms.getOperatorSelfPickup(actorOperation(user, operationId)) };
+  }
+  @Put('self-pickup')
+  @RequirePermission('master:manage')
+  setSelfPickup(@CurrentUser() user: User | null, @Body() body: { operationId?: string; on: boolean }) {
+    return this.wms.setOperatorSelfPickup(actorOperation(user, body?.operationId), !!body?.on);
+  }
+
   /** Auto-balanceo continuo: estado y activación. */
   @Get('continuous')
   @RequirePermission('stock:read')

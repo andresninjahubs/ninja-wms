@@ -283,6 +283,7 @@ export class PrismaOperationRepository implements OperationRepository {
       trialEndsAt: o.trialEndsAt ? (o.trialEndsAt as Date).toISOString() : null,
       assignmentMode: (o.assignmentMode as any) ?? null,
       autoBalance: o.autoBalance ?? false,
+      operatorSelfPickup: o.operatorSelfPickup ?? false,
     };
   }
   async findById(id: string): Promise<Operation | null> {
@@ -296,6 +297,7 @@ export class PrismaOperationRepository implements OperationRepository {
       trialEndsAt: op.trialEndsAt ? new Date(op.trialEndsAt) : null,
       assignmentMode: op.assignmentMode ?? null,
       autoBalance: op.autoBalance ?? false,
+      operatorSelfPickup: op.operatorSelfPickup ?? false,
     };
     await this.db.operation.upsert({
       where: { id: op.id },

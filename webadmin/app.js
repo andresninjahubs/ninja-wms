@@ -1540,6 +1540,10 @@
         var turnOn=cb.getAttribute('data-on')!=='1';
         api('/assignments/continuous',{method:'PUT',body:{operationId:op,on:turnOn}}).then(function(r){toast(turnOn?('Auto-balanceo continuo activado'+(r.asignadasInicial?(' ('+r.asignadasInicial+' repartidas)'):'')):'Auto-balanceo continuo desactivado');loadAssignments();}).catch(function(e){toast(e.message);});
       });
+      var sp=$("#asg-selfpick"); if(sp)sp.addEventListener("click",function(){
+        var turnOn=sp.getAttribute('data-on')!=='1';
+        api('/assignments/self-pickup',{method:'PUT',body:{operationId:op,on:turnOn}}).then(function(){toast(turnOn?'Los operarios pueden tomar tareas disponibles desde su app':'Los operarios solo ven lo asignado');loadAssignments();}).catch(function(e){toast(e.message);});
+      });
       var db=$("#asg-redistribute"); if(db)db.addEventListener("click",function(){
         api('/assignments/rebalance-load?operationId='+encodeURIComponent(op)+'&execute=true',{method:'POST'}).then(function(r){var n=(r.movimientos||[]).length;toast(n?('Redistribuidas '+n+' tareas del más cargado al ocioso'):'Ya estaba balanceado, sin movimientos');loadAssignments();}).catch(function(e){toast(e.message);});
       });
@@ -1590,6 +1594,7 @@
     var q='operationId='+encodeURIComponent(op);
     api('/assignments/mode?'+q).then(function(m){$$("#asg-mode .segbtn").forEach(function(x){x.classList.toggle("on",x.getAttribute("data-asgm")===(m&&m.assignmentMode));});}).catch(function(){});
     api('/assignments/continuous?'+q).then(function(c){var cb=$("#asg-continuous");if(cb){var on=!!(c&&c.autoBalance);cb.setAttribute('data-on',on?'1':'0');cb.textContent='🔄 Continuo: '+(on?'on':'off');cb.classList.toggle('pri',on);}}).catch(function(){});
+    api('/assignments/self-pickup?'+q).then(function(c){var sp=$("#asg-selfpick");if(sp){var on=!!(c&&c.operatorSelfPickup);sp.setAttribute('data-on',on?'1':'0');sp.textContent='🧑‍🏭 Tomar tareas: '+(on?'on':'off');sp.classList.toggle('pri',on);}}).catch(function(){});
     Promise.all([
       api('/assignments/load?'+q).catch(function(){return {operarios:[],pendientesSinAsignar:{}};}),
       api('/assignments/pool?'+q+'&type='+asgType+'&limit=100').catch(function(){return [];})

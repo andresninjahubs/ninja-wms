@@ -26,6 +26,7 @@ model Operation {
   trialEndsAt DateTime?
   assignmentMode String? // 'advisory' | 'strict' (Camino B); null = advisory
   autoBalance Boolean  @default(false) // auto-balanceo continuo
+  operatorSelfPickup Boolean @default(false) // operarios pueden tomar tareas disponibles desde la app
   createdAt   DateTime  @default(now())
 
   packagingMaterials PackagingMaterial[] // FK PackagingMaterial → Operation (G8)

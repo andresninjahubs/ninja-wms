@@ -10,6 +10,9 @@
   var opId = null;            // operación del seller (para capturar productividad G4)
   var taskStartAt = null;     // inicio real de la tarea en curso (G4)
   var op = null;              // receive | putaway | pick | stock
+  var task = null;            // tarea de la bandeja en ejecución (contexto del flujo), o null en operación libre
+  var board = null;           // último tablero cargado
+  var boardTimer = null;
   var steps = [];             // secuencia de escaneos de la operación
   var stepIdx = 0;
   var captured = {};          // { product, resolved, bin, from, to, loc, maxBase }
@@ -46,8 +49,9 @@
 
   // ---- Navegación -----------------------------------------------------------
   function show(id) {
-    ['login', 'home', 'scan'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
+    ['login', 'home', 'scan', 'quick'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
     if (id !== 'scan') stopCamera();
+    if (id === 'home') { loadBoard(); if (!boardTimer) boardTimer = setInterval(function () { if ($('home').classList.contains('on') && !document.hidden) loadBoard(); }, 30000); }
   }
 
   function toast(msg, ok) {
@@ -59,7 +63,7 @@
   // ---- Login ----------------------------------------------------------------
   // Si la PWA se sirve desde el mismo origen que la API (caso túnel), usa ese origen.
   $('cfg-api').value = cfg.api || window.location.origin;
-  $('cfg-seller').value = cfg.seller || 'acme';
+  $('cfg-seller').value = cfg.seller || '';
   $('cfg-email').value = cfg.email || '';
 
   $('btn-login').addEventListener('click', function () {
@@ -67,7 +71,7 @@
     cfg.seller = $('cfg-seller').value.trim();
     cfg.email = $('cfg-email').value.trim();
     var pass = $('cfg-pass').value;
-    if (!cfg.api || !cfg.seller || !cfg.email || !pass) { toast('Completa servidor, cliente, email y contraseña', false); return; }
+    if (!cfg.api || !cfg.email || !pass) { toast('Completa servidor, email y contraseña', false); return; }
     save();
     api('/auth/login', { method: 'POST', body: { email: cfg.email, password: pass } })
       .then(function (r) {
@@ -75,8 +79,9 @@
         cfg.token = r.token; save();   // guarda el JWT firmado
         $('cfg-pass').value = '';
         user = r.user;
-        $('h-user').textContent = user.name + ' · ' + user.role;
-        $('h-seller').textContent = 'Cliente: ' + cfg.seller + '  ·  ' + cfg.api;
+        $('h-user').textContent = user.name;
+        $('h-seller').textContent = (cfg.seller ? 'Cliente: ' + cfg.seller + ' · ' : '') + 'Operario';
+        if (user.operationId) opId = user.operationId;
         loadLocations();
         loadPwaBranding();
         show('home');
@@ -102,7 +107,7 @@
   };
 
   Array.prototype.forEach.call(document.querySelectorAll('.op'), function (b) {
-    b.addEventListener('click', function () { startOp(b.getAttribute('data-op')); });
+    b.addEventListener('click', function () { task = null; if (!cfg.seller) { toast('Para operar libre indica el cliente en la pantalla de ingreso', false); return; } startOp(b.getAttribute('data-op')); });
   });
 
   function setLocs(rows) {
@@ -116,49 +121,164 @@
   // varios clientes/operaciones.
   function loadLocations() {
     ALL_LOCS = []; LOCS = []; LOC_BY_ID = {};
-    if (!cfg.seller) return;
+    var viaUser = function () {
+      if (user && user.operationId) {
+        opId = user.operationId;
+        api('/operations/' + encodeURIComponent(user.operationId) + '/locations').then(setLocs).catch(function () {});
+      }
+    };
+    if (!cfg.seller) { viaUser(); return; }
     api('/sellers/' + encodeURIComponent(cfg.seller))
       .then(function (s) {
         if (!s || !s.operationId) throw new Error('seller sin operación');
         opId = s.operationId; // G4: contexto para capturar productividad
-        loadMyTasks(); // Camino B: mis tareas asignadas
         return api('/operations/' + encodeURIComponent(s.operationId) + '/locations');
       })
       .then(setLocs)
-      .catch(function () {
-        // Respaldo: la operación del propio usuario (si la tiene).
-        if (user && user.operationId) {
-          opId = user.operationId;
-          api('/operations/' + encodeURIComponent(user.operationId) + '/locations').then(setLocs).catch(function () {});
-        }
-      });
+      .catch(viaUser);
   }
 
-  // Camino B: muestra las tareas asignadas al operario (guía; en modo advisory igual
-  // puede escanear libremente, en estricto el backend valida al ejecutar).
-  function loadMyTasks() {
-    if (!opId) return;
-    var wrap = document.getElementById('mytasks');
-    var list = document.getElementById('mytasks-list');
-    if (!wrap || !list) return;
-    api('/assignments/mine?operationId=' + encodeURIComponent(opId) + '&operator=' + encodeURIComponent((user && user.id) || cfg.email))
-      .then(function (tasks) {
-        if (!tasks || !tasks.length) { wrap.style.display = 'none'; return; }
-        var TL = { PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', PUTAWAY: 'Guardado', COUNT: 'Conteo', RECEIVE: 'Recepción', RESLOT: 'Re-slotting' };
-        // Orden de ejecución: la lista ya viene ordenada por el servidor (en curso primero,
-        // luego prioridad por courier/SLA/instrucciones/tipo). La primera es "Siguiente".
-        list.innerHTML = tasks.map(function (t, i) {
-          var next = !!t.next;
-          return '<div style="background:' + (next ? 'var(--acc-soft,#e6f7ef)' : 'var(--card,#fff)') + ';border:1px solid ' + (next ? 'var(--acc,#0E9F6E)' : 'var(--line,#e5e7eb)') + ';border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:14px;display:flex;gap:10px;align-items:center">'
-            + '<span style="min-width:26px;height:26px;border-radius:13px;background:' + (next ? 'var(--acc,#0E9F6E)' : '#e5e7eb') + ';color:' + (next ? '#fff' : '#555') + ';display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">' + (t.position || (i + 1)) + '</span>'
-            + '<div style="flex:1;min-width:0"><b>' + (TL[t.type] || t.type) + '</b> · ' + (t.entityRef || t.entityId) + ' <span style="color:#888">(' + t.unitsEstimate + ' un)</span>'
-            + (next ? '<div style="font-size:12px;color:var(--acc,#0E9F6E);font-weight:600">▶ Siguiente' + (t.priorityReason ? ' · ' + t.priorityReason : '') + '</div>' : (t.priorityReason ? '<div style="font-size:12px;color:#888">' + t.priorityReason + '</div>' : ''))
-            + '</div></div>';
-        }).join('');
-        wrap.style.display = '';
-      })
-      .catch(function () { wrap.style.display = 'none'; });
+  // ---- Bandeja de tareas (tablero del operario) ------------------------------
+  var TL = { PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', PUTAWAY: 'Guardado', COUNT: 'Conteo', RECEIVE: 'Recepción', RESLOT: 'Re-slotting' };
+  var TI = { PICK: '🛒', PACK: '📦', SHIP: '🚚', PUTAWAY: '⇄', COUNT: '🔢', RECEIVE: '📥', RESLOT: '↔' };
+  function opIdOrNull() { return opId || (user && user.operationId) || null; }
+  function loadBoard() {
+    var oid = opIdOrNull(); if (!oid || !user) return;
+    api('/assignments/board?operationId=' + encodeURIComponent(oid) + '&operator=' + encodeURIComponent(user.id))
+      .then(function (b) { board = b; renderBoard(); })
+      .catch(function (e) { toast('No pude cargar tus tareas: ' + e.message, false); });
   }
+  function taskTitle(t) { return (TI[t.type] || '•') + ' ' + (TL[t.type] || t.type); }
+  function renderBoard() {
+    if (!board) return;
+    var mine = board.mine || [], avail = board.available || [];
+    $('cnt-mine').textContent = mine.length;
+    $('cnt-available').textContent = avail.length;
+    $('tab-available').style.display = board.selfPickup ? '' : 'none';
+    // Siguiente
+    var nx = $('board-next'), ls = $('board-list'), em = $('board-empty');
+    if (!mine.length) { nx.innerHTML = ''; ls.innerHTML = ''; em.style.display = ''; return; }
+    em.style.display = 'none';
+    var n = mine[0];
+    nx.innerHTML = '<div class="next"><div class="lbl">' + (n.estado === 'in_progress' ? '▶ En curso' : '▶ Siguiente') + '</div>'
+      + '<div class="tt">' + taskTitle(n) + ' · <span class="ref">' + esc(n.entityRef || n.entityId) + '</span></div>'
+      + '<div class="meta">' + esc(n.cliente || '') + (n.unitsEstimate ? ' · ' + n.unitsEstimate + ' un' : '') + '</div>'
+      + (n.priorityReason ? '<div class="why">' + esc(n.priorityReason) + '</div>' : '')
+      + '<button class="btn" data-start="0">' + (n.estado === 'in_progress' ? 'Continuar' : 'Iniciar') + '</button></div>';
+    ls.innerHTML = mine.slice(1).map(function (t, i) {
+      return '<div class="task' + (t.estado === 'in_progress' ? ' running' : '') + '"><div class="num">' + (t.position || (i + 2)) + '</div>'
+        + '<div style="flex:1;min-width:0"><div class="tt"><span class="typechip ' + esc(t.type) + '">' + esc(TL[t.type] || t.type) + '</span><span class="ref">' + esc(t.entityRef || t.entityId) + '</span></div>'
+        + '<div class="meta">' + esc(t.cliente || '') + (t.unitsEstimate ? ' · ' + t.unitsEstimate + ' un' : '') + (t.estado === 'in_progress' ? ' · en curso' : '') + '</div>'
+        + (t.priorityReason ? '<div class="why">' + esc(t.priorityReason) + '</div>' : '') + '</div>'
+        + '<div class="act"><button data-start="' + (i + 1) + '">' + (t.estado === 'in_progress' ? 'Continuar' : 'Iniciar') + '</button></div></div>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('#pane-mine [data-start]'), function (b) {
+      b.addEventListener('click', function () { startAssigned(mine[parseInt(b.getAttribute('data-start'), 10)]); });
+    });
+    // Disponibles
+    var al = $('avail-list');
+    al.innerHTML = avail.length ? avail.map(function (t, i) {
+      return '<div class="task"><div class="num">' + (i + 1) + '</div>'
+        + '<div style="flex:1;min-width:0"><div class="tt"><span class="typechip ' + esc(t.type) + '">' + esc(TL[t.type] || t.type) + '</span><span class="ref">' + esc(t.entityRef || t.entityId) + '</span></div>'
+        + '<div class="meta">' + esc(t.cliente || '') + (t.unidades ? ' · ' + t.unidades + ' un' : '') + '</div><div class="why">' + esc(t.motivo || '') + '</div></div>'
+        + '<div class="act"><button data-take="' + i + '">Tomar</button></div></div>';
+    }).join('') : '<div class="card muted" style="text-align:center">No hay tareas disponibles ahora.</div>';
+    Array.prototype.forEach.call(al.querySelectorAll('[data-take]'), function (b) {
+      b.addEventListener('click', function () {
+        var t = avail[parseInt(b.getAttribute('data-take'), 10)]; b.disabled = true;
+        api('/assignments/take', { method: 'POST', body: { operationId: opIdOrNull(), type: t.type, entityId: t.entityId } })
+          .then(function () { toast('Tarea agregada a tu bandeja', true); switchTab('mine'); loadBoard(); })
+          .catch(function (e) { toast(e.message, false); b.disabled = false; });
+      });
+    });
+  }
+  function switchTab(name) {
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) { t.classList.toggle('on', t.getAttribute('data-tab') === name); });
+    ['mine', 'available', 'free'].forEach(function (k) { $('pane-' + k).classList.toggle('on', k === name); });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) { t.addEventListener('click', function () { switchTab(t.getAttribute('data-tab')); }); });
+  $('btn-refresh').addEventListener('click', function () { loadBoard(); toast('Actualizado', true); });
+
+  // Inicia una tarea de la bandeja: marca in_progress y abre el flujo correspondiente con contexto.
+  function startAssigned(t) {
+    if (!t) return;
+    api('/assignments/start', { method: 'POST', body: { operationId: opIdOrNull(), type: t.type, entityId: t.entityId } }).catch(function () {});
+    task = t;
+    if (t.sellerId) { cfg.seller = t.sellerId; save(); }
+    if (t.type === 'PICK') { startOp('pick'); loadTaskPicklist(); return; }
+    if (t.type === 'PUTAWAY' || t.type === 'RESLOT') {
+      // entityId = sellerId:sku:locationId → origen conocido; el operario escanea el producto y elige destino.
+      var parts = String(t.entityId).split(':');
+      var fromLoc = parts.length >= 3 ? LOC_BY_ID[parts[2]] : null;
+      startOp('putaway');
+      if (fromLoc) { captured.from = fromLoc.code; steps = ['product', 'to']; enterStep(); }
+      setTaskCtx('<b>' + esc(taskTitle(t)) + ' · ' + esc(t.entityRef || '') + '</b>' + (fromLoc ? 'Origen: <span class="code">' + esc(fromLoc.code) + '</span> · escanea el producto y elige el destino.' : 'Escanea el producto, luego origen y destino.'));
+      return;
+    }
+    if (t.type === 'RECEIVE') {
+      startOp('receive');
+      setTaskCtx('<b>' + esc(taskTitle(t)) + ' · ' + esc(t.entityRef || '') + '</b>Escanea cada producto de la recepción y la ubicación de recepción. El cotejo completo también puede hacerse desde el panel.');
+      return;
+    }
+    if (t.type === 'PACK' || t.type === 'SHIP') { openQuick(t); return; }
+    if (t.type === 'COUNT') { toast('Los conteos se registran desde el panel de conteo cíclico (o pide al supervisor que lo cierre).', false); return; }
+    startOp('pick');
+  }
+  function setTaskCtx(html) { var c = $('taskctx'); c.innerHTML = html; c.style.display = html ? '' : 'none'; }
+  // Lista de picking de la orden de la tarea (líneas, ubicación y avance).
+  function loadTaskPicklist() {
+    if (!task || task.type !== 'PICK') return;
+    setTaskCtx('<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>Cargando lista de picking…');
+    api('/sellers/' + encodeURIComponent(task.sellerId) + '/orders/' + encodeURIComponent(task.entityId) + '/picklist')
+      .then(function (lines) {
+        var html = '<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>Escanea cada producto y su ubicación:<div class="lines">'
+          + (lines || []).map(function (l) {
+            var loc = LOC_BY_ID[l.locationId]; var done = (l.pickedQty || 0) >= l.qty;
+            return '<div class="ln' + (done ? ' done' : '') + '"><span>' + esc(l.sku) + (l.lot ? ' · ' + esc(l.lot) : '') + '</span><span>' + esc(loc ? loc.code : l.locationId) + ' · ' + (l.pickedQty || 0) + '/' + l.qty + '</span></div>';
+          }).join('') + '</div>';
+        setTaskCtx(html);
+        if ((lines || []).length && lines.every(function (l) { return (l.pickedQty || 0) >= l.qty; })) toast('Esta orden ya está completamente pickeada', true);
+      })
+      .catch(function (e) { setTaskCtx('<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>' + esc(e.message)); });
+  }
+
+  // ---- Acción rápida: empacar / despachar (sin escaneo) ----------------------
+  function openQuick(t) {
+    task = t;
+    $('q-title').textContent = taskTitle(t);
+    $('q-sub').textContent = (t.entityRef || t.entityId) + (t.cliente ? ' · ' + t.cliente : '');
+    $('q-card').innerHTML = '<div class="kv"><span>Orden</span><b class="code">' + esc(t.entityRef || t.entityId) + '</b></div><div class="kv"><span>Unidades</span><b>' + (t.unitsEstimate || '—') + '</b></div>' + (t.priorityReason ? '<div class="kv"><span>Prioridad</span><b>' + esc(t.priorityReason) + '</b></div>' : '');
+    if (t.type === 'PACK') {
+      $('q-form').innerHTML = '<label for="q-bultos">Número de bultos</label><div class="qtybar"><button id="qb-minus">−</button><input id="q-bultos" type="number" inputmode="numeric" min="1" value="1"><button id="qb-plus">+</button></div>';
+      $('qb-plus').addEventListener('click', function () { $('q-bultos').value = (parseInt($('q-bultos').value, 10) || 0) + 1; });
+      $('qb-minus').addEventListener('click', function () { $('q-bultos').value = Math.max(1, (parseInt($('q-bultos').value, 10) || 1) - 1); });
+      $('btn-qconfirm').textContent = 'Confirmar empaque';
+    } else {
+      $('q-form').innerHTML = '<label for="q-carrier">Courier / transporte</label><input id="q-carrier" placeholder="Ej: Chilexpress"><div style="height:8px"></div><label for="q-track">N° de seguimiento (opcional)</label><input id="q-track" class="code" placeholder="Tracking">';
+      api('/sellers/' + encodeURIComponent(t.sellerId) + '/orders/' + encodeURIComponent(t.entityId)).then(function (o) { if (o && o.carrier && !$('q-carrier').value) $('q-carrier').value = o.carrier; if (o && o.packing && o.packing.trackingNumber && !$('q-track').value) $('q-track').value = o.packing.trackingNumber; }).catch(function () {});
+      $('btn-qconfirm').textContent = 'Confirmar despacho';
+    }
+    $('btn-qconfirm').disabled = false;
+    show('quick');
+  }
+  $('btn-qconfirm').addEventListener('click', function () {
+    if (!task) return;
+    var base = '/sellers/' + encodeURIComponent(task.sellerId) + '/orders/' + encodeURIComponent(task.entityId);
+    var call;
+    if (task.type === 'PACK') {
+      var b = parseInt($('q-bultos').value, 10); if (!(b > 0)) { toast('Indica los bultos', false); return; }
+      call = api(base + '/pack', { method: 'POST', body: { bultos: b, materials: [] } });
+    } else {
+      var carrier = $('q-carrier').value.trim(); if (!carrier) { toast('Indica el courier', false); return; }
+      var trk = $('q-track').value.trim();
+      call = api(base + '/ship', { method: 'POST', body: trk ? { carrier: carrier, trackingNumber: trk } : { carrier: carrier } });
+    }
+    $('btn-qconfirm').disabled = true;
+    call.then(function () { toast(task.type === 'PACK' ? 'Orden empacada' : 'Orden despachada', true); task = null; show('home'); })
+      .catch(function (e) { toast(e.message, false); $('btn-qconfirm').disabled = false; });
+  });
+  $('btn-qback').addEventListener('click', function () { task = null; show('home'); });
+  $('btn-qcancel').addEventListener('click', function () { task = null; show('home'); });
 
   function startOp(which) {
     op = which; steps = OP_META[op].steps.slice(); stepIdx = 0; captured = {};
@@ -171,6 +291,8 @@
     $('btn-confirm').style.display = 'none';
     $('result').style.display = 'none';
     $('manual').style.display = 'none';
+    $('after').style.display = 'none';
+    if (!task) setTaskCtx('');
     show('scan');
     enterStep();
     startCamera();
@@ -369,6 +491,12 @@
       call = api(base + '/scan/inbound', { method: 'POST', body: { barcode: captured.product, packCount: packCount, locationCode: captured.bin } });
     } else if (op === 'putaway') {
       call = api(base + '/scan/putaway', { method: 'POST', body: { productBarcode: captured.product, packCount: packCount, fromLocationCode: captured.from, toLocationCode: captured.to } });
+    } else if (task && task.type === 'PICK') {
+      // Picking de una TAREA: se registra contra la orden (avance por línea; la orden pasa a PICKED al completar).
+      var locObj = findLocByCode(captured.loc);
+      var baseQty = packCount * (captured.resolved ? captured.resolved.factor : 1);
+      call = api(base + '/orders/' + encodeURIComponent(task.entityId) + '/pick-task', { method: 'POST', body: { sku: captured.resolved.sku, locationId: locObj ? locObj.id : captured.loc, qty: baseQty } })
+        .then(function (o) { return { scan: { baseQty: baseQty, code: captured.resolved.code, sku: captured.resolved.sku }, order: o }; });
     } else {
       call = api(base + '/scan/pick', { method: 'POST', body: { productBarcode: captured.product, packCount: packCount, locationCode: captured.loc } });
     }
@@ -379,6 +507,9 @@
       $('res-sub').textContent = OP_META[op].title + ' de ' + r.scan.sku + ' confirmada (' + q + ' unidades base).';
       $('result').style.display = '';
       $('qtywrap').style.display = 'none'; $('btn-confirm').style.display = 'none';
+      $('after').style.display = 'flex';
+      if (task && task.type === 'PICK') { loadTaskPicklist(); if (r.order && r.order.status === 'PICKED') { $('res-sub').textContent += ' Orden completamente pickeada.'; $('btn-again').style.display = 'none'; } else $('btn-again').style.display = ''; }
+      else $('btn-again').style.display = task ? '' : 'none';
       toast(OP_META[op].title + ' registrada', true);
       // G4: captura de productividad con inicio/fin reales (best-effort, no bloquea).
       var LABOR_TYPE = { pick: 'PICK', putaway: 'PUTAWAY', receive: 'RECEIVE' };
@@ -448,7 +579,9 @@
     var code = $('m-code').value.trim(); if (code) onDetect(code); $('m-code').value = '';
   });
 
-  $('btn-back').addEventListener('click', function () { show('home'); });
+  $('btn-back').addEventListener('click', function () { task = null; show('home'); });
+  $('btn-again').addEventListener('click', function () { var t = task; startOp(op); if (t && t.type === 'PICK') loadTaskPicklist(); else if (t && (t.type === 'PUTAWAY' || t.type === 'RESLOT')) startAssigned(t); });
+  $('btn-finish').addEventListener('click', function () { task = null; show('home'); });
 
   // ---- Marca (white-label) de la operación ----------------------------------
   // La marca que configura el administrador (logo, nombre, color) se refleja aquí.
