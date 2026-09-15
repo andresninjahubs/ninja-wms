@@ -2541,7 +2541,14 @@
 
   function renderOrdFilters(){
     var states=["ALL","RECEIVED","ALLOCATED","PICKING","PICKED","PACKED","SHIPPED","CANCELLED"];
-    $("#ord-filters").innerHTML=states.map(function(s){return '<button class="fchip '+(ordFilter===s?"on":"")+'" data-f="'+s+'">'+(s==="ALL"?"Todas":STN[s])+'</button>';}).join("");
+    // Contador por estado: cuántas órdenes hay en cada etapa del ciclo de vida, para ver
+    // la carga de trabajo sin tener que abrir cada filtro. Se recalcula en cada refresco.
+    var counts={ALL:(D.ord||[]).length};
+    (D.ord||[]).forEach(function(o){counts[o.status]=(counts[o.status]||0)+1;});
+    $("#ord-filters").innerHTML=states.map(function(s){
+      var n=counts[s]||0;
+      return '<button class="fchip '+(ordFilter===s?"on":"")+(n?"":" zero")+'" data-f="'+s+'">'+(s==="ALL"?"Todas":STN[s])+'<span class="fcount">'+n+'</span></button>';
+    }).join("");
     $$("#ord-filters .fchip").forEach(function(b){b.addEventListener("click",function(){ordFilter=b.getAttribute("data-f");renderOrdFilters();renderOrders();});});
   }
   function renderInbFilters(){
