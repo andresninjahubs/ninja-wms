@@ -3799,6 +3799,41 @@ async function run() {
     assert.equal((await f.facade.agentInstructions('op1')).length, 1);
   });
 
+  await test('bandeja del operario: orden de ejecución por tipo, cola, SLA e instrucciones', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
+    await f.facade.createUser({ id: 'pedro', name: 'Pedro', email: 'p@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    const mk = async (ref: string, carrier: string) => { const o = await f.facade.createOrder('acme', { externalOrderId: ref, salesChannel: 'web', carrier, shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 1 }] }, 'ana'); await f.facade.allocateOrder('acme', o.id, 'ana'); return o; };
+    const o1 = await mk('STK-1', 'Starken');
+    f.clock.set('2026-01-01T00:01:00.000Z');
+    const o2 = await mk('CHX-1', 'Chilexpress');
+    // Se asignan en ese orden a Pedro: sin más información, STK-1 iría primero (asignada antes).
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o1.id, entityRef: 'STK-1', sellerId: 'acme', operator: 'pedro', unitsEstimate: 1, by: 'ana' });
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o2.id, entityRef: 'CHX-1', sellerId: 'acme', operator: 'pedro', unitsEstimate: 1, by: 'ana' });
+    let mine = await f.facade.getOperatorTasks('op1', 'pedro');
+    assert.deepEqual(mine.map((t) => t.entityRef), ['STK-1', 'CHX-1']);
+    assert.equal(mine[0].next, true); assert.equal(mine[0].position, 1);
+    // Instrucción del administrador: priorizar Chilexpress → CHX-1 pasa a ser la siguiente.
+    await f.facade.addAgentInstruction('op1', 'Hoy priorizar Chilexpress', 0, 'ana');
+    (f.facade as any).prioritiesAt.clear();
+    mine = await f.facade.getOperatorTasks('op1', 'pedro');
+    assert.deepEqual(mine.map((t) => t.entityRef), ['CHX-1', 'STK-1'], 'la instrucción reordena la bandeja');
+    assert.match(mine[0].priorityReason || '', /priorizar courier/);
+    // Un despacho pendiente va antes que cualquier picking (peso por tipo).
+    await f.facade.confirmPick('acme', o1.id, 'ana');
+    await f.facade.packOrder('acme', o1.id, { bultos: 1, materials: [] }, 'ana');
+    await f.facade.assignTask('op1', { type: 'SHIP', entityId: o1.id, entityRef: 'STK-1', sellerId: 'acme', operator: 'pedro', unitsEstimate: 1, by: 'ana' });
+    (f.facade as any).prioritiesAt.clear();
+    mine = await f.facade.getOperatorTasks('op1', 'pedro');
+    assert.equal(mine[0].type, 'SHIP', 'el despacho listo va primero');
+    const view = await f.facade.operatorActivities('op1', 'pedro');
+    assert.equal(view.tareas[0].tipo, 'SHIP'); assert.ok(view.tareas[0].motivo);
+  });
+
   // ---- Resumen --------------------------------------------------------------
   console.log(`\n${passed} pasaron, ${failures.length} fallaron\n`);
   if (failures.length > 0) process.exit(1);

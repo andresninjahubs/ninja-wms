@@ -1016,10 +1016,11 @@ export class PrismaWorkAssignmentRepository implements WorkAssignmentRepository 
       entityId: r.entityId, entityRef: r.entityRef ?? null, operator: r.operator, status: r.status as WorkAssignmentStatus,
       unitsEstimate: r.unitsEstimate, assignedBy: r.assignedBy, assignedAt: (r.assignedAt as Date).toISOString(),
       completedAt: r.completedAt ? (r.completedAt as Date).toISOString() : null, completedBy: r.completedBy ?? null, note: r.note ?? null,
+      priority: r.priority ?? 0, priorityReason: r.priorityReason ?? null,
     };
   }
   async save(a: WorkAssignment): Promise<void> {
-    const data = { ...a, assignedAt: new Date(a.assignedAt), completedAt: a.completedAt ? new Date(a.completedAt) : null };
+    const data = { ...a, assignedAt: new Date(a.assignedAt), completedAt: a.completedAt ? new Date(a.completedAt) : null, priority: a.priority ?? 0, priorityReason: a.priorityReason ?? null };
     await this.db.workAssignment.upsert({ where: { id: a.id }, create: data, update: data });
   }
   async get(id: string): Promise<WorkAssignment | null> {

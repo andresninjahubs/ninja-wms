@@ -1578,11 +1578,11 @@
       ].map(function(x){return '<div class="kpi"><div class="l">'+x.l+'</div><div class="v">'+x.v+'</div><div class="d">'+esc(x.dd)+'</div></div>';}).join('');
       $("#asg-op-sub").textContent=t.length+' actividad(es)';
       $("#asg-op-summary").textContent=(d.enEjecucion||0)+' en ejecución · '+(d.pendientes||0)+' pendientes';
-      $("#asg-op-body").innerHTML=t.length?t.map(function(a){
+      $("#asg-op-body").innerHTML=t.length?t.map(function(a,i){
         var run=a.estado==='in_progress';
-        var chip=run?'<span class="chip st-PICKING"><span class="dot"></span>En ejecución</span>':'<span class="chip st-ALLOCATED"><span class="dot"></span>Pendiente</span>';
-        return '<tr><td class="mono2">'+esc(a.referencia||'—')+'</td><td>'+esc(ASG_TYPE_LABEL[a.tipo]||a.tipo)+'</td><td>'+esc(a.cliente||'—')+'</td><td class="num">'+a.unidades+'</td><td>'+chip+'</td><td class="muted">'+esc(fmtDate(a.asignada))+'</td></tr>';
-      }).join(''):'<tr><td colspan="6" class="empty">Este operario no tiene actividades asignadas.</td></tr>';
+        var chip=run?'<span class="chip st-PICKING"><span class="dot"></span>En ejecución</span>':(i===0?'<span class="chip st-AVAILABLE"><span class="dot"></span>Siguiente</span>':'<span class="chip st-ALLOCATED"><span class="dot"></span>Pendiente</span>');
+        return '<tr><td class="num" style="font-weight:700">'+(i+1)+'</td><td class="mono2">'+esc(a.referencia||'—')+'</td><td>'+esc(ASG_TYPE_LABEL[a.tipo]||a.tipo)+'</td><td>'+esc(a.cliente||'—')+'</td><td class="num">'+a.unidades+'</td><td>'+chip+'</td><td class="muted">'+esc(a.motivo||'—')+'</td><td class="muted">'+esc(fmtDate(a.asignada))+'</td></tr>';
+      }).join(''):'<tr><td colspan="8" class="empty">Este operario no tiene actividades asignadas.</td></tr>';
     }).catch(function(){});
   }
   function loadAssignments(){

@@ -3205,6 +3205,7 @@ export class WmsFacade {
       assignedAt: this.clockNow(), completedAt: null, completedBy: null, note: input.note ?? null,
     };
     await this.assignments.save(a);
+    this.prioritiesAt.delete(operationId); // la bandeja se reordena en la próxima lectura
     // Ledger: vincula la asignación con la tarea abierta de esa etapa; si no existe
     // (ej. PUTAWAY/COUNT/RESLOT sin tarea pre-creada), la crea en estado 'assigned'.
     if (this.taskLedger) {
@@ -3593,6 +3594,8 @@ export class WmsFacade {
     const startedAt = this.clockNow();
     try {
       const barrido = await this.runAgentSweep(operationId, { autonomous: true });
+      // Orden de ejecución de las bandejas de los operarios (courier, SLA, instrucciones, tipo).
+      try { this.prioritiesAt.set(operationId, Date.now()); await this.recomputeAssignmentPriorities(operationId); } catch { /* best-effort */ }
       let llm: { ran: boolean; text?: string | null; actions?: number; error?: string | null } = { ran: false };
       if (settings.llmPlanning) llm = await this.agentLlmPlanning(operationId, settings);
       const notificadas = await this.notifyAgentAlerts(operationId, settings, startedAt);
@@ -3694,7 +3697,8 @@ export class WmsFacade {
    * asignaciones abiertas (autoritativas), enriquecidas con el estado real del ledger
    * (en ejecución vs. pendiente). "en ejecución" = la tarea del ledger arrancó (in_progress).
    */
-  async operatorActivities(operationId: string, operator: string): Promise<{ operario: string; tareas: Array<{ tipo: WorkTaskType; referencia: string | null; cliente: string | null; unidades: number; estado: 'in_progress' | 'assigned'; asignada: string }>; enEjecucion: number; pendientes: number; unidades: number }> {
+  async operatorActivities(operationId: string, operator: string): Promise<{ operario: string; tareas: Array<{ tipo: WorkTaskType; referencia: string | null; cliente: string | null; unidades: number; estado: 'in_progress' | 'assigned'; asignada: string; prioridad: number; motivo: string | null }>; enEjecucion: number; pendientes: number; unidades: number }> {
+    await this.ensureAssignmentPriorities(operationId);
     const asgs = this.assignments ? await this.assignments.listByOperator(operationId, operator) : [];
     const ledger = this.taskLedger ? await this.taskLedger.list(operationId, { limit: 2000 }) : [];
     const stateOf = new Map<string, string>();
@@ -3702,8 +3706,8 @@ export class WmsFacade {
     const tareas = asgs.map((a) => ({
       tipo: a.type, referencia: a.entityRef, cliente: a.sellerId, unidades: a.unitsEstimate,
       estado: (stateOf.get(`${a.type}:${a.entityId}`) === 'in_progress' ? 'in_progress' : 'assigned') as 'in_progress' | 'assigned',
-      asignada: a.assignedAt,
-    })).sort((x, y) => (x.estado === y.estado ? 0 : (x.estado === 'in_progress' ? -1 : 1)));
+      asignada: a.assignedAt, prioridad: a.priority ?? 0, motivo: a.priorityReason ?? null,
+    })).sort((x, y) => (x.estado !== y.estado ? (x.estado === 'in_progress' ? -1 : 1) : (x.prioridad - y.prioridad) || (x.asignada < y.asignada ? -1 : 1)));
     return {
       operario: operator, tareas,
       enEjecucion: tareas.filter((t) => t.estado === 'in_progress').length,
@@ -3712,10 +3716,96 @@ export class WmsFacade {
     };
   }
 
-  /** Tareas asignadas a un operario (la vista "Mis tareas" de la PWA). */
-  async getOperatorTasks(operationId: string, operator: string): Promise<WorkAssignment[]> {
+  /**
+   * Tareas asignadas a un operario (la vista "Mis tareas" de la PWA), en ORDEN DE EJECUCIÓN:
+   * primero lo que está en curso, luego por prioridad calculada (courier/SLA/instrucciones/tipo)
+   * y, a igual prioridad, lo asignado antes. La primera lleva `next`.
+   */
+  async getOperatorTasks(operationId: string, operator: string): Promise<Array<WorkAssignment & { next?: boolean; position?: number }>> {
     if (!this.assignments) return [];
-    return this.assignments.listByOperator(operationId, operator);
+    await this.ensureAssignmentPriorities(operationId);
+    const list = await this.assignments.listByOperator(operationId, operator);
+    const ledger = this.taskLedger ? await this.taskLedger.list(operationId, { limit: 2000 }) : [];
+    const running = new Set(ledger.filter((t) => t.state === 'in_progress').map((t) => `${t.type}:${t.entityId}`));
+    const sorted = [...list].sort((a, b) => {
+      const ra = running.has(`${a.type}:${a.entityId}`) ? 0 : 1, rb = running.has(`${b.type}:${b.entityId}`) ? 0 : 1;
+      if (ra !== rb) return ra - rb;
+      const pa = a.priority ?? 0, pb = b.priority ?? 0;
+      if (pa !== pb) return pa - pb;
+      return a.assignedAt < b.assignedAt ? -1 : 1;
+    });
+    return sorted.map((a, i) => ({ ...a, priority: a.priority ?? 0, priorityReason: a.priorityReason ?? null, position: i + 1, next: i === 0 }));
+  }
+
+  private prioritiesAt = new Map<string, number>();
+  /** Recalcula las prioridades si llevan más de 60 s sin actualizarse (barato: se llama desde la PWA). */
+  private async ensureAssignmentPriorities(operationId: string): Promise<void> {
+    const now = Date.now();
+    if ((this.prioritiesAt.get(operationId) || 0) > now - 60000) return;
+    this.prioritiesAt.set(operationId, now);
+    try { await this.recomputeAssignmentPriorities(operationId); } catch { /* best-effort */ }
+  }
+
+  /**
+   * Orden de ejecución de las tareas asignadas (Fase 3 adelantada). Para cada asignación abierta:
+   *   prioridad = peso del tipo (despacho < empaque < picking < recepción < guardado < conteo < re-slot)
+   *             × 1000 + posición dentro de su cola (cola de picking = courier + FIFO; guardado = llegada;
+   *             recepciones parciales primero; conteos por prioridad del plan)
+   *   − impulsos: orden con prioridad "alta" (−300), courier nombrado en una instrucción vigente
+   *     del administrador ("priorizar Chilexpress") (−500), pedido empacado hace +N h (SLA) (−200).
+   * Devuelve cuántas asignaciones cambiaron de prioridad. Lo llama el ciclo del agente y la PWA.
+   */
+  async recomputeAssignmentPriorities(operationId: string): Promise<{ recalculadas: number; cambiadas: number }> {
+    if (!this.assignments) return { recalculadas: 0, cambiadas: 0 };
+    const open = (await this.assignments.list(operationId, { limit: 5000 })).filter((a) => a.status === 'assigned' || a.status === 'in_progress');
+    if (!open.length) return { recalculadas: 0, cambiadas: 0 };
+    const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, COUNT: 6, RESLOT: 7 };
+    // Posición dentro de la cola de cada tipo (normalizada a 1..n).
+    const rank = new Map<string, number>();
+    const types = [...new Set(open.map((a) => a.type))];
+    for (const t of types) {
+      const pool = await this.getTaskPool(operationId, t, { limit: 5000 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
+      pool.forEach((p, i) => rank.set(`${t}:${p.entityId}`, i + 1));
+    }
+    // Instrucciones vigentes: couriers o clientes a priorizar.
+    const boostsCourier: string[] = []; const boostsSeller: string[] = [];
+    try {
+      const ins = this.agentJournal ? await this.agentJournal.listInstructions(operationId, this.clockNow()) : [];
+      const sellers = await this.listSellers(operationId);
+      for (const i of ins) {
+        const t = i.text.toLowerCase();
+        if (!/priori/.test(t)) continue;
+        for (const c of ['chilexpress', 'starken', 'blue express', 'blueexpress', 'correos', 'dhl', 'rapiboy', 'uber', 'samex', 'fedex', 'ups']) if (t.includes(c)) boostsCourier.push(c.replace(' ', ''));
+        for (const sl of sellers) if (t.includes(sl.name.toLowerCase())) boostsSeller.push(sl.id);
+      }
+    } catch { /* sin instrucciones */ }
+    const nowMs = Date.parse(this.clockNow());
+    let cambiadas = 0;
+    const orderCache = new Map<string, SalesOrder | null>();
+    for (const a of open) {
+      const w = TYPE_W[a.type] ?? 8;
+      const r = rank.get(`${a.type}:${a.entityId}`) ?? 999;
+      let prio = w * 1000 + Math.min(r, 999);
+      const why: string[] = [];
+      if (a.type === 'PICK' || a.type === 'PACK' || a.type === 'SHIP') {
+        let o = orderCache.get(a.entityId);
+        if (o === undefined) { o = a.sellerId ? await this.orders.getOrder(a.sellerId, a.entityId).catch(() => null) : null; orderCache.set(a.entityId, o ?? null); }
+        if (o) {
+          const carrier = (o.carrier || '').toLowerCase().replace(' ', '');
+          if (carrier) why.push(o.carrier as string);
+          if (carrier && boostsCourier.some((c) => carrier.includes(c))) { prio -= 500; why.push('instrucción: priorizar courier'); }
+          if (o.priority === 'alta') { prio -= 300; why.push('prioridad alta'); }
+          if (o.status === 'PACKED') { const ev = (o.events || []).find((e) => e.type === 'PACKED'); const h = ev ? (nowMs - Date.parse(ev.at)) / 3600000 : 0; if (h >= 6) { prio -= 200; why.push(`empacada hace ${Math.round(h)} h`); } }
+        }
+      }
+      if (a.sellerId && boostsSeller.includes(a.sellerId)) { prio -= 400; why.push('instrucción: priorizar cliente'); }
+      const reason = why.length ? why.join(' · ') : ({ SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: `cola de picking #${r}`, RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' } as Record<string, string>)[a.type] || a.type;
+      if (a.priority !== prio || a.priorityReason !== reason) {
+        await this.assignments.save({ ...a, priority: prio, priorityReason: reason });
+        cambiadas++;
+      }
+    }
+    return { recalculadas: open.length, cambiadas };
   }
 
   /** Historial de asignaciones (panel/auditoría). */

@@ -47,6 +47,8 @@ model WorkAssignment {
   completedAt   DateTime?
   completedBy   String?
   note          String?
+  priority      Int       @default(0) // orden de ejecución en la bandeja del operario (menor = antes)
+  priorityReason String?
 
   @@index([operationId, status])
   @@index([operationId, operator, status])

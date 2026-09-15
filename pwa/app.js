@@ -145,8 +145,15 @@
       .then(function (tasks) {
         if (!tasks || !tasks.length) { wrap.style.display = 'none'; return; }
         var TL = { PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', PUTAWAY: 'Guardado', COUNT: 'Conteo', RECEIVE: 'Recepción', RESLOT: 'Re-slotting' };
-        list.innerHTML = tasks.map(function (t) {
-          return '<div style="background:var(--card,#fff);border:1px solid var(--line,#e5e7eb);border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:14px"><b>' + (TL[t.type] || t.type) + '</b> · ' + (t.entityRef || t.entityId) + ' <span style="color:#888">(' + t.unitsEstimate + ' un)</span></div>';
+        // Orden de ejecución: la lista ya viene ordenada por el servidor (en curso primero,
+        // luego prioridad por courier/SLA/instrucciones/tipo). La primera es "Siguiente".
+        list.innerHTML = tasks.map(function (t, i) {
+          var next = !!t.next;
+          return '<div style="background:' + (next ? 'var(--acc-soft,#e6f7ef)' : 'var(--card,#fff)') + ';border:1px solid ' + (next ? 'var(--acc,#0E9F6E)' : 'var(--line,#e5e7eb)') + ';border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:14px;display:flex;gap:10px;align-items:center">'
+            + '<span style="min-width:26px;height:26px;border-radius:13px;background:' + (next ? 'var(--acc,#0E9F6E)' : '#e5e7eb') + ';color:' + (next ? '#fff' : '#555') + ';display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">' + (t.position || (i + 1)) + '</span>'
+            + '<div style="flex:1;min-width:0"><b>' + (TL[t.type] || t.type) + '</b> · ' + (t.entityRef || t.entityId) + ' <span style="color:#888">(' + t.unitsEstimate + ' un)</span>'
+            + (next ? '<div style="font-size:12px;color:var(--acc,#0E9F6E);font-weight:600">▶ Siguiente' + (t.priorityReason ? ' · ' + t.priorityReason : '') + '</div>' : (t.priorityReason ? '<div style="font-size:12px;color:#888">' + t.priorityReason + '</div>' : ''))
+            + '</div></div>';
         }).join('');
         wrap.style.display = '';
       })

@@ -1063,6 +1063,10 @@ export interface WorkAssignment {
   completedAt: string | null;
   completedBy: string | null;
   note: string | null;
+  /** Orden de ejecución en la bandeja del operario (menor = antes). Lo recalcula el sistema. */
+  priority?: number;
+  /** Explicación corta de por qué va en esa posición (courier, SLA, instrucción, tipo). */
+  priorityReason?: string | null;
 }
 
 // ---- Registro de tareas (task ledger) -----------------------------------------
