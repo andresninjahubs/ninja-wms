@@ -473,7 +473,7 @@
   // Cada sección operativa se vuelve a cargar sola mientras esté visible. Se pausa si la
   // pestaña está en segundo plano, si hay un formulario/panel abierto o un tutorial corriendo.
   // El Dashboard recarga la operación completa (stock por zona + kardex + datos del cliente).
-  var LIVE_PAGES={dashboard:30000,multicliente:30000,inventory:30000,inbound:20000,returns:30000,putaway:20000,movements:30000,counts:60000,reports:60000,locations:60000,products:60000,assembly:60000,packaging:60000,billing:60000};
+  var LIVE_PAGES={agente:20000,dashboard:30000,multicliente:30000,inventory:30000,inbound:20000,returns:30000,putaway:20000,movements:30000,counts:60000,reports:60000,locations:60000,products:60000,assembly:60000,packaging:60000,billing:60000};
   var liveLast=Date.now(), liveBusy=false;
   function activePg(){ if(mcMode)return 'multicliente'; var p=document.querySelector('.page.on'); return p?p.getAttribute('data-pg'):null; }
   function liveRefresh(force){
@@ -486,7 +486,7 @@
       if(document.activeElement&&/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)&&document.activeElement.closest('.content'))return Promise.resolve();
     }
     liveBusy=true; paintLive();
-    var p= pg==='multicliente' ? Promise.resolve(renderMultiCliente()) : (pg==='dashboard'||pg==='locations') ? loadOp() : loadSeller();
+    var p= pg==='agente' ? Promise.resolve(renderAgente()) : pg==='multicliente' ? Promise.resolve(renderMultiCliente()) : (pg==='dashboard'||pg==='locations') ? loadOp() : loadSeller();
     if(pg==='billing'&&typeof renderBilling==='function')p=Promise.resolve(p).then(function(){renderBilling();});
     return Promise.resolve(p).catch(function(){}).then(function(){ liveBusy=false; liveLast=Date.now(); paintLive(); });
   }
