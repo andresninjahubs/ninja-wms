@@ -137,6 +137,8 @@ export interface CreateLocationInput {
   y?: number | null;
 }
 
+const REPOSICION_CODE = 'DEV-REPOSICION';
+
 export class WmsFacade {
   constructor(
     private readonly inventory: InventoryService,
@@ -1494,7 +1496,7 @@ export class WmsFacade {
     // Tareas sin asignar por tipo (con refs) y carga de operarios.
     try {
       const parts: string[] = [];
-      for (const t of ['PICK', 'PUTAWAY', 'RECEIVE', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
+      for (const t of ['PICK', 'PUTAWAY', 'RESTOCK', 'RECEIVE', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
         const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: 200 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
         const mine = sellerId ? pool.filter((x) => x.sellerId === sellerId) : pool;
         counters[`sinAsignar_${t}`] = mine.length;
@@ -2174,6 +2176,7 @@ export class WmsFacade {
     // Camino B: cierra la asignación de guardado o de re-slotting (según origen).
     await this.completeAssignments('PUTAWAY', [`${sellerId}:${scan.sku}:${from.id}`], input.actor || 'system');
     await this.completeAssignments('RESLOT', [`${sellerId}:${scan.sku}:${from.id}`], input.actor || 'system');
+    await this.completeAssignments('RESTOCK', [`${sellerId}:${scan.sku}:${from.id}`], input.actor || 'system');
     await this.continuousHook(opId, 'PUTAWAY', null); await this.continuousHook(opId, 'RESLOT', null);
     return { scan, movements };
   }
@@ -3082,7 +3085,9 @@ export class WmsFacade {
       }
     } else if (type === 'PUTAWAY') {
       const locs = await this.locations.listByOperation(operationId);
-      const recv = new Map(locs.filter((l) => l.zoneType === ZoneType.RECEIVING).map((l) => [l.id, l.code] as [string, string]));
+      // La ubicación de reposición también está en zona de recepción, pero su trabajo es
+      // OTRO (devolver a su sitio lo que volvió de una cancelación): va en su propio pool.
+      const recv = new Map(locs.filter((l) => l.zoneType === ZoneType.RECEIVING && l.code !== REPOSICION_CODE).map((l) => [l.id, l.code] as [string, string]));
       for (const sid of sellers) {
         const bal = await this.inventory.getStock({ sellerId: sid });
         const byKey = new Map<string, { sku: string; loc: string; qty: number }>();
@@ -3096,6 +3101,36 @@ export class WmsFacade {
         for (const e of byKey.values()) {
           const entityId = `${sid}:${e.sku}:${e.loc}`;
           out.push({ type, entityId, entityRef: `${e.sku} @ ${recv.get(e.loc)}`, sellerId: sid, unidades: e.qty, prioridad: pr++, asignadoA: assigneeOf.get(entityId) ?? null });
+        }
+      }
+    } else if (type === 'RESTOCK') {
+      // Mercadería que volvió de una orden cancelada y espera volver a su ubicación.
+      // El destino sugerido sale de la referencia del movimiento (|FROM:<ubicación>).
+      const locs = await this.locations.listByOperation(operationId);
+      const repo = locs.find((l) => l.code === REPOSICION_CODE);
+      if (repo) {
+        const codeById = new Map(locs.map((l) => [l.id, l.code] as [string, string]));
+        for (const sid of sellers) {
+          const bal = await this.inventory.getStock({ sellerId: sid, locationId: repo.id });
+          const pend = new Map<string, number>();
+          for (const b of bal) {
+            if (b.qty <= 0 || b.state !== StockState.AVAILABLE) continue;
+            pend.set(b.sku, (pend.get(b.sku) || 0) + b.qty);
+          }
+          if (!pend.size) continue;
+          const sugerido = await this.restockSuggestions(sid, repo.id);
+          let pr = 1;
+          for (const [sku, qty] of pend.entries()) {
+            const entityId = `${sid}:${sku}:${repo.id}`;
+            const destino = sugerido.get(sku) || null;
+            out.push({
+              type, entityId,
+              entityRef: `${sku} → ${destino ? (codeById.get(destino) || destino) : 'ubicación por definir'}`,
+              sellerId: sid, unidades: qty, prioridad: pr++,
+              asignadoA: assigneeOf.get(entityId) ?? null,
+              note: destino,
+            });
+          }
         }
       }
     } else if (type === 'COUNT') {
@@ -3291,7 +3326,7 @@ export class WmsFacade {
       return { operario: op.id, nombre: op.name, velocidadUH: op.speed, tareasAbiertas: list.length, unidades, horasEstimadas: op.speed > 0 ? Math.round((unidades / op.speed) * 10) / 10 : null, porTipo };
     }).sort((a, b) => (b.horasEstimadas || 0) - (a.horasEstimadas || 0));
     const pendientesSinAsignar: Record<string, number> = {};
-    for (const t of ['PICK', 'PUTAWAY', 'PACK', 'SHIP', 'COUNT', 'RECEIVE', 'RESLOT'] as WorkTaskType[]) pendientesSinAsignar[t] = (await this.getTaskPool(operationId, t, { onlyUnassigned: true })).length;
+    for (const t of ['PICK', 'PUTAWAY', 'RESTOCK', 'PACK', 'SHIP', 'COUNT', 'RECEIVE', 'RESLOT'] as WorkTaskType[]) pendientesSinAsignar[t] = (await this.getTaskPool(operationId, t, { onlyUnassigned: true })).length;
     return { operarios, pendientesSinAsignar };
   }
 
@@ -3759,8 +3794,8 @@ export class WmsFacade {
     const mineOut = mine.map((a) => ({ ...a, estado: (running.has(`${a.type}:${a.entityId}`) ? 'in_progress' : 'assigned') as 'in_progress' | 'assigned', cliente: a.sellerId ? sname.get(a.sellerId) || a.sellerId : null }));
     const available: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; cliente: string | null; unidades: number; prioridad: number; motivo: string }> = [];
     if (selfPickup) {
-      const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, COUNT: 6, RESLOT: 7 };
-      const LABEL: Record<string, string> = { SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: 'cola de picking', RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' };
+      const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, RESTOCK: 6, COUNT: 7, RESLOT: 8 };
+      const LABEL: Record<string, string> = { SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: 'cola de picking', RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', RESTOCK: 'devolver a su ubicación', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' };
       for (const t of ['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
         const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: 30 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
         pool.forEach((p, i) => available.push({ type: t, entityId: p.entityId, entityRef: p.entityRef, sellerId: p.sellerId, cliente: sname.get(p.sellerId) || p.sellerId, unidades: p.unidades, prioridad: (TYPE_W[t] ?? 8) * 1000 + i + 1, motivo: `${LABEL[t]} #${i + 1}` }));
@@ -3781,7 +3816,7 @@ export class WmsFacade {
     const pool = await this.getTaskPool(operationId, input.type, { limit: 5000 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
     const item = pool.find((p) => p.entityId === input.entityId);
     if (!item) throw new NotFoundError('La tarea ya no está disponible.');
-    const a = await this.assignTask(operationId, { type: input.type, entityId: item.entityId, entityRef: item.entityRef, sellerId: item.sellerId, operator, unitsEstimate: item.unidades, by: operator, note: 'tomada desde la app', skipOperatorCheck: true });
+    const a = await this.assignTask(operationId, { type: input.type, entityId: item.entityId, entityRef: item.entityRef, sellerId: item.sellerId, operator, unitsEstimate: item.unidades, by: operator, note: (item as any).note || 'tomada desde la app', skipOperatorCheck: true });
     return a;
   }
   /** El operario INICIA una tarea de su bandeja: pasa a in_progress en el ledger (y en la asignación). */
@@ -3805,7 +3840,7 @@ export class WmsFacade {
 
   /**
    * Orden de ejecución de las tareas asignadas (Fase 3 adelantada). Para cada asignación abierta:
-   *   prioridad = peso del tipo (despacho < empaque < picking < recepción < guardado < conteo < re-slot)
+   *   prioridad = peso del tipo (despacho < empaque < picking < recepción < guardado < reposición < conteo < re-slot)
    *             × 1000 + posición dentro de su cola (cola de picking = courier + FIFO; guardado = llegada;
    *             recepciones parciales primero; conteos por prioridad del plan)
    *   − impulsos: orden con prioridad "alta" (−300), courier nombrado en una instrucción vigente
@@ -3856,7 +3891,7 @@ export class WmsFacade {
         }
       }
       if (a.sellerId && boostsSeller.includes(a.sellerId)) { prio -= 400; why.push('instrucción: priorizar cliente'); }
-      const reason = why.length ? why.join(' · ') : ({ SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: `cola de picking #${r}`, RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' } as Record<string, string>)[a.type] || a.type;
+      const reason = why.length ? why.join(' · ') : ({ SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: `cola de picking #${r}`, RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', RESTOCK: 'devolver a su ubicación', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' } as Record<string, string>)[a.type] || a.type;
       if (a.priority !== prio || a.priorityReason !== reason) {
         await this.assignments.save({ ...a, priority: prio, priorityReason: reason });
         cambiadas++;
@@ -3871,6 +3906,26 @@ export class WmsFacade {
     return this.assignments.list(operationId, opts);
   }
 
+  /**
+   * Para el stock que espera reposición, de qué ubicación salió cada SKU. Se lee de la
+   * referencia del movimiento de devolución (`CANCEL:<orden>|FROM:<ubicación>`), que es
+   * donde la cancelación dejó anotado el origen. Si hay varias, gana la más reciente.
+   */
+  private async restockSuggestions(sellerId: string, repoLocationId: string): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    try {
+      const movs = await this.inventory.listMovements(sellerId, 5000);
+      const ordenados = movs.filter((m) => m.locationId === repoLocationId).slice().sort((a, b) => (a.occurredAt < b.occurredAt ? -1 : 1));
+      for (const m of ordenados) {
+        const ref = String(m.reference || '');
+        const i = ref.indexOf('|FROM:');
+        if (i < 0 || m.qtyDelta <= 0) continue;
+        out.set(m.sku, ref.slice(i + 6));
+      }
+    } catch { /* best-effort: sin sugerencia */ }
+    return out;
+  }
+
   /** Marca como completadas las asignaciones abiertas de estas tareas (hook de ejecución). */
   private async completeAssignments(type: WorkTaskType, entityIds: string[], completedBy: string): Promise<void> {
     if (!this.assignments) return;
@@ -3882,7 +3937,7 @@ export class WmsFacade {
         }
         // Ledger: para tareas de bodega no ligadas a orden (guardado/conteo/re-slotting),
         // cerrar la tarea aquí. Las de orden (PICK/PACK/SHIP/RECEIVE) las cierra su hook.
-        if ((type === 'PUTAWAY' || type === 'COUNT' || type === 'RESLOT') && a) {
+        if ((type === 'PUTAWAY' || type === 'COUNT' || type === 'RESLOT' || type === 'RESTOCK') && a) {
           await this.advanceTask(a.operationId, type as WorkTaskStage, entityId, { state: 'done', by: completedBy });
         }
       } catch { /* best-effort */ }
@@ -3973,7 +4028,7 @@ export class WmsFacade {
   async setAutoBalanceContinuous(operationId: string, on: boolean): Promise<{ autoBalance: boolean; asignadasInicial: number }> {
     await this.operationsService.setAutoBalance(operationId, on);
     let asignadasInicial = 0;
-    if (on) for (const t of ['PICK', 'RECEIVE', 'PUTAWAY', 'RESLOT', 'COUNT'] as WorkTaskType[]) asignadasInicial += await this.rebalancePending(operationId, t);
+    if (on) for (const t of ['PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'RESLOT', 'COUNT'] as WorkTaskType[]) asignadasInicial += await this.rebalancePending(operationId, t);
     return { autoBalance: on, asignadasInicial };
   }
 
@@ -4388,7 +4443,7 @@ export class WmsFacade {
     if (opId) { await this.assertAssignmentAllowed(opId, 'PUTAWAY', entityId, cmd.actor || 'system'); await this.assertAssignmentAllowed(opId, 'RESLOT', entityId, cmd.actor || 'system'); }
     const movs = await this.inventory.putaway(sellerId, cmd);
     // Un guardado desde recepción cierra PUTAWAY; un movimiento entre almacenaje cierra RESLOT.
-    if (opId) { await this.completeAssignments('PUTAWAY', [entityId], cmd.actor || 'system'); await this.completeAssignments('RESLOT', [entityId], cmd.actor || 'system'); await this.continuousHook(opId, 'PUTAWAY', null); await this.continuousHook(opId, 'RESLOT', null); }
+    if (opId) { await this.completeAssignments('PUTAWAY', [entityId], cmd.actor || 'system'); await this.completeAssignments('RESLOT', [entityId], cmd.actor || 'system'); await this.completeAssignments('RESTOCK', [entityId], cmd.actor || 'system'); await this.continuousHook(opId, 'PUTAWAY', null); await this.continuousHook(opId, 'RESLOT', null); await this.continuousHook(opId, 'RESTOCK', null); }
     return movs;
   }
 
@@ -4650,8 +4705,25 @@ export class WmsFacade {
   }
 
   /** Edita una orden aún en estado RECEIVED (antes de reservar stock). */
-  updateOrder(sellerId: string, orderId: string, input: CreateOrderInput, actor?: string): Promise<SalesOrder> {
-    return this.orders.updateOrder(sellerId, orderId, input, actor);
+  async updateOrder(sellerId: string, orderId: string, input: CreateOrderInput, actor?: string): Promise<SalesOrder> {
+    const order = await this.orders.updateOrder(sellerId, orderId, input, actor);
+    // Si la orden ya estaba asignada a un operario, su estimación de trabajo cambió
+    // con las líneas nuevas: se actualiza para que el balanceo no use un número viejo.
+    const opId = await this.operationOfSeller(sellerId).catch(() => null);
+    if (opId && this.assignments) {
+      try {
+        const a = await this.assignments.get(`PICK:${orderId}`);
+        if (a && (a.status === 'assigned' || a.status === 'in_progress')) {
+          const units = (order.lines || []).reduce((t, l) => t + l.qty, 0);
+          if (units !== a.unitsEstimate) {
+            await this.assignments.save({ ...a, unitsEstimate: units });
+            this.prioritiesAt.delete(opId);
+          }
+        }
+      } catch { /* best-effort */ }
+    }
+    this.fireOrderWebhook(sellerId, order); // order.updated
+    return order;
   }
 
   /**
@@ -4739,7 +4811,7 @@ export class WmsFacade {
     reservadas: number;
     conError: number;
     reserved: { id: string; orden: string; unidades: number }[];
-    failed: { id: string; orden: string; motivo: string }[];
+    failed: { id: string; orden: string; motivo: string; faltantes?: unknown }[];
   }> {
     const all = await this.orders.listOrders(sellerId);
     let targets: SalesOrder[];
@@ -4751,7 +4823,7 @@ export class WmsFacade {
       targets = all.filter((o) => o.status === OrderStatus.RECEIVED);
     }
     const reserved: { id: string; orden: string; unidades: number }[] = [];
-    const failed: { id: string; orden: string; motivo: string }[] = [];
+    const failed: { id: string; orden: string; motivo: string; faltantes?: unknown }[] = [];
     for (const o of targets) {
       const label = o.externalOrderId || o.id;
       if (o.status !== OrderStatus.RECEIVED) {
@@ -4763,7 +4835,8 @@ export class WmsFacade {
         const units = (done.lines || []).reduce((a, l) => a + (l.qty || 0), 0);
         reserved.push({ id: o.id, orden: label, unidades: units });
       } catch (e) {
-        failed.push({ id: o.id, orden: label, motivo: (e as Error).message });
+        // Se conserva el detalle de los productos que faltan para poder mostrarlo por orden.
+        failed.push({ id: o.id, orden: label, motivo: (e as Error).message, faltantes: (e as any)?.faltantes ?? null });
       }
     }
     return {
@@ -4778,7 +4851,45 @@ export class WmsFacade {
   async cancelOrder(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
     const order = await this.orders.cancel(sellerId, orderId, actor);
     this.fireOrderWebhook(sellerId, order); // order.cancelled
+    // La orden dejó de ser trabajo: su tarea sale de la bandeja del operario y del ledger.
+    // Sin esto, cancelar una orden EN PICKING dejaría al operario con una tarea fantasma.
+    const opId = await this.operationOfSeller(sellerId).catch(() => null);
+    if (opId) {
+      await this.cancelWork(opId, orderId, { by: actor || 'system', reason: `orden ${order.externalOrderId || order.id} cancelada` });
+      await this.continuousHook(opId, 'PICK', null);
+    }
     return order;
+  }
+
+  /**
+   * Cierra TODO el trabajo abierto de una entidad que dejó de ser ejecutable. La
+   * asignación se marca 'released' (el trabajo no se hizo) y la tarea del ledger
+   * 'cancelled'. Sin esto la tarea seguiría en "Mis tareas" y contando como carga.
+   */
+  private async cancelWork(
+    operationId: string | null,
+    entityId: string,
+    opts: { types?: WorkTaskType[]; by?: string; reason?: string } = {},
+  ): Promise<{ liberadas: number }> {
+    if (!operationId) return { liberadas: 0 };
+    const types = opts.types ?? (['PICK', 'PACK', 'SHIP', 'RECEIVE', 'COUNT', 'PUTAWAY', 'RESLOT'] as WorkTaskType[]);
+    const by = opts.by ?? 'system';
+    const reason = opts.reason ?? 'la entidad se canceló';
+    let liberadas = 0;
+    for (const type of types) {
+      try {
+        if (this.assignments) {
+          const a = await this.assignments.get(`${type}:${entityId}`);
+          if (a && a.operationId === operationId && (a.status === 'assigned' || a.status === 'in_progress')) {
+            await this.assignments.save({ ...a, status: 'released', completedAt: this.clockNow(), completedBy: by, note: reason });
+            liberadas += 1;
+          }
+        }
+        await this.advanceTask(operationId, type as WorkTaskStage, entityId, { state: 'cancelled', by });
+      } catch { /* best-effort */ }
+    }
+    if (liberadas) this.prioritiesAt.delete(operationId);
+    return { liberadas };
   }
   async reactivateOrder(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
     const order = await this.orders.reactivate(sellerId, orderId, actor);
@@ -5019,7 +5130,8 @@ export class WmsFacade {
     for (const g of audit.groups) {
       const [, ...extras] = g.orderIds; // conserva el primero (más antiguo)
       for (const id of extras) {
-        await this.orders.delete(g.sellerId, id);
+        await this.orders.delete(g.sellerId, id, 'consolidacion-de-duplicados');
+        await this.cancelWork(operationId, id, { by: 'system', reason: 'orden duplicada consolidada' });
         removed += 1;
       }
     }

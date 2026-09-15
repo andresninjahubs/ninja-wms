@@ -139,8 +139,8 @@
   }
 
   // ---- Bandeja de tareas (tablero del operario) ------------------------------
-  var TL = { PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', PUTAWAY: 'Guardado', COUNT: 'Conteo', RECEIVE: 'Recepción', RESLOT: 'Re-slotting' };
-  var TI = { PICK: '🛒', PACK: '📦', SHIP: '🚚', PUTAWAY: '⇄', COUNT: '🔢', RECEIVE: '📥', RESLOT: '↔' };
+  var TL = { PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', PUTAWAY: 'Guardado', RESTOCK: 'Reposición', COUNT: 'Conteo', RECEIVE: 'Recepción', RESLOT: 'Re-slotting' };
+  var TI = { PICK: '🛒', PACK: '📦', SHIP: '🚚', PUTAWAY: '⇄', RESTOCK: '↩', COUNT: '🔢', RECEIVE: '📥', RESLOT: '↔' };
   function opIdOrNull() { return opId || (user && user.operationId) || null; }
   function loadBoard() {
     var oid = opIdOrNull(); if (!oid || !user) return;
@@ -208,6 +208,24 @@
     task = t;
     if (t.sellerId) { cfg.seller = t.sellerId; save(); }
     if (t.type === 'PICK') { startOp('pick'); loadTaskPicklist(); return; }
+    if (t.type === 'RESTOCK') {
+      // Reposición: la mercadería está en la ubicación DEV-REPOSICION y hay que devolverla
+      // a su sitio. Origen preseleccionado; el destino viene sugerido pero se puede cambiar.
+      var pr = String(t.entityId).split(':');
+      var fromR = pr.length >= 3 ? LOC_BY_ID[pr[2]] : null;
+      // El destino sugerido viaja en `note` (id de ubicación) o, si la asignación no lo
+      // trae, se lee del texto de la tarea: "SKU → CÓDIGO".
+      var destino = t.note ? LOC_BY_ID[t.note] : null;
+      if (!destino && t.entityRef && t.entityRef.indexOf('→') > 0) {
+        destino = findLocByCode(String(t.entityRef).split('→').pop().trim());
+      }
+      startOp('putaway');
+      if (fromR) { captured.from = fromR.code; steps = ['product', 'to']; enterStep(); }
+      setTaskCtx('<b>' + esc(taskTitle(t)) + ' · ' + esc(t.entityRef || '') + '</b>'
+        + (fromR ? 'Está en <span class="code">' + esc(fromR.code) + '</span>. ' : '')
+        + (destino ? 'Vuelve a <span class="code">' + esc(destino.code) + '</span> (puedes elegir otra).' : 'Escanea el producto y elige el destino.'));
+      return;
+    }
     if (t.type === 'PUTAWAY' || t.type === 'RESLOT') {
       // entityId = sellerId:sku:locationId → origen conocido; el operario escanea el producto y elige destino.
       var parts = String(t.entityId).split(':');

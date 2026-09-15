@@ -30,7 +30,8 @@ export class DomainExceptionFilter implements ExceptionFilter {
 
     if (exception instanceof DomainError) {
       const status = this.statusFor(exception);
-      return res.status(status).json(this.body(status, exception.code, exception.message));
+      // `data` lleva el detalle estructurado (ej. los productos que faltan al reservar).
+      return res.status(status).json(this.body(status, exception.code, exception.message, exception.data));
     }
 
     // Error no controlado: no exponemos el stack al cliente.
@@ -52,7 +53,7 @@ export class DomainExceptionFilter implements ExceptionFilter {
     return HttpStatus.BAD_REQUEST;
   }
 
-  private body(status: number, code: string, detail: unknown) {
-    return { statusCode: status, code, detail };
+  private body(status: number, code: string, detail: unknown, data?: unknown) {
+    return data === undefined ? { statusCode: status, code, detail } : { statusCode: status, code, detail, data };
   }
 }

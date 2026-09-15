@@ -217,9 +217,11 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'order:fulfill', 'order:cancel', 'count:perform', 'seller:config',
     'master:manage', 'user:manage', 'product:manage', 'billing:manage', 'chat:use', 'chat:manage', 'announcement:view', 'webhook:manage', 'webhook:admin',
   ],
+  // El SUPERVISOR maneja el piso de la bodega, no la facturación: sin 'billing:manage'
+  // no ve el módulo de Facturación (queda para el administrador de la operación).
   [UserRole.SUPERVISOR]: [
     'stock:read', 'inventory:receive', 'inventory:putaway', 'order:create',
-    'order:fulfill', 'order:cancel', 'count:perform', 'seller:config', 'master:manage', 'product:manage', 'billing:manage', 'chat:use', 'chat:manage', 'announcement:view', 'webhook:manage',
+    'order:fulfill', 'order:cancel', 'count:perform', 'seller:config', 'master:manage', 'product:manage', 'chat:use', 'chat:manage', 'announcement:view', 'webhook:manage',
   ],
   [UserRole.OPERATOR]: [
     'stock:read', 'inventory:receive', 'inventory:putaway', 'order:create', 'order:fulfill',
@@ -1041,7 +1043,7 @@ export interface AgentAction {
 
 // ---- Asignación de tareas / balanceo de carga (Camino B) ----------------------
 
-export type WorkTaskType = 'PICK' | 'PUTAWAY' | 'COUNT' | 'RECEIVE' | 'RESLOT' | 'PACK' | 'SHIP';
+export type WorkTaskType = 'PICK' | 'PUTAWAY' | 'COUNT' | 'RECEIVE' | 'RESLOT' | 'PACK' | 'SHIP' | 'RESTOCK';
 export type WorkAssignmentStatus = 'assigned' | 'in_progress' | 'done' | 'released';
 
 /**
@@ -1077,7 +1079,7 @@ export interface WorkAssignment {
  * las tareas ASIGNABLES a un operario), la etapa incluye RESERVE: la reserva de stock
  * es una tarea del ledger (instantánea) aunque no se asigne a nadie.
  */
-export type WorkTaskStage = 'RESERVE' | 'PICK' | 'PACK' | 'SHIP' | 'PUTAWAY' | 'RECEIVE' | 'COUNT' | 'RESLOT';
+export type WorkTaskStage = 'RESERVE' | 'PICK' | 'PACK' | 'SHIP' | 'PUTAWAY' | 'RECEIVE' | 'COUNT' | 'RESLOT' | 'RESTOCK';
 export type WorkTaskState = 'pending' | 'assigned' | 'in_progress' | 'done' | 'cancelled';
 
 /**

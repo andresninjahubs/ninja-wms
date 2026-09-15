@@ -281,7 +281,8 @@
   .occ{height:8px;background:var(--surface-2);border-radius:5px;overflow:hidden;margin-top:11px}
   .occ i{display:block;height:100%;background:var(--primary);border-radius:5px}
   .occ i.hi{background:var(--warn)} .occ i.full{background:var(--crit)}
-  .locc .u{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-3);margin-top:6px}
+  .locc .u{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-3);margin-top:6px;gap:8px}
+  .locc .u span:last-child{text-align:right;white-space:nowrap}
 
   .opcard{display:flex;align-items:center;gap:14px;padding:15px 17px}
   .opcard .oi{width:42px;height:42px;border-radius:11px;background:var(--primary-wash);color:var(--primary-ink);display:grid;place-items:center;font-family:"Sora",sans-serif;font-weight:800;font-size:16px}
@@ -300,6 +301,41 @@
   .ordline{display:grid;grid-template-columns:minmax(0,1fr) 120px 150px 40px;gap:10px;align-items:center;margin-bottom:8px}
   .ordline select,.ordline input{min-width:0;width:100%;font-family:inherit;font-size:14px;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:9px 11px}
   .ordline .ol-qty{font-weight:700;text-align:right;font-size:15px;border-color:var(--ink-3)}
+  .ordline{align-items:start}
+  .ol-skuwrap{min-width:0}
+  .ordline .ol-sku{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em}
+  .ordline .ol-sku.bad{border-color:var(--crit);background:var(--crit-wash)}
+  .ol-skuname{font-size:11.5px;line-height:1.3;color:var(--ink-3);margin:4px 2px 0;min-height:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ol-skuname.bad{color:var(--crit);font-weight:600}
+  .ac-box{position:fixed;z-index:60;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 40px -12px rgba(0,0,0,.35);max-height:270px;overflow-y:auto;padding:4px}
+  .ac-it{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:baseline;padding:7px 9px;border-radius:7px;cursor:pointer}
+  .ac-it.on{background:var(--surface-2)}
+  .ac-it .ac-sku{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;font-weight:600;color:var(--ink)}
+  .ac-it .ac-de{font-size:12.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ac-it b{color:var(--primary)}
+  .ac-empty{padding:10px 9px;font-size:12.5px;color:var(--ink-3)}
+  .form input.mono2{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;letter-spacing:.02em}
+  .form input.bad{border-color:var(--crit);background:var(--crit-wash)}
+  .viewtog{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .viewtog .vt{font-size:12px;font-weight:600;padding:7px 12px;background:var(--surface);color:var(--ink-2);border:0;border-right:1px solid var(--line)}
+  .viewtog .vt:last-child{border-right:0}
+  .viewtog .vt.on{background:var(--aurora);color:#fff}
+  .occbar{display:block;height:6px;border-radius:999px;background:var(--line-2);overflow:hidden;min-width:90px}
+  .occbar i{display:block;height:100%;background:var(--primary)}
+  .occbar i.hi{background:var(--warn)} .occbar i.full{background:var(--crit)}
+  .callout-edit{background:var(--warn-wash);border-left:3px solid var(--warn);color:var(--ink-2);font-size:12.5px;line-height:1.5;padding:10px 13px;border-radius:0 9px 9px 0;margin-bottom:2px}
+  .short-t{width:100%;border-collapse:collapse;font-size:13.5px}
+  .short-t th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600;padding:0 10px 7px;border-bottom:1px solid var(--line)}
+  .short-t th.num,.short-t td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .short-t td{padding:10px;border-bottom:1px solid var(--line-2);vertical-align:top}
+  .short-t tr:last-child td{border-bottom:0}
+  .short-hint{display:inline-block;font-size:12px;font-weight:600;color:var(--warn);background:var(--warn-wash);padding:2px 8px;border-radius:999px}
+  .short-recs{margin-top:7px;display:grid;gap:4px}
+  .short-rec{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;font-size:12px;line-height:1.35}
+  .short-rec .rc{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-weight:600;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .short-rec .rq{font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .short-rec .rx{grid-column:1/-1;color:var(--ink-3);font-size:11.5px}
+  @media(max-width:560px){.ac-it{grid-template-columns:minmax(0,1fr);gap:2px}.ac-it .ac-de{white-space:normal}}
   .ordline-h{display:grid;grid-template-columns:minmax(0,1fr) 120px 150px 40px;gap:10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px;padding:0 2px}
   .dh{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
   .dh h3{font-size:16px}
@@ -360,6 +396,33 @@
   .tl .te{font-weight:700;font-size:13px;color:var(--ink)}
   .tl .tw{font-size:11.5px;color:var(--ink-3);margin-top:1px}
   .tl .td{font-size:12px;color:var(--ink-2);margin-top:2px}
+
+  /* ---- Detalle de orden: vista horizontal de ANCHO FIJO -------------------------
+     El ancho no depende del contenido (siempre el mismo), y cada columna hace su
+     propio scroll para que la ventana tampoco cambie de alto entre una orden y otra. */
+  .drawer.ordview{align-items:center;justify-content:center}
+  .drawer.ordview .panel{width:1160px;max-width:96vw;height:auto;max-height:86vh;border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px -20px rgba(0,0,0,.5);overflow:hidden}
+  .drawer.ordview .db{padding:0;overflow:hidden;display:flex;min-height:0}
+  .ordv{display:grid;grid-template-columns:400px minmax(0,1fr);width:100%;min-height:0}
+  .ordv-col{padding:16px 20px 20px;overflow-y:auto;min-width:0;max-height:calc(86vh - 58px)}
+  .ordv-col.left{border-right:1px solid var(--line);background:var(--surface-2)}
+  .ordv .sec-t:first-child{margin-top:0}
+  .ordv-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;align-items:start}
+  /* Línea de la orden: el nombre del producto va DEBAJO del SKU. */
+  .ovline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;padding:9px 0;border-bottom:1px solid var(--line-2)}
+  .ovline:last-child{border-bottom:0}
+  .ovl-sku{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:13px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis}
+  .ovl-de{font-size:12.5px;color:var(--ink-2);margin-top:2px;overflow:hidden;text-overflow:ellipsis}
+  .ovl-lot{font-size:11.5px;color:var(--ink-3);margin-top:2px}
+  .ovl-qty{font-size:14px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+  @media(max-width:900px){
+    .drawer.ordview .panel{width:96vw;max-height:92vh}
+    .ordv{grid-template-columns:minmax(0,1fr)}
+    .ordv-col{max-height:none;overflow:visible}
+    .ordv-col.left{border-right:0;border-bottom:1px solid var(--line)}
+    .drawer.ordview .db{overflow-y:auto;display:block}
+    .ordv-split{grid-template-columns:minmax(0,1fr);gap:20px}
+  }
   td .rowacts{display:flex;gap:6px;justify-content:flex-end}
   .tooltip{position:fixed;pointer-events:none;background:var(--ink);color:var(--surface);font-size:12px;padding:6px 10px;border-radius:7px;opacity:0;transition:opacity .12s;z-index:60;font-weight:600}
   .empty{padding:24px;text-align:center;color:var(--ink-3);font-size:13px}
@@ -871,8 +934,22 @@
 
       <!-- Ubicaciones -->
       <section class="page" data-pg="locations">
-        <div class="toolbar"><span class="muted">Ocupación de la bodega por ubicación.</span><div class="sp" style="flex:1"></div><button class="btn" id="loc-export">Exportar</button><button class="btn hidden" id="loc-import">⇪ Carga masiva</button><button class="btn pri hidden" id="loc-new">＋ Nueva ubicación</button></div>
+        <div class="toolbar">
+          <div class="search"><span class="i">⌕</span><input id="loc-q" placeholder="Buscar código de ubicación…"></div>
+          <select id="loc-zone"><option value="">Todas las zonas</option></select>
+          <span class="muted" id="loc-count"></span>
+          <div class="sp" style="flex:1"></div>
+          <div class="viewtog" id="loc-view">
+            <button class="vt" data-view="list" title="Ver como lista">☰ Lista</button>
+            <button class="vt" data-view="cards" title="Ver como tarjetas">▦ Tarjetas</button>
+          </div>
+          <button class="btn" id="loc-export">Exportar</button><button class="btn hidden" id="loc-import">⇪ Carga masiva</button><button class="btn pri hidden" id="loc-new">＋ Nueva ubicación</button>
+        </div>
         <div class="locs" id="loc-grid"></div>
+        <div class="card hidden" id="loc-listwrap"><div class="tablewrap"><table>
+          <thead><tr><th data-sort="code">Código</th><th data-sort="zone">Zona</th><th data-sort="occ" style="text-align:right">Ocupación</th><th>Uso</th><th data-sort="state">Estado</th><th data-action></th></tr></thead>
+          <tbody id="loc-body"></tbody>
+        </table></div></div>
       </section>
 
       <!-- Productos (mantenedor de SKUs + kits) -->
@@ -892,9 +969,10 @@
 
       <!-- Almacenado (putaway asistido) -->
       <section class="page" data-pg="putaway">
-        <div class="toolbar"><span class="muted">Stock recibido en zona de recepción, pendiente de guardar en almacenaje. El destino viene sugerido automáticamente.</span><div class="sp" style="flex:1"></div><span class="muted" id="pw-count"></span></div>
+        <div class="filters" id="pw-tabs" style="margin-bottom:10px"></div>
+        <div class="toolbar"><span class="muted" id="pw-help">Stock recibido en zona de recepción, pendiente de guardar en almacenaje. El destino viene sugerido automáticamente.</span><div class="sp" style="flex:1"></div><span class="muted" id="pw-count"></span></div>
         <div class="card"><div class="tablewrap"><table>
-          <thead><tr><th>SKU</th><th>Descripción</th><th>Lote / Vence</th><th>Recepción</th><th style="text-align:right">Por guardar</th><th>Destino sugerido</th><th data-action></th></tr></thead>
+          <thead><tr><th>SKU</th><th>Descripción</th><th>Lote / Vence</th><th id="pw-th-origen">Recepción</th><th style="text-align:right" id="pw-th-qty">Por guardar</th><th>Destino sugerido</th><th data-action></th></tr></thead>
           <tbody id="pw-body"></tbody>
         </table></div></div>
       </section>
@@ -1424,7 +1502,7 @@
 </div>
 
 <!-- Order drawer -->
-<div class="drawer" id="drawer"><div class="panel">
+<div class="drawer ordview" id="drawer"><div class="panel">
   <div class="dh"><h3 id="dr-title">Orden</h3><button class="x" id="dr-x">✕</button></div>
   <div class="db" id="dr-body"></div>
 </div></div>

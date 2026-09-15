@@ -9,12 +9,13 @@
  *
  * El mismo modelo sirve para B2C y B2B (cambia orderType y unidad de las líneas).
  */
-import { NotFoundError, ValidationError } from './errors';
+import { NotFoundError, ValidationError, StockShortageError, StockShortage } from './errors';
 import { InventoryService } from './inventory.service';
 import {
   Clock,
   IdGenerator,
   OrderRepository,
+  ReceiptOrderRepository,
   SellerRepository,
   SkuRepository,
 } from './ports';
@@ -28,6 +29,7 @@ import {
   OrderType,
   PackingInfo,
   PickTask,
+  StockState,
   SalesOrder,
   Shipment,
   ShipTo,
@@ -71,6 +73,8 @@ export class OrderService {
     private readonly skus: SkuRepository,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
+    /** Opcional: permite decir DE QUÉ recepción viene el stock que está sin guardar. */
+    private readonly receipts?: ReceiptOrderRepository,
   ) {}
 
   /** Ingesta de una orden desde el OMS. No reserva stock todavía. */
@@ -149,17 +153,49 @@ export class OrderService {
     return order;
   }
 
+  /** Libera TODAS las reservas pendientes de una orden (lo ya recolectado no vuelve). */
+  private async releaseAllocations(order: SalesOrder, sellerId: string, reference: string): Promise<void> {
+    for (const line of order.lines) {
+      const bySku: Record<string, Allocation[]> = {};
+      for (const a of line.allocations || []) {
+        const sk = a.sku ?? line.sku;
+        const pending = a.qty - Math.max(0, Math.min(a.qty, a.pickedQty ?? 0));
+        if (pending <= 0) continue;
+        (bySku[sk] = bySku[sk] || []).push({ ...a, qty: pending });
+      }
+      for (const sk of Object.keys(bySku)) {
+        await this.inventory.release(sellerId, sk, bySku[sk], { reference });
+      }
+      line.allocations = [];
+    }
+  }
+
   /**
-   * Edita una orden que AÚN no ha reservado stock (estado RECEIVED). Reemplaza el
-   * encabezado y las líneas. No se permite editar una vez reservada/pickeada/despachada
-   * (habría que liberar reservas primero — cancélala y créala de nuevo).
+   * Edita una orden ya creada. Reemplaza el encabezado y las líneas.
+   *
+   * - RECEIVED (ingresada): edición directa, no hay stock comprometido.
+   * - ALLOCATED (reservada): se puede editar igual. Como hay stock reservado, la edición
+   *   es una operación en tres pasos — liberar las reservas, aplicar los cambios y volver
+   *   a reservar — y es TODO O NADA: si las líneas nuevas no alcanzan a reservarse (no hay
+   *   stock), se restauran las líneas anteriores y su reserva, y la orden queda como estaba.
+   * - Desde PICKING en adelante NO se puede editar: ya hay mercadería fuera de su ubicación.
+   *
+   * El N° de orden externo nunca cambia: es la referencia con la que el cliente y el OMS
+   * identifican el pedido.
    */
   async updateOrder(sellerId: string, orderId: string, input: CreateOrderInput, actor?: string): Promise<SalesOrder> {
     const order = await this.mustGet(sellerId, orderId);
-    if (order.status !== OrderStatus.RECEIVED) {
-      throw new ValidationError(
-        `Solo se puede editar una orden antes de reservar stock (estado actual: ${order.status})`,
-      );
+    const editable = order.status === OrderStatus.RECEIVED || order.status === OrderStatus.ALLOCATED;
+    if (!editable) {
+      const porQue = order.status === OrderStatus.PICKING || order.status === OrderStatus.PICKED
+        ? 'ya se está recolectando: la mercadería salió de su ubicación'
+        : order.status === OrderStatus.PACKED ? 'ya está empacada'
+        : order.status === OrderStatus.SHIPPED ? 'ya fue despachada'
+        : 'está cancelada';
+      throw new ValidationError(`No se puede editar esta orden porque ${porQue} (estado: ${order.status}).`);
+    }
+    if (input.externalOrderId && input.externalOrderId !== order.externalOrderId) {
+      throw new ValidationError('El N° de orden no se puede cambiar: es la referencia del pedido para el cliente y el OMS.');
     }
     if (!input.lines || input.lines.length === 0) {
       throw new ValidationError('La orden debe tener al menos una línea');
@@ -173,9 +209,17 @@ export class OrderService {
       if (!sku) throw new NotFoundError(`SKU no encontrado para el seller ${sellerId}: ${l.sku}`);
       lines.push({ lineNo, sku: l.sku, qty: l.qty, uom: l.uom ?? Uom.EACH, lot: l.lot ?? null, allocations: [] });
     }
+
+    const wasAllocated = order.status === OrderStatus.ALLOCATED;
+    // Copia profunda para poder deshacer si la reserva nueva no alcanza.
+    const previo: SalesOrder | null = wasAllocated ? JSON.parse(JSON.stringify(order)) : null;
+    const antes = `${order.lines.length} línea(s) · ${this.unitsOf(order)} un`;
+
+    if (wasAllocated) await this.releaseAllocations(order, sellerId, `EDIT:${order.id}`);
+
     const updated: SalesOrder = {
       ...order,
-      externalOrderId: input.externalOrderId,
+      externalOrderId: order.externalOrderId,
       salesChannel: input.salesChannel,
       orderType: input.orderType ?? order.orderType,
       purchaseOrderRef: input.purchaseOrderRef ?? null,
@@ -184,22 +228,134 @@ export class OrderService {
       priority: input.priority ?? order.priority,
       shipTo: input.shipTo,
       lines,
+      status: OrderStatus.RECEIVED,
     };
+    const despues = `${lines.length} línea(s) · ${this.unitsOf(updated)} un`;
     updated.events = (order.events || []).concat(
-      this.ev('UPDATED', actor, `${lines.length} línea(s) · ${this.unitsOf(updated)} un`),
+      this.ev('UPDATED', actor, wasAllocated ? `${antes} → ${despues} (reservas rehechas)` : despues),
     );
     await this.orders.save(updated);
-    return updated;
+    if (!wasAllocated) return updated;
+
+    // Estaba reservada: hay que dejarla reservada otra vez, o deshacer del todo.
+    try {
+      return await this.allocate(sellerId, orderId, actor);
+    } catch (e) {
+      await this.restoreAfterFailedEdit(previo as SalesOrder, sellerId, actor);
+      const ref = order.externalOrderId || order.id;
+      if (e instanceof StockShortageError) {
+        // Se conserva el detalle por producto y se agrega qué pasó con la orden.
+        throw new StockShortageError(
+          `No se pudo guardar la orden ${ref}: no hay stock para las líneas nuevas. La orden quedó como estaba (${antes}, reservada).`,
+          e.faltantes,
+          ref,
+        );
+      }
+      throw new ValidationError(
+        `No se pudo reservar el stock de las líneas nuevas: ${(e as Error).message} — la orden quedó como estaba (${antes}, reservada).`,
+      );
+    }
+  }
+
+  /** Deshace una edición fallida: vuelve a las líneas anteriores y a su reserva. */
+  private async restoreAfterFailedEdit(previo: SalesOrder, sellerId: string, actor?: string): Promise<void> {
+    const restaurada: SalesOrder = {
+      ...previo,
+      status: OrderStatus.RECEIVED,
+      lines: previo.lines.map((l) => ({ ...l, allocations: [] })),
+    };
+    await this.orders.save(restaurada);
+    try {
+      await this.allocate(sellerId, previo.id, actor);
+    } catch {
+      // Caso extremo: alguien tomó el stock entremedio. Queda ingresada y con aviso.
+      const aviso: SalesOrder = {
+        ...restaurada,
+        events: (restaurada.events || []).concat(
+          this.ev('UPDATED', actor, 'la edición se deshizo pero el stock ya no alcanzó para volver a reservar: la orden quedó INGRESADA'),
+        ),
+      };
+      await this.orders.save(aviso);
+    }
   }
 
   /**
    * Reserva el stock de una orden (full-or-nothing).
    * Si una línea no puede reservarse completa, se liberan las reservas ya hechas.
    */
+  /**
+   * Revisa la orden completa y devuelve TODOS los productos cuyo stock reservable no
+   * alcanza. Agrupa por SKU y lote, porque un mismo producto puede venir en varias
+   * líneas (y un kit virtual aporta la demanda de sus componentes).
+   */
+  private async checkShortages(sellerId: string, order: SalesOrder): Promise<StockShortage[]> {
+    const demanda = new Map<string, { sku: string; lot: string | null; qty: number }>();
+    for (const line of order.lines) {
+      for (const d of await this.demandFor(sellerId, line)) {
+        const lot = d.lot ?? null;
+        const key = `${d.sku}|${lot ?? ''}`;
+        const cur = demanda.get(key);
+        if (cur) cur.qty += d.qty;
+        else demanda.set(key, { sku: d.sku, lot, qty: d.qty });
+      }
+    }
+    const faltantes: StockShortage[] = [];
+    for (const d of demanda.values()) {
+      const r = await this.inventory.reservableSummary(sellerId, d.sku, d.lot);
+      if (r.reservable >= d.qty) continue;
+      const sku = await this.skus.find(sellerId, d.sku).catch(() => null);
+      // Si hay stock esperando en el dock, se dice de QUÉ recepción viene y cuánto,
+      // para poder ir a buscarla sin tener que revisar una por una.
+      let recepciones: StockShortage['recepciones'];
+      if (r.enRecepcion > 0) {
+        try {
+          const origen = await this.inventory.receivingByReceipt(sellerId, d.sku, d.lot);
+          recepciones = [];
+          for (const o of origen) {
+            const rec = this.receipts ? await this.receipts.findById(sellerId, o.receiptId).catch(() => null) : null;
+            recepciones.push({
+              id: o.receiptId,
+              referencia: rec?.reference ?? null,
+              proveedor: rec?.supplier ?? null,
+              fecha: o.at,
+              cantidad: o.pendiente,
+            });
+          }
+        } catch { recepciones = undefined; }
+      }
+      faltantes.push({
+        sku: d.sku,
+        descripcion: sku?.description ?? null,
+        lot: d.lot,
+        requerido: d.qty,
+        reservable: r.reservable,
+        falta: d.qty - r.reservable,
+        enRecepcion: r.enRecepcion,
+        enOtrasZonas: r.enOtrasZonas,
+        ...(recepciones && recepciones.length ? { recepciones } : {}),
+      });
+    }
+    return faltantes;
+  }
+
   async allocate(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
     const order = await this.mustGet(sellerId, orderId);
     if (order.status !== OrderStatus.RECEIVED) {
       throw new ValidationError(`La orden ${orderId} no se puede reservar en estado ${order.status}`);
+    }
+
+    // Antes de reservar nada, se revisan TODAS las líneas: si falta stock, la orden no
+    // se puede reservar igual, y reportar de a un producto obliga a arreglar y reintentar
+    // tantas veces como productos falten. Se informan todos juntos, por orden.
+    const faltantes = await this.checkShortages(sellerId, order);
+    if (faltantes.length) {
+      const ref = order.externalOrderId || order.id;
+      const resumen = faltantes.map((f) => `${f.sku} (faltan ${f.falta})`).join(', ');
+      throw new StockShortageError(
+        `No se puede reservar la orden ${ref}: falta stock de ${faltantes.length} producto(s) — ${resumen}.`,
+        faltantes,
+        ref,
+      );
     }
 
     const done: { sku: string; allocations: Allocation[] }[] = [];
@@ -479,36 +635,80 @@ export class OrderService {
   }
 
   /** Cancela una orden y libera sus reservas (solo antes de pickear). */
+  /**
+   * Cancela una orden y DEVUELVE la mercadería a la bodega.
+   *
+   * Según dónde estaba la orden, hay dos cosas distintas que deshacer:
+   *  - lo que seguía RESERVADO (no se tocó físicamente) vuelve a disponible; y
+   *  - lo que ya fue RECOLECTADO vuelve como devolución a la MISMA ubicación de la que
+   *    salió, que es la que quedó registrada en la reserva de cada línea.
+   * Por eso se puede cancelar en ingresada, reservada, en picking, pickeada y empacada.
+   *
+   * Despachada NO se puede cancelar: la mercadería ya salió de la bodega y el camino
+   * correcto es una devolución, que registra el estado en que vuelve (stock, merma o
+   * cuarentena) en vez de darla por buena a ciegas.
+   *
+   * Los insumos de embalaje de una orden ya empacada no se reponen: la caja se usó.
+   */
   async cancel(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
     const order = await this.mustGet(sellerId, orderId);
+    const seller = await this.sellers.findById(sellerId);
+    if (!seller) throw new NotFoundError(`Seller no encontrado: ${sellerId}`);
     if (order.status === OrderStatus.CANCELLED) return order;
-    if (
-      order.status === OrderStatus.PICKED ||
-      order.status === OrderStatus.PACKED ||
-      order.status === OrderStatus.SHIPPED
-    ) {
-      throw new ValidationError(`No se puede cancelar una orden en estado ${order.status}`);
+    if (order.status === OrderStatus.SHIPPED) {
+      throw new ValidationError(
+        'No se puede cancelar una orden ya despachada: la mercadería salió de la bodega. Regístrala como devolución para que vuelva a stock.',
+      );
     }
 
-    const released = order.status === OrderStatus.ALLOCATED || order.status === OrderStatus.PICKING;
-    if (released) {
-      for (const line of order.lines) {
-        // Liberar por SKU real de cada reserva (los kits virtuales reservan componentes).
-        const bySku: Record<string, Allocation[]> = {};
-        for (const a of line.allocations) {
-          const s = a.sku ?? line.sku;
-          (bySku[s] = bySku[s] || []).push(a);
+    let liberadas = 0;   // seguían reservadas: vuelven a disponible donde estaban
+    let devueltas = 0;   // ya recolectadas: vuelven a su ubicación de origen
+    const ubicaciones = new Set<string>();
+
+    for (const line of order.lines) {
+      // Se libera por SKU real de cada reserva (un kit virtual reserva sus componentes).
+      const bySku: Record<string, Allocation[]> = {};
+      for (const a of line.allocations || []) {
+        const sk = a.sku ?? line.sku;
+        const picked = Math.max(0, Math.min(a.qty, a.pickedQty ?? 0));
+        const pendiente = a.qty - picked;
+        if (pendiente > 0) {
+          (bySku[sk] = bySku[sk] || []).push({ ...a, qty: pendiente });
+          liberadas += pendiente;
         }
-        for (const s of Object.keys(bySku)) {
-          await this.inventory.release(sellerId, s, bySku[s], { reference: `CANCEL:${order.id}` });
+        if (picked > 0) {
+          // La mercadería recolectada está físicamente en un carro, NO en su estante.
+          // Si volviera directo a su ubicación, el sistema la daría por disponible y
+          // otra orden podría reservarla sin que esté ahí. Por eso aterriza en la
+          // ubicación de REPOSICIÓN (zona de recepción: visible pero no reservable) y
+          // queda pendiente una tarea de reposición que la devuelve a su sitio.
+          // La referencia guarda de DÓNDE salió, para poder sugerir ese destino.
+          const repo = await this.inventory.ensureReposicionLocation(seller.operationId);
+          await this.inventory.postReturn(sellerId, {
+            sku: sk,
+            qty: picked,
+            state: StockState.AVAILABLE,
+            locationId: repo.id,
+            lot: a.lot,
+            reference: `CANCEL:${order.id}|FROM:${a.locationId}`,
+            actor,
+          });
+          devueltas += picked;
+          ubicaciones.add(a.locationId);
         }
-        line.allocations = [];
       }
+      for (const sk of Object.keys(bySku)) {
+        await this.inventory.release(sellerId, sk, bySku[sk], { reference: `CANCEL:${order.id}`, actor });
+      }
+      line.allocations = [];
     }
+
     order.status = OrderStatus.CANCELLED;
-    order.events = (order.events || []).concat(
-      this.ev('CANCELLED', actor, released ? 'reservas liberadas' : null),
-    );
+    const partes: string[] = [];
+    if (liberadas) partes.push(`${liberadas} un liberadas de reserva`);
+    if (devueltas) partes.push(`${devueltas} un recolectadas quedan pendientes de reposición a ${ubicaciones.size} ubicación(es)`);
+    if (order.packing) partes.push('los insumos de embalaje usados no se reponen');
+    order.events = (order.events || []).concat(this.ev('CANCELLED', actor, partes.join(' · ') || null));
     await this.orders.save(order);
     return order;
   }
@@ -579,7 +779,18 @@ export class OrderService {
   }
 
   /** Elimina una orden (consolidación de duplicados; G1). */
-  delete(sellerId: string, orderId: string): Promise<void> {
+  /**
+   * ELIMINAR UNA ORDEN ESTÁ BLOQUEADO. Una orden nunca se borra: se cancela, y así
+   * conserva su historial, su trazabilidad y los movimientos de stock que generó.
+   * El único uso permitido es interno: consolidar filas DUPLICADAS creadas por
+   * reintentos del webhook del OMS, que no representan un pedido real.
+   */
+  delete(sellerId: string, orderId: string, motivo?: 'consolidacion-de-duplicados'): Promise<void> {
+    if (motivo !== 'consolidacion-de-duplicados') {
+      throw new ValidationError(
+        'Las órdenes no se eliminan: cancélala. Cancelar devuelve el stock a la bodega y conserva el historial del pedido.',
+      );
+    }
     return this.orders.delete(sellerId, orderId);
   }
 

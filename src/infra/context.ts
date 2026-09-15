@@ -291,7 +291,7 @@ export async function createWmsContext(): Promise<WmsContext> {
   }
 
   const inventory = new InventoryService(sellers, skus, locations, movements, ids, clock, lots);
-  const orderService = new OrderService(orders, inventory, sellers, skus, ids, clock);
+  const orderService = new OrderService(orders, inventory, sellers, skus, ids, clock, receipts);
   const receiptService = new ReceiptOrderService(receipts, inventory, sellers, skus, locations, ids, clock, serials);
   const returnService = new ReturnService(returnsRepo, orders, inventory, sellers, skus, locations, ids, clock);
   const putawayAdvisor = new PutawayAdvisor(sellers, skus, locations, movements);

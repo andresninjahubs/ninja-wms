@@ -32,6 +32,7 @@ import { ChatService } from '../src/domain/chat.service';
 import {
   ForbiddenError,
   InsufficientStockError,
+  StockShortageError,
   NotFoundError,
   PlanLimitError,
   TenantViolationError,
@@ -477,7 +478,7 @@ async function run() {
     await expectThrows(() => f.orderService.ship('acme', order.id, {}), ValidationError);
   });
 
-  await test('no se puede cancelar una orden ya pickeada', async () => {
+  await test('cancelar una orden PICKEADA devuelve el stock a su ubicación de origen', async () => {
     const f = buildOrderFixture();
     await seedSellerA(f);
     await f.service.receive('acme', { sku: 'CAM-AZ-M', qty: 10, locationId: 'A-03-2-B' });
@@ -487,6 +488,133 @@ async function run() {
     });
     await f.orderService.allocate('acme', order.id);
     await f.orderService.confirmPick('acme', order.id);
+    // Tras el picking la mercadería salió de la ubicación: quedan 7 disponibles.
+    const medio = await f.service.getStock({ sellerId: 'acme', sku: 'CAM-AZ-M', locationId: 'A-03-2-B' });
+    assert.equal(medio.filter((b) => b.state === 'AVAILABLE').reduce((a, b) => a + b.qty, 0), 7);
+    const cancelada = await f.orderService.cancel('acme', order.id, 'pamela');
+    assert.equal(cancelada.status, 'CANCELLED');
+    // La mercadería NO vuelve sola al estante: está en un carro. Queda en la ubicación
+    // de reposición, contada pero NO reservable, hasta que alguien la reponga.
+    const enEstante = await f.service.getStock({ sellerId: 'acme', sku: 'CAM-AZ-M', locationId: 'A-03-2-B' });
+    assert.equal(enEstante.filter((b) => b.state === 'AVAILABLE').reduce((a, b) => a + b.qty, 0), 7, 'el estante sigue con 7: nadie la repuso todavía');
+    assert.equal(enEstante.filter((b) => b.state === 'RESERVED').reduce((a, b) => a + b.qty, 0), 0, 'sin reservas colgando');
+    const total = (await f.service.getStock({ sellerId: 'acme', sku: 'CAM-AZ-M' })).reduce((a, b) => a + b.qty, 0);
+    assert.equal(total, 10, 'el total del ledger sí vuelve a 10: la mercadería existe');
+    const ev = (cancelada.events || []).filter((e) => e.type === 'CANCELLED').pop();
+    assert.ok(String(ev?.detail || '').includes('pendientes de reposición'), 'el evento avisa que queda por reponer');
+  });
+
+  await test('cancelar una orden EMPACADA también devuelve el stock a su ubicación', async () => {
+    const f = buildOrderFixture();
+    await seedSellerA(f);
+    await f.service.receive('acme', { sku: 'CAM-AZ-M', qty: 10, locationId: 'A-03-2-B' });
+    const order = await f.orderService.createOrder('acme', {
+      externalOrderId: 'SHOP-P1', salesChannel: 'web', shipTo: SHIP_TO,
+      lines: [{ sku: 'CAM-AZ-M', qty: 4 }],
+    });
+    await f.orderService.allocate('acme', order.id);
+    await f.orderService.confirmPick('acme', order.id);
+    await f.orderService.packOrder('acme', order.id, { bultos: 1 });
+    const cancelada = await f.orderService.cancel('acme', order.id, 'pamela');
+    assert.equal(cancelada.status, 'CANCELLED');
+    const total = (await f.service.getStock({ sellerId: 'acme', sku: 'CAM-AZ-M' })).reduce((a, b) => a + b.qty, 0);
+    assert.equal(total, 10, 'las 4 volvieron al inventario, pendientes de reposición');
+    const ev = (cancelada.events || []).filter((e) => e.type === 'CANCELLED').pop();
+    assert.ok(String(ev?.detail || '').includes('embalaje'), 'avisa que los insumos de embalaje no se reponen');
+  });
+
+  await test('cancelar con picking PARCIAL: libera lo reservado y devuelve solo lo recolectado', async () => {
+    const f = buildOrderFixture();
+    await seedSellerA(f);
+    await f.service.receive('acme', { sku: 'CAM-AZ-M', qty: 10, locationId: 'A-03-2-B' });
+    const order = await f.orderService.createOrder('acme', {
+      externalOrderId: 'SHOP-P2', salesChannel: 'web', shipTo: SHIP_TO,
+      lines: [{ sku: 'CAM-AZ-M', qty: 5 }],
+    });
+    await f.orderService.allocate('acme', order.id);
+    const pl = await f.orderService.pickList('acme', order.id);
+    await f.orderService.pickTask('acme', order.id, { sku: 'CAM-AZ-M', locationId: pl[0].locationId, qty: 2 });
+    const cancelada = await f.orderService.cancel('acme', order.id, 'pamela');
+    const estante = await f.service.getStock({ sellerId: 'acme', sku: 'CAM-AZ-M', locationId: 'A-03-2-B' });
+    assert.equal(estante.filter((b) => b.state === 'AVAILABLE').reduce((a, b) => a + b.qty, 0), 8, 'las 3 reservadas vuelven al estante de inmediato');
+    assert.equal(estante.filter((b) => b.state === 'RESERVED').reduce((a, b) => a + b.qty, 0), 0);
+    const total = (await f.service.getStock({ sellerId: 'acme', sku: 'CAM-AZ-M' })).reduce((a, b) => a + b.qty, 0);
+    assert.equal(total, 10, 'el total vuelve a 10 sin inventar stock');
+    const ev = (cancelada.events || []).filter((e) => e.type === 'CANCELLED').pop();
+    assert.ok(String(ev?.detail || '').includes('3 un liberadas'), 'las 3 no recolectadas se liberan');
+    assert.ok(String(ev?.detail || '').includes('2 un recolectadas quedan pendientes'), 'las 2 recolectadas quedan por reponer');
+  });
+
+  await test('las órdenes NO se eliminan en ningún estado: se cancelan', async () => {
+    const f = buildOrderFixture();
+    await seedSellerA(f);
+    await f.service.receive('acme', { sku: 'CAM-AZ-M', qty: 10, locationId: 'A-03-2-B' });
+    const order = await f.orderService.createOrder('acme', {
+      externalOrderId: 'SHOP-D1', salesChannel: 'web', shipTo: SHIP_TO,
+      lines: [{ sku: 'CAM-AZ-M', qty: 1 }],
+    });
+    await expectThrows(() => f.orderService.delete('acme', order.id), ValidationError);
+    await f.orderService.cancel('acme', order.id);
+    await expectThrows(() => f.orderService.delete('acme', order.id), ValidationError);
+    assert.ok(await f.orderService.getOrder('acme', order.id), 'la orden sigue existiendo');
+  });
+
+  await test('reposición: cancelar deja una tarea asignable que devuelve el stock a su sitio', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01-1-A', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 1 });
+    await f.facade.createUser({ id: 'opa', name: 'Op A', email: 'opa@x.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 20, locationId: stg.id });
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-REP-1', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 6 }],
+    });
+    await f.facade.allocateOrder('acme', o.id);
+    await f.facade.confirmPick('acme', o.id, 'opa');
+    await f.facade.cancelOrder('acme', o.id, 'pamela');
+
+    // 1) Aparece una tarea de reposición, con el destino sugerido = de donde salió.
+    const pool = await f.facade.getTaskPool('op1', 'RESTOCK');
+    assert.equal(pool.length, 1, 'hay una tarea de reposición pendiente');
+    assert.equal(pool[0].unidades, 6);
+    assert.equal(pool[0].note, stg.id, 'sugiere devolver a la ubicación de origen');
+    assert.ok(String(pool[0].entityRef).includes('A-01-1-A'), 'la referencia muestra el destino sugerido');
+
+    // 2) Ese stock NO es reservable mientras espera: otra orden no lo puede comprometer.
+    const o2 = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-REP-2', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 20 }],
+    });
+    await expectThrows(() => f.facade.allocateOrder('acme', o2.id), InsufficientStockError);
+
+    // 3) Es asignable a un operario como cualquier otra tarea.
+    await f.facade.assignTask('op1', { type: 'RESTOCK', entityId: pool[0].entityId, entityRef: pool[0].entityRef, sellerId: 'acme', operator: 'opa', unitsEstimate: 6, by: 'sup' });
+    const mias = await f.facade.getOperatorTasks('op1', 'opa');
+    assert.ok(mias.some((t: any) => t.type === 'RESTOCK'), 'la ve en su bandeja');
+
+    // 4) Al ejecutarla, el stock vuelve al estante y la tarea se cierra.
+    const repoLoc = (await f.facade.listLocations('op1')).find((l) => l.code === 'DEV-REPOSICION')!;
+    await f.facade.putaway('acme', { sku: 'CAM', qty: 6, fromLocationId: repoLoc.id, toLocationId: stg.id, actor: 'opa' });
+    const enEstante = (await f.facade.getStock({ sellerId: 'acme', sku: 'CAM', locationId: stg.id }))
+      .filter((b: any) => b.state === 'AVAILABLE').reduce((a: number, b: any) => a + b.qty, 0);
+    assert.equal(enEstante, 20, 'las 6 volvieron a su ubicación');
+    assert.equal((await f.facade.getTaskPool('op1', 'RESTOCK')).length, 0, 'la tarea ya no está pendiente');
+    assert.ok(!(await f.facade.getOperatorTasks('op1', 'opa')).some((t: any) => t.type === 'RESTOCK'), 'salió de la bandeja');
+  });
+
+  await test('una orden DESPACHADA no se cancela: corresponde una devolución', async () => {
+    const f = buildOrderFixture();
+    await seedSellerA(f);
+    await f.service.receive('acme', { sku: 'CAM-AZ-M', qty: 10, locationId: 'A-03-2-B' });
+    const order = await f.orderService.createOrder('acme', {
+      externalOrderId: 'SHOP-E2', salesChannel: 'web', shipTo: SHIP_TO,
+      lines: [{ sku: 'CAM-AZ-M', qty: 3 }],
+    });
+    await f.orderService.allocate('acme', order.id);
+    await f.orderService.confirmPick('acme', order.id);
+    await f.orderService.ship('acme', order.id, { carrier: 'Chilexpress' });
     await expectThrows(() => f.orderService.cancel('acme', order.id), ValidationError);
   });
 
@@ -780,8 +908,8 @@ async function run() {
     const ids = new SequentialIdGenerator('id');
     const clock = new FixedClock();
     const inventory = new InventoryService(sellers, skus, locations, movements, ids, clock, lots);
-    const orderService = new OrderService(orders, inventory, sellers, skus, ids, clock);
     const receipts = new InMemoryReceiptOrderRepository(events);
+    const orderService = new OrderService(orders, inventory, sellers, skus, ids, clock, receipts);
     const serials = new InMemorySerialRepository();
     const packagingRepo = new InMemoryPackagingRepository();
     const packagingService = new PackagingService(packagingRepo, ids, clock);
@@ -3312,6 +3440,185 @@ async function run() {
     }
     return ids;
   }
+
+  // ---- O4: falta de stock informada por orden, con todos los faltantes juntos ----
+
+  await test('falta de stock: informa TODOS los productos que faltan, no solo el primero', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const recv = await f.facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01-1-A', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 1 });
+    await f.facade.createSku('acme', { sku: 'GUA', description: 'Guantes negros M' });
+    await f.facade.createSku('acme', { sku: 'BUF', description: 'Bufanda azul U' });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    // GUA: 40 un en RECEPCIÓN (no reservable). BUF: sin stock. CAM: 100 en almacenaje (alcanza).
+    await f.facade.receive('acme', { sku: 'GUA', qty: 40, locationId: recv.id });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-FALTA-1', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'GUA', qty: 25 }, { sku: 'BUF', qty: 6 }, { sku: 'CAM', qty: 10 }],
+    });
+    let err: any = null;
+    try { await f.facade.allocateOrder('acme', o.id); } catch (e) { err = e; }
+    assert.ok(err instanceof StockShortageError, 'lanza el error con detalle de faltantes');
+    assert.equal(err.orden, 'WEB-FALTA-1', 'el detalle viene identificado por orden');
+    assert.equal(err.faltantes.length, 2, 'informa los DOS productos que faltan de una vez');
+    const gua: any = err.faltantes.find((x: any) => x.sku === "GUA")!;
+    assert.equal(gua.requerido, 25);
+    assert.equal(gua.reservable, 0, 'lo que está en recepción no es reservable');
+    assert.equal(gua.falta, 25);
+    assert.equal(gua.enRecepcion, 40, 'dice que el stock existe pero está sin guardar');
+    assert.equal(gua.descripcion, 'Guantes negros M', 'incluye el nombre del producto');
+    const buf: any = err.faltantes.find((x: any) => x.sku === "BUF")!;
+    assert.equal(buf.enRecepcion, 0, 'este no tiene stock en ninguna parte');
+    assert.ok(!err.faltantes.some((x: any) => x.sku === 'CAM'), 'el producto que sí alcanza no aparece');
+    // La orden no cambió de estado ni se reservó nada.
+    const sigue = await f.facade.getOrder('acme', o.id);
+    assert.equal(sigue!.status, 'RECEIVED');
+    const reservado = (await f.facade.getStock({ sellerId: 'acme' })).filter((b: any) => b.state === 'RESERVED').reduce((a: number, b: any) => a + b.qty, 0);
+    assert.equal(reservado, 0, 'no se reservó nada: sigue siendo todo o nada');
+  });
+
+  await test('falta de stock: dice de qué recepciones viene lo que está sin guardar', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const recv = await f.facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01-1-A', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 1 });
+    await f.facade.createSku('acme', { sku: 'GUA', description: 'Guantes negros M' });
+    // DOS recepciones distintas del mismo producto, cotejadas en el dock.
+    const r1 = await f.facade.createReceipt('acme', { supplier: 'Textiles Sur', reference: 'GD-4417', locationId: recv.id, lines: [{ sku: 'GUA', qty: 30 }] }, 'pamela');
+    await f.facade.receiveReceipt('acme', r1.id, [{ lineNo: 1, qty: 30 }], 'pamela');
+    f.clock.set('2026-09-15T12:00:00.000Z');
+    const r2 = await f.facade.createReceipt('acme', { supplier: 'Importadora Norte', reference: 'GD-4490', locationId: recv.id, lines: [{ sku: 'GUA', qty: 10 }] }, 'pamela');
+    await f.facade.receiveReceipt('acme', r2.id, [{ lineNo: 1, qty: 10 }], 'pamela');
+
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-FALTA-3', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'GUA', qty: 60 }],
+    });
+    let err: any = null;
+    try { await f.facade.allocateOrder('acme', o.id); } catch (e) { err = e; }
+    assert.ok(err instanceof StockShortageError);
+    const gua: any = err.faltantes[0];
+    assert.equal(gua.enRecepcion, 40, '30 + 10 en el dock');
+    assert.equal(gua.recepciones.length, 2, 'lista las DOS recepciones de origen');
+    const porRef: any = {};
+    gua.recepciones.forEach((r: any) => { porRef[r.referencia] = r; });
+    assert.equal(porRef['GD-4417'].cantidad, 30, 'con la cantidad de cada una');
+    assert.equal(porRef['GD-4490'].cantidad, 10);
+    assert.equal(porRef['GD-4417'].proveedor, 'Textiles Sur', 'y su proveedor');
+    assert.equal(gua.recepciones.reduce((t: number, r: any) => t + r.cantidad, 0), gua.enRecepcion, 'la suma cuadra con el saldo en recepción');
+
+    // Al guardar parte de lo recibido, lo pendiente baja empezando por la más antigua.
+    await f.facade.putaway('acme', { sku: 'GUA', qty: 30, fromLocationId: recv.id, toLocationId: stg.id, actor: 'opa' });
+    let err2: any = null;
+    try { await f.facade.allocateOrder('acme', o.id); } catch (e) { err2 = e; }
+    const gua2: any = err2.faltantes[0];
+    assert.equal(gua2.enRecepcion, 10, 'quedan 10 en el dock');
+    assert.equal(gua2.recepciones.length, 1, 'ya solo queda pendiente una recepción');
+    assert.equal(gua2.recepciones[0].referencia, 'GD-4490', 'la más antigua se dio por guardada primero');
+    assert.equal(gua2.recepciones[0].cantidad, 10);
+  });
+
+  await test('falta de stock: un mismo producto en varias líneas se suma antes de comparar', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01-1-A', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 1 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 10, locationId: stg.id });
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-FALTA-2', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 6 }, { sku: 'CAM', qty: 7 }],   // 13 en total, hay 10
+    });
+    let err: any = null;
+    try { await f.facade.allocateOrder('acme', o.id); } catch (e) { err = e; }
+    assert.ok(err instanceof StockShortageError);
+    assert.equal(err.faltantes.length, 1, 'un solo producto en el detalle, no dos líneas');
+    assert.equal(err.faltantes[0].requerido, 13, 'suma la demanda de las dos líneas');
+    assert.equal(err.faltantes[0].falta, 3);
+  });
+
+  // ---- O3: editar una orden ya creada ---------------------------------------
+
+  await test('edición: una orden RESERVADA se puede editar — libera, aplica y vuelve a reservar', async () => {
+    const f = buildFacade();
+    const [o0] = await seedPickPool(f, 1);   // CAM x5, ya ALLOCATED
+    const disponibleAntes = (await f.facade.getStock({ sellerId: 'acme', sku: 'CAM' }))
+      .filter((b: any) => b.state === 'AVAILABLE').reduce((s: number, b: any) => s + b.qty, 0);
+    const o = await f.facade.getOrder('acme', o0);
+    // Sube la cantidad de 5 a 12 con la orden ya reservada.
+    const editada = await f.facade.updateOrder('acme', o0, {
+      externalOrderId: o!.externalOrderId, salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 12 }],
+    }, 'pamela');
+    assert.equal(editada.status, 'ALLOCATED', 'vuelve a quedar reservada');
+    assert.equal(editada.lines[0].qty, 12);
+    const bal = await f.facade.getStock({ sellerId: 'acme', sku: 'CAM' });
+    const reservado = bal.filter((b: any) => b.state === 'RESERVED').reduce((s: number, b: any) => s + b.qty, 0);
+    const disponible = bal.filter((b: any) => b.state === 'AVAILABLE').reduce((s: number, b: any) => s + b.qty, 0);
+    assert.equal(reservado, 12, 'la reserva quedó con la cantidad nueva');
+    assert.equal(disponible, disponibleAntes - 7, 'el disponible bajó solo la diferencia');
+    const ev = (editada.events || []).filter((e: any) => e.type === 'UPDATED').pop();
+    assert.ok(String(ev?.detail || '').includes('reservas rehechas'), 'el evento deja constancia');
+  });
+
+  await test('edición: si el stock no alcanza, la orden queda EXACTAMENTE como estaba', async () => {
+    const f = buildFacade();
+    const [o0] = await seedPickPool(f, 1);   // hay 1000 un de CAM; la orden reserva 5
+    const o = await f.facade.getOrder('acme', o0);
+    await expectThrows(() => f.facade.updateOrder('acme', o0, {
+      externalOrderId: o!.externalOrderId, salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 999999 }],
+    }, 'pamela'), InsufficientStockError);
+    const despues = await f.facade.getOrder('acme', o0);
+    assert.equal(despues!.status, 'ALLOCATED', 'sigue reservada');
+    assert.equal(despues!.lines[0].qty, 5, 'conserva las líneas anteriores');
+    const reservado = (await f.facade.getStock({ sellerId: 'acme', sku: 'CAM' }))
+      .filter((b: any) => b.state === 'RESERVED').reduce((s: number, b: any) => s + b.qty, 0);
+    assert.equal(reservado, 5, 'la reserva original se restauró');
+  });
+
+  await test('edición: se pueden agregar y quitar productos de una orden reservada', async () => {
+    const f = buildFacade();
+    const [o0] = await seedPickPool(f, 1);
+    const loc = (await f.facade.listLocations('op1'))[0];
+    await f.facade.createSku('acme', { sku: 'PAN', description: 'Pantalón' });
+    await f.facade.receive('acme', { sku: 'PAN', qty: 50, locationId: loc.id });
+    const o = await f.facade.getOrder('acme', o0);
+    const editada = await f.facade.updateOrder('acme', o0, {
+      externalOrderId: o!.externalOrderId, salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 2 }, { sku: 'PAN', qty: 4 }],   // agrega un SKU nuevo
+    }, 'pamela');
+    assert.equal(editada.lines.length, 2);
+    assert.equal(editada.status, 'ALLOCATED');
+    const pan = (await f.facade.getStock({ sellerId: 'acme', sku: 'PAN' }))
+      .filter((b: any) => b.state === 'RESERVED').reduce((s: number, b: any) => s + b.qty, 0);
+    assert.equal(pan, 4, 'el producto agregado quedó reservado');
+    // Ahora lo quita: su reserva debe liberarse.
+    const sinPan = await f.facade.updateOrder('acme', o0, {
+      externalOrderId: o!.externalOrderId, salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 2 }],
+    }, 'pamela');
+    assert.equal(sinPan.lines.length, 1);
+    const pan2 = (await f.facade.getStock({ sellerId: 'acme', sku: 'PAN' }))
+      .filter((b: any) => b.state === 'RESERVED').reduce((s: number, b: any) => s + b.qty, 0);
+    assert.equal(pan2, 0, 'al quitar el producto se liberó su reserva');
+  });
+
+  await test('edición: bloqueada desde PICKING y el N° de orden nunca cambia', async () => {
+    const f = buildFacade();
+    const [o0] = await seedPickPool(f, 1);
+    const o = await f.facade.getOrder('acme', o0);
+    const body = { externalOrderId: o!.externalOrderId, salesChannel: 'web', shipTo: { name: 'x' } as any, lines: [{ sku: 'CAM', qty: 1 }] };
+    // El N° de orden es la referencia del pedido: no se puede cambiar.
+    await expectThrows(() => f.facade.updateOrder('acme', o0, { ...body, externalOrderId: 'OTRO-999' }, 'pamela'), ValidationError);
+    // Desde que empieza el picking, ya no se edita.
+    await f.facade.startPicking('acme', o0, 'opa');
+    await expectThrows(() => f.facade.updateOrder('acme', o0, body, 'pamela'), ValidationError);
+  });
 
   await test('asignación (B): asignar y auto-completar al pickear', async () => {
     const f = buildFacade();

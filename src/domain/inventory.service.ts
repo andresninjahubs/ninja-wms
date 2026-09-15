@@ -25,6 +25,7 @@ import {
 } from './ports';
 import {
   Allocation,
+  Location,
   MovementType,
   PickingStrategy,
   Seller,
@@ -181,6 +182,104 @@ export class InventoryService {
    * Así `disponible = físico − reservado` y se evita la sobreventa entre canales.
    * Devuelve las reservas concretas (ubicación + lote + qty) que guiarán el picking.
    */
+  /**
+   * Ubicación de REPOSICIÓN de la operación: donde queda la mercadería que volvió de
+   * una orden cancelada y todavía no está en su sitio. Está en zona de RECEPCIÓN a
+   * propósito: así el stock existe y se ve, pero NO es reservable hasta que alguien lo
+   * reponga físicamente — igual que la mercadería recién llegada al dock.
+   */
+  static readonly REPOSICION_CODE = 'DEV-REPOSICION';
+  async ensureReposicionLocation(operationId: string): Promise<Location> {
+    const code = InventoryService.REPOSICION_CODE;
+    const existing = await this.locations.findByCode(operationId, code);
+    if (existing) return existing;
+    const loc: Location = {
+      id: this.ids.next(),
+      operationId,
+      code,
+      warehouseId: 'default',
+      zoneType: ZoneType.RECEIVING,
+      capacity: 0,
+      pickRank: 9999,
+      active: true,
+    };
+    await this.locations.save(loc);
+    return loc;
+  }
+
+  /**
+   * Cuánto stock de un SKU se puede reservar HOY y dónde está el resto. Se usa para
+   * explicar por qué una orden no se puede reservar: lo habitual no es que falte
+   * mercadería, sino que esté en el dock de recepción sin guardar todavía.
+   */
+  async reservableSummary(
+    sellerId: string,
+    sku: string,
+    lot: string | null = null,
+  ): Promise<{ reservable: number; enRecepcion: number; enOtrasZonas: number }> {
+    const balances = await this.movements.balances({ sellerId, sku });
+    const candidates = balances
+      .filter((b) => b.state === StockState.AVAILABLE && b.qty > 0)
+      .filter((b) => lot === null || (b.lot ?? null) === lot);
+    const zoned = await Promise.all(
+      candidates.map(async (b) => ({ b, loc: await this.locations.findById(b.locationId) })),
+    );
+    let reservable = 0, enRecepcion = 0, enOtrasZonas = 0;
+    for (const { b, loc } of zoned) {
+      const z = loc?.zoneType;
+      if (z === ZoneType.STORAGE || z === ZoneType.PICKING) reservable += b.qty;
+      else if (z === ZoneType.RECEIVING) enRecepcion += b.qty;
+      else enOtrasZonas += b.qty;
+    }
+    return { reservable, enRecepcion, enOtrasZonas };
+  }
+
+  /**
+   * De dónde viene el stock que hoy está en el dock de RECEPCIÓN: qué recepciones
+   * trajeron ese producto y cuánto de cada una sigue sin guardar.
+   *
+   * El guardado (putaway) no se registra contra una recepción concreta, así que la
+   * atribución es FIFO: lo que ya se guardó se descuenta de las recepciones más
+   * antiguas. Así la suma de lo pendiente siempre cuadra con el saldo real en recepción.
+   */
+  async receivingByReceipt(
+    sellerId: string,
+    sku: string,
+    lot: string | null = null,
+  ): Promise<Array<{ receiptId: string; recibido: number; pendiente: number; at: string }>> {
+    const movs = await this.movements.find({ sellerId, sku });
+    const entradas = movs.filter(
+      (m) => m.type === MovementType.RECEIPT && m.qtyDelta > 0 && m.state === StockState.AVAILABLE
+        && (lot === null || (m.lot ?? null) === lot) && !!m.reference,
+    );
+    if (!entradas.length) return [];
+    // Solo las que entraron a una ubicación de RECEPCIÓN.
+    const locIds = Array.from(new Set(entradas.map((m) => m.locationId)));
+    const zonas = new Map<string, string | undefined>();
+    for (const id of locIds) zonas.set(id, (await this.locations.findById(id))?.zoneType);
+    const enRecv = entradas.filter((m) => zonas.get(m.locationId) === ZoneType.RECEIVING);
+    if (!enRecv.length) return [];
+
+    const porRecepcion = new Map<string, { receiptId: string; recibido: number; at: string }>();
+    for (const m of enRecv) {
+      const ref = String(m.reference);
+      const cur = porRecepcion.get(ref);
+      if (cur) { cur.recibido += m.qtyDelta; if (m.occurredAt < cur.at) cur.at = m.occurredAt; }
+      else porRecepcion.set(ref, { receiptId: ref, recibido: m.qtyDelta, at: m.occurredAt });
+    }
+    const grupos = Array.from(porRecepcion.values()).sort((a, b) => (a.at < b.at ? -1 : 1));
+    const { enRecepcion } = await this.reservableSummary(sellerId, sku, lot);
+    let yaGuardado = Math.max(0, grupos.reduce((t, g) => t + g.recibido, 0) - enRecepcion);
+    const out: Array<{ receiptId: string; recibido: number; pendiente: number; at: string }> = [];
+    for (const g of grupos) {
+      const descuento = Math.min(yaGuardado, g.recibido);
+      yaGuardado -= descuento;
+      const pendiente = g.recibido - descuento;
+      if (pendiente > 0) out.push({ ...g, pendiente });
+    }
+    return out;
+  }
+
   async reserve(
     sellerId: string,
     cmd: { sku: string; qty: number; lot?: string | null; reference?: string | null; actor?: string },
