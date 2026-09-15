@@ -25,9 +25,12 @@
     backdrop=document.createElement('div'); backdrop.className='m-backdrop'; backdrop.addEventListener('click',closeNav); document.body.appendChild(backdrop);
     var brand=$('.brand',side);
     if(brand){
-      var head=document.createElement('div'); head.className='m-side-head'; head.hidden=!isMobile();
+      // La cabecera del cajón envuelve la marca SIEMPRE (también en escritorio): si se
+      // ocultara fuera de móvil, el logo del sidebar desaparecería en el panel de escritorio.
+      var head=document.createElement('div'); head.className='m-side-head';
       brand.parentNode.insertBefore(head,brand); head.appendChild(brand);
-      var x=document.createElement('button'); x.className='m-close'; x.type='button'; x.setAttribute('aria-label','Cerrar menú'); x.textContent='✕'; x.addEventListener('click',closeNav); head.appendChild(x);
+      // Lo único que es exclusivo de móvil es el botón de cerrar el cajón.
+      var x=document.createElement('button'); x.className='m-close'; x.type='button'; x.setAttribute('aria-label','Cerrar menú'); x.textContent='✕'; x.hidden=!isMobile(); x.addEventListener('click',closeNav); head.appendChild(x);
     }
     // Hamburguesa
     menuBtn=document.createElement('button'); menuBtn.className='m-menu'; menuBtn.type='button'; menuBtn.setAttribute('aria-label','Abrir menú'); menuBtn.innerHTML='☰'; menuBtn.hidden=!isMobile();
@@ -52,7 +55,7 @@
   }
   function onChange(){
     var m=isMobile();
-    if(menuBtn)menuBtn.hidden=!m; if(ctxBtn)ctxBtn.hidden=!m; var h=$('.m-side-head'); if(h)h.hidden=!m;
+    if(menuBtn)menuBtn.hidden=!m; if(ctxBtn)ctxBtn.hidden=!m; var xc=$('.m-close'); if(xc)xc.hidden=!m;
     if(!m){ closeNav(); topbar.classList.remove('ctx-open'); unlabelTables(); } else { labelTables(); syncCtx(); }
   }
   function syncCtx(){
