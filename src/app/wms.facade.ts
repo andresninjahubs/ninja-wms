@@ -4590,8 +4590,16 @@ export class WmsFacade {
     return order;
   }
   /** Cierra la orden como recibida aunque falte mercadería (parcial). */
-  closeReceipt(sellerId: string, orderId: string, actor?: string): Promise<ReceiptOrder> {
-    return this.receipts.close(sellerId, orderId, actor);
+  async closeReceipt(sellerId: string, orderId: string, actor?: string): Promise<ReceiptOrder> {
+    const order = await this.receipts.close(sellerId, orderId, actor);
+    // Cierre parcial: la tarea RECEIVE también termina (bandeja + ledger).
+    const opId = await this.operationOfSeller(sellerId).catch(() => null);
+    if (opId) {
+      await this.completeAssignments('RECEIVE', [orderId], actor || 'system'); await this.continuousHook(opId, 'RECEIVE', null);
+      await this.advanceTask(opId, 'RECEIVE', order.id, { state: 'done', by: actor || 'system' });
+      await this.continuousHook(opId, 'PUTAWAY', null);
+    }
+    return order;
   }
   deleteReceipt(sellerId: string, orderId: string, actor?: string): Promise<{ ok: true; id: string }> {
     return this.receipts.remove(sellerId, orderId, actor);
@@ -4818,8 +4826,23 @@ export class WmsFacade {
     input: { sku: string; locationId: string; lot?: string | null; qty?: number },
     actor?: string,
   ): Promise<SalesOrder> {
+    // Camino B: en modo estricto, no dejar pickear una orden asignada a otro operario.
+    const opId = await this.operationOfSeller(sellerId).catch(() => null);
+    if (opId) await this.assertAssignmentAllowed(opId, 'PICK', orderId, actor || 'system');
     const order = await this.orders.pickTask(sellerId, orderId, input, actor);
     this.fireOrderWebhook(sellerId, order); // order.picking (parcial) u order.picked (completo)
+    // Bandeja + ledger: el picking dirigido (app del operario) también cierra la asignación
+    // PICK cuando la orden queda PICKED y abre la tarea PACK. Antes solo lo hacía confirmPick,
+    // por lo que la tarea seguía apareciendo en "Mis tareas" tras terminar el picking.
+    if (opId) {
+      if (order.status === OrderStatus.PICKED) {
+        await this.completeAssignments('PICK', [orderId], actor || 'system'); await this.continuousHook(opId, 'PICK', null);
+        await this.advanceTask(opId, 'PICK', order.id, { state: 'done', by: actor || 'system' });
+        await this.openTask(opId, { type: 'PACK', sellerId, orderId: order.id, orderRef: order.externalOrderId || order.id, entityId: order.id, entityRef: order.externalOrderId || order.id, unitsEstimate: (order.lines || []).reduce((s, l) => s + l.qty, 0), by: actor || 'system' });
+      } else {
+        await this.advanceTask(opId, 'PICK', order.id, { state: 'in_progress', by: actor || 'system' });
+      }
+    }
     return order;
   }
 

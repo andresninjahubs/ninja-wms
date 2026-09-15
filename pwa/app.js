@@ -198,6 +198,8 @@
   }
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) { t.addEventListener('click', function () { switchTab(t.getAttribute('data-tab')); }); });
   $('btn-refresh').addEventListener('click', function () { loadBoard(); toast('Actualizado', true); });
+  // Al volver la app al frente (cambio de pestaña / desbloqueo del teléfono) se refresca la bandeja.
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && $('home').classList.contains('on')) loadBoard(); });
 
   // Inicia una tarea de la bandeja: marca in_progress y abre el flujo correspondiente con contexto.
   function startAssigned(t) {
@@ -216,8 +218,12 @@
       return;
     }
     if (t.type === 'RECEIVE') {
+      // Cotejo de una RECEPCIÓN: el stock aterriza en la ubicación de recepción de la orden,
+      // así que solo se escanea el producto y se indica la cantidad. Al completar todas las
+      // líneas la recepción queda RECIBIDA y la tarea sale de la bandeja.
       startOp('receive');
-      setTaskCtx('<b>' + esc(taskTitle(t)) + ' · ' + esc(t.entityRef || '') + '</b>Escanea cada producto de la recepción y la ubicación de recepción. El cotejo completo también puede hacerse desde el panel.');
+      steps = ['product']; stepIdx = 0; enterStep();
+      loadTaskReceipt();
       return;
     }
     if (t.type === 'PACK' || t.type === 'SHIP') { openQuick(t); return; }
@@ -240,6 +246,36 @@
         if ((lines || []).length && lines.every(function (l) { return (l.pickedQty || 0) >= l.qty; })) toast('Esta orden ya está completamente pickeada', true);
       })
       .catch(function (e) { setTaskCtx('<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>' + esc(e.message)); });
+  }
+
+  // Líneas de la recepción de la tarea (esperado / recibido). Guarda la orden en task.receipt.
+  function loadTaskReceipt() {
+    if (!task || task.type !== 'RECEIVE') return;
+    setTaskCtx('<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>Cargando recepción…');
+    api('/sellers/' + encodeURIComponent(task.sellerId) + '/receipts/' + encodeURIComponent(task.entityId))
+      .then(function (r) {
+        task.receipt = r;
+        var loc = LOC_BY_ID[r.locationId];
+        var html = '<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || r.id) + '</b>'
+          + (r.supplier ? esc(r.supplier) + ' · ' : '') + 'Ubicación de recepción: <span class="code">' + esc(loc ? loc.code : r.locationId) + '</span>. Escanea cada producto e indica la cantidad recibida:<div class="lines">'
+          + (r.lines || []).map(function (l) {
+            var done = (l.receivedQty || 0) >= l.expectedQty;
+            return '<div class="ln' + (done ? ' done' : '') + '"><span>' + esc(l.sku) + (l.lot ? ' · ' + esc(l.lot) : '') + '</span><span>' + (l.receivedQty || 0) + '/' + l.expectedQty + '</span></div>';
+          }).join('') + '</div>';
+        setTaskCtx(html);
+        if (r.status === 'RECEIVED') toast('Esta recepción ya está cerrada', true);
+      })
+      .catch(function (e) { setTaskCtx('<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>' + esc(e.message)); });
+  }
+  // Cuando la tarea en curso terminó (orden pickeada / recepción cerrada), se suelta el
+  // contexto y se refresca la bandeja para que la tarea desaparezca de "Mis tareas".
+  function finishTask(msg) {
+    if (msg) $('res-sub').textContent += ' ' + msg;
+    $('btn-again').style.display = 'none';
+    $('btn-closercpt').style.display = 'none';
+    $('btn-finish').textContent = 'Volver a mis tareas';
+    task = null;
+    loadBoard();
   }
 
   // ---- Acción rápida: empacar / despachar (sin escaneo) ----------------------
@@ -487,7 +523,15 @@
     if (!(packCount > 0)) { toast('Cantidad inválida', false); return; }
     var seller = encodeURIComponent(cfg.seller), base = '/sellers/' + seller;
     var call;
-    if (op === 'receive') {
+    if (task && task.type === 'RECEIVE') {
+      // Cotejo de una TAREA de recepción: se registra contra la línea de la orden de recepción.
+      var rc = task.receipt, sku = captured.resolved ? captured.resolved.sku : null;
+      var line = rc && (rc.lines || []).filter(function (l) { return l.sku === sku; })[0];
+      if (!line) { toast('El producto ' + (sku || captured.product) + ' no está en esta recepción', false); return; }
+      var rq = packCount * (captured.resolved ? captured.resolved.factor : 1);
+      call = api(base + '/receipts/' + encodeURIComponent(task.entityId) + '/receive', { method: 'POST', body: { counts: [{ lineNo: line.lineNo, qty: rq }] } })
+        .then(function (o) { return { scan: { baseQty: rq, code: captured.resolved.code, sku: sku }, receipt: o }; });
+    } else if (op === 'receive') {
       call = api(base + '/scan/inbound', { method: 'POST', body: { barcode: captured.product, packCount: packCount, locationCode: captured.bin } });
     } else if (op === 'putaway') {
       call = api(base + '/scan/putaway', { method: 'POST', body: { productBarcode: captured.product, packCount: packCount, fromLocationCode: captured.from, toLocationCode: captured.to } });
@@ -508,8 +552,18 @@
       $('result').style.display = '';
       $('qtywrap').style.display = 'none'; $('btn-confirm').style.display = 'none';
       $('after').style.display = 'flex';
-      if (task && task.type === 'PICK') { loadTaskPicklist(); if (r.order && r.order.status === 'PICKED') { $('res-sub').textContent += ' Orden completamente pickeada.'; $('btn-again').style.display = 'none'; } else $('btn-again').style.display = ''; }
-      else $('btn-again').style.display = task ? '' : 'none';
+      $('btn-closercpt').style.display = 'none';
+      $('btn-finish').textContent = 'Terminar y volver a mis tareas';
+      if (task && task.type === 'PICK') {
+        if (r.order && r.order.status === 'PICKED') finishTask('Orden completamente pickeada: la tarea salió de tu bandeja.');
+        else { loadTaskPicklist(); $('btn-again').style.display = ''; }
+      } else if (task && task.type === 'RECEIVE') {
+        if (r.receipt && r.receipt.status === 'RECEIVED') finishTask('Recepción completa: la tarea salió de tu bandeja.');
+        else { task.receipt = r.receipt || task.receipt; loadTaskReceipt(); $('btn-again').style.display = ''; $('btn-closercpt').style.display = ''; }
+      } else if (task && (task.type === 'PUTAWAY' || task.type === 'RESLOT')) {
+        // El guardado cierra su asignación en el servidor (una tarea = un SKU/origen).
+        finishTask('Tarea completada: salió de tu bandeja.');
+      } else $('btn-again').style.display = task ? '' : 'none';
       toast(OP_META[op].title + ' registrada', true);
       // G4: captura de productividad con inicio/fin reales (best-effort, no bloquea).
       var LABOR_TYPE = { pick: 'PICK', putaway: 'PUTAWAY', receive: 'RECEIVE' };
@@ -580,7 +634,20 @@
   });
 
   $('btn-back').addEventListener('click', function () { task = null; show('home'); });
-  $('btn-again').addEventListener('click', function () { var t = task; startOp(op); if (t && t.type === 'PICK') loadTaskPicklist(); else if (t && (t.type === 'PUTAWAY' || t.type === 'RESLOT')) startAssigned(t); });
+  $('btn-again').addEventListener('click', function () {
+    var t = task; startOp(op);
+    if (t && t.type === 'PICK') loadTaskPicklist();
+    else if (t && t.type === 'RECEIVE') { steps = ['product']; stepIdx = 0; enterStep(); loadTaskReceipt(); }
+    else if (t && (t.type === 'PUTAWAY' || t.type === 'RESLOT')) startAssigned(t);
+  });
+  $('btn-closercpt').addEventListener('click', function () {
+    if (!task || task.type !== 'RECEIVE') return;
+    var b = $('btn-closercpt'); b.disabled = true;
+    api('/sellers/' + encodeURIComponent(task.sellerId) + '/receipts/' + encodeURIComponent(task.entityId) + '/close', { method: 'POST', body: {} })
+      .then(function () { toast('Recepción cerrada con faltante', true); finishTask('Recepción cerrada: la tarea salió de tu bandeja.'); })
+      .catch(function (e) { toast(e.message, false); })
+      .then(function () { b.disabled = false; });
+  });
   $('btn-finish').addEventListener('click', function () { task = null; show('home'); });
 
   // ---- Marca (white-label) de la operación ----------------------------------

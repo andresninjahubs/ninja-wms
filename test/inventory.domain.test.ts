@@ -3325,6 +3325,43 @@ async function run() {
     assert.equal(mine.length, 0, 'la tarea se auto-completó al pickear');
   });
 
+  await test('asignación (B): el picking dirigido (app) cierra la tarea en curso al completar la orden', async () => {
+    const f = buildFacade();
+    const [o0] = await seedPickPool(f, 2);
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o0, entityRef: 'A-0', sellerId: 'acme', operator: 'opa', unitsEstimate: 5, by: 'sup' });
+    await f.facade.startTask('op1', 'opa', { type: 'PICK', entityId: o0 });
+    let mine = await f.facade.getOperatorTasks('op1', 'opa');
+    assert.equal(mine[0].status, 'in_progress');
+    const pl = await f.facade.getPickList('acme', o0);
+    // Pick parcial por línea (como lo hace la app): la tarea sigue en curso.
+    let o = await f.facade.pickTask('acme', o0, { sku: 'CAM', locationId: pl[0].locationId, qty: 2 }, 'opa');
+    assert.equal(o.status, 'PICKING');
+    mine = await f.facade.getOperatorTasks('op1', 'opa');
+    assert.equal(mine.length, 1, 'con picking parcial la tarea sigue en la bandeja');
+    // Completa la orden → PICKED → la tarea sale de la bandeja y el ledger abre PACK.
+    o = await f.facade.pickTask('acme', o0, { sku: 'CAM', locationId: pl[0].locationId, qty: 3 }, 'opa');
+    assert.equal(o.status, 'PICKED');
+    mine = await f.facade.getOperatorTasks('op1', 'opa');
+    assert.equal(mine.length, 0, 'la tarea PICK se cerró al terminar el picking dirigido');
+    const packPool = await f.facade.getTaskPool('op1', 'PACK');
+    assert.ok(packPool.some((t) => t.entityId === o0), 'la orden pasó al pool de empaque');
+  });
+
+  await test('asignación (B): cerrar recepción con faltante también cierra la tarea RECEIVE', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const recv = await f.facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.createUser({ id: 'opa', name: 'Op A', email: 'opa@x.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    const r = await f.facade.createReceipt('acme', { supplier: 'Prov', reference: 'GD-2', locationId: recv.id, lines: [{ sku: 'CAM', qty: 100 }] }, 'system');
+    await f.facade.assignTask('op1', { type: 'RECEIVE', entityId: r.id, entityRef: 'GD-2', sellerId: 'acme', operator: 'opa', unitsEstimate: 100, by: 'sup' });
+    await f.facade.receiveReceipt('acme', r.id, [{ lineNo: 1, qty: 40 }], 'opa'); // parcial
+    assert.equal((await f.facade.getOperatorTasks('op1', 'opa')).length, 1, 'parcial: la tarea sigue');
+    await f.facade.closeReceipt('acme', r.id, 'opa');
+    assert.equal((await f.facade.getOperatorTasks('op1', 'opa')).length, 0, 'cerrada con faltante: la tarea se completó');
+  });
+
   await test('asignación (B): auto-balanceo reparte todo el pool entre operarios', async () => {
     const f = buildFacade();
     await seedPickPool(f, 6);
