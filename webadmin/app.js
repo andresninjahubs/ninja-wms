@@ -152,6 +152,27 @@
   }
 
   // ---- Login ----------------------------------------------------------------
+  /**
+   * El viaje hacia dentro de la caja: la cámara cae adentro en menos de un
+   * segundo y recién ahí aparece el panel. Si no hay escena 3D, entra directo.
+   */
+  function entrarAlWms(listo){
+    var esc=window.__login3d, stage=document.getElementById('loginstage');
+    if(!esc||!stage||!stage.classList.contains('has3d'))return listo();
+    var hecho=false;
+    function fin(){ if(hecho)return; hecho=true; listo(); }
+    stage.classList.add('viajando');
+    // El canvas crece con una transición: hay que avisarle al renderer en cada
+    // cuadro, si no la escena queda estirada.
+    var t0=performance.now();
+    (function remedir(){
+      try{ window.dispatchEvent(new Event('resize')); }catch(e){}
+      if(performance.now()-t0<1200)requestAnimationFrame(remedir);
+    })();
+    setTimeout(function(){ esc.entrar(fin); }, 80);   // deja que el canvas empiece a crecer
+    setTimeout(fin, 1000);                            // red de seguridad: nadie se queda afuera
+  }
+
   function doLogin(){
     var email=$("#lg-email").value.trim(), pass=$("#lg-pass").value; $("#lg-err").textContent="";
     if(!email||!pass){$("#lg-err").textContent="Ingresa tu email y contraseña.";return;}
@@ -159,8 +180,7 @@
       if(!r.authenticated){$("#lg-err").textContent=r.detail||"Email o contraseña incorrectos.";return;}
       token=r.token; me=r.user; role=me.role;   // token = JWT firmado
       $("#lg-pass").value="";
-      $("#loginov").classList.add("off");
-      init();
+      entrarAlWms(function(){ $("#loginov").classList.add("off"); init(); });
     }).catch(function(e){$("#lg-err").textContent="No se pudo conectar: "+e.message;});
   }
   $("#lg-btn").addEventListener("click",doLogin);
@@ -6653,7 +6673,16 @@
     token=null;me=null;role=null;op=null;seller=null;
     $("#lg-email").value="";$("#lg-pass").value="";$("#lg-err").textContent="";
     // Al volver, la portada arranca de nuevo con la caja cerrada.
-    var st=$("#loginstage"); if(st){ st.classList.remove('open'); st.classList.add('closed'); }
+    var st=$("#loginstage"); if(st){ st.classList.remove('open'); st.classList.remove('viajando'); st.classList.add('closed'); }
+    // La escena 3D quedó detenida dentro de la caja: se monta otra vez desde cero.
+    if(window.__login3d&&window.NinjaLogin3D&&st&&st.classList.contains('has3d')){
+      try{ window.__login3d.destruir(); }catch(e){}
+      // Canvas nuevo: reusar el viejo deja el contexto WebGL anterior colgando.
+      var viejo=document.getElementById('lh-canvas');
+      if(viejo){ var nuevo=viejo.cloneNode(false); viejo.parentNode.replaceChild(nuevo,viejo); }
+      window.__login3d=window.NinjaLogin3D.montar(document.getElementById('lh-canvas'),{});
+      if(!window.__login3d)st.classList.remove('has3d');
+    }
     $("#loginov").classList.remove("off");
   }
   if($("#btn-logout"))$("#btn-logout").addEventListener("click",cerrarSesion);
@@ -6751,9 +6780,23 @@
     // se abre sola a los 12 s: nadie puede quedarse afuera por no entender el gesto.
     var stage=document.getElementById('loginstage'), boton=document.getElementById('lh-open');
     if(!stage||!boton)return;
+
+    // Caja real en 3D. Si WebGL no está, la librería no cargó o el usuario pidió
+    // menos movimiento, montar() devuelve null y queda la caja SVG de siempre.
+    var escena=null;
+    // La clase va ANTES de montar: el canvas está oculto hasta tenerla y el
+    // renderer necesita medirlo para no arrancar en 2x2 píxeles.
+    stage.classList.add('has3d');
+    try{
+      if(window.NinjaLogin3D)escena=window.NinjaLogin3D.montar(document.getElementById('lh-canvas'),{});
+    }catch(e){ escena=null; }
+    if(escena){ window.__login3d=escena; requestAnimationFrame(function(){ try{ window.dispatchEvent(new Event('resize')); }catch(e){} }); }
+    else stage.classList.remove('has3d');
+
     var abierta=false;
     function abrir(){
       if(abierta)return; abierta=true;
+      if(escena)escena.abrir();
       stage.classList.remove('closed'); stage.classList.add('open');
       setTimeout(function(){ var e=document.getElementById('lg-email'); if(e&&window.innerWidth>720)e.focus(); }, 900);
     }
@@ -6764,7 +6807,7 @@
   })();
 
   // Aterrizaje común tras autenticarse (login o registro).
-  function afterAuth(r){ token=r.token; me=r.user; role=me.role; $("#loginov").classList.add("off"); init(); syncVerifyBar(); }
+  function afterAuth(r){ token=r.token; me=r.user; role=me.role; entrarAlWms(function(){ $("#loginov").classList.add("off"); init(); syncVerifyBar(); }); }
 
   // Crear cuenta
   function doRegister(){
