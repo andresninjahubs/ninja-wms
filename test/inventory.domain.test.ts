@@ -5392,6 +5392,98 @@ async function run() {
     assert.ok(acc && /sin reservar/.test(String(acc.resultado)), `el agente debe explicar por qué no la asignó: ${acc && acc.resultado}`);
   });
 
+  // ---- Enrutamiento del copiloto (v114) --------------------------------------
+
+  await test('copiloto: sin IA conectada sigue respondiendo con el router determinista', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 500 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 42, locationId: stg.id });
+
+    // Una pregunta reconocida se contesta con el router, sin IA…
+    const r: any = await f.facade.copilotAsk('op1', null, '¿qué SKUs están por quebrar stock?');
+    assert.equal(r.intent, 'low_stock');
+    assert.ok(String(r.answer || '').length > 0);
+
+    // …y una que el router no entiende cae en las sugerencias, no en un error.
+    const h: any = await f.facade.copilotAsk('op1', null, 'oye, ¿qué opinas de la operación en general?');
+    assert.equal(h.intent, 'help');
+    assert.ok((h.suggestions || []).length > 0);
+  });
+
+  await test('copiloto: el router no debe secuestrar preguntas que no son de stock', () => {
+    // Esta es la prueba que documenta el problema de fondo: el router clasifica
+    // por palabras sueltas. "¿Por qué la orden DEMO-012 sigue detenida?" se
+    // parece a una consulta de stock y antes se contestaba como tal, sin LLM.
+    // Con IA conectada ya no manda el router, pero dejamos constancia de cuáles
+    // son las preguntas que NO puede contestar bien por sí solo.
+    const enganosas = [
+      '¿Por qué la orden DEMO-012 sigue detenida?',
+      '¿Cuántas órdenes tengo pendientes?',
+      '¿Qué hay en la cola de preparación?',
+    ];
+    for (const q of enganosas) {
+      const r = parseCopilotIntent(q);
+      assert.notEqual(r.intent, undefined);
+      // Todas caen en una intención cerrada: ninguna llega sola al modelo.
+      assert.notEqual(r.intent, 'help', `"${q}" debería necesitar al LLM, pero el router la captura como ${r.intent}`);
+    }
+  });
+
+  await test('carga por operario: totales, promedios y velocidad en tareas/hora', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 5000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 3000, locationId: stg.id });
+    await f.facade.createUser({ id: 'op-1', name: 'Pedro', email: 'p@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createUser({ id: 'op-2', name: 'Sofía', email: 's@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+
+    // Pedro: 2 tareas de 100 un. Sofía: 4 tareas de 25 un. Misma velocidad (50 u/h
+    // por defecto), pero tareas de tamaño muy distinto.
+    let k = 0;
+    for (const [operador, cuantas, unidades] of [['op-1', 2, 100], ['op-2', 4, 25]] as Array<[string, number, number]>) {
+      for (let i = 0; i < cuantas; i++) {
+        const o = await f.facade.createOrder('acme', { externalOrderId: 'T-' + (++k), salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: unidades }] }, 'ana');
+        await f.facade.allocateOrder('acme', o.id, 'ana');
+        await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, entityRef: 'T-' + k, sellerId: 'acme', operator: operador, unitsEstimate: unidades, by: 'ana', skipOperatorCheck: true });
+      }
+    }
+    const l: any = await f.facade.operatorLoad('op1');
+    const pedro = l.operarios.find((o: any) => o.operario === 'op-1');
+    const sofia = l.operarios.find((o: any) => o.operario === 'op-2');
+
+    // Velocidad en TAREAS/hora: a igual velocidad en unidades, quien tiene tareas
+    // más chicas cierra más tareas por hora. Ese es el dato que sirve para planificar.
+    assert.equal(pedro.unidadesPorTarea, 100);
+    assert.equal(pedro.velocidadTH, 0.5, '50 u/h con tareas de 100 un → media tarea por hora');
+    assert.equal(sofia.unidadesPorTarea, 25);
+    assert.equal(sofia.velocidadTH, 2, '50 u/h con tareas de 25 un → 2 tareas por hora');
+
+    // Totales.
+    assert.equal(l.totales.operarios, 2);
+    assert.equal(l.totales.tareasAbiertas, 6);
+    assert.equal(l.totales.unidades, 300);
+    assert.equal(l.totales.horasEstimadas, 6, '200/50 + 100/50 = 6 h');
+    assert.equal(l.totales.velocidadUH, 50, 'unidades totales sobre horas totales');
+    assert.equal(l.totales.velocidadTH, 1, '6 tareas en 6 horas');
+    assert.equal(l.totales.unidadesPorTarea, 50);
+
+    // Promedios por operario.
+    assert.equal(l.promedios.tareasAbiertas, 3);
+    assert.equal(l.promedios.unidades, 150);
+    assert.equal(l.promedios.horasEstimadas, 3);
+
+    // Sin operarios cargados, los totales son cero y no revientan.
+    const vacio: any = await f.facade.operatorLoad('op1');
+    assert.equal(typeof vacio.totales.horasEstimadas, 'number');
+  });
+
   // ---- Dashboard AI (v101) ---------------------------------------------------
 
   await test('dashboard AI: valida lo que propone el modelo y rechaza lo inventado', () => {

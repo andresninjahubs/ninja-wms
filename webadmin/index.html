@@ -834,6 +834,25 @@
     .agj-t td>*{min-width:0;overflow-wrap:anywhere}
     .agj-res{overflow-wrap:anywhere}
   }
+  /* Totales y promedios al pie de una tabla. */
+  table.matrix tfoot td{border-top:2px solid var(--line);padding-top:9px;font-size:12.5px}
+  table.matrix tfoot tr.tot td{font-weight:800}
+  table.matrix tfoot tr.prom td{color:var(--ink-3)}
+  /* Torre en vivo: diario a la izquierda, carga a la derecha. */
+  .torre{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px;align-items:start}
+  .torre-col{display:flex;flex-direction:column;gap:14px;min-width:0}
+  .torre .card{margin:0}
+  .torre #torre-diario{max-height:70vh;overflow:auto}
+  .torre-bar{display:flex;align-items:center;gap:8px;margin:5px 0}
+  .torre-bar .t{flex:1;height:8px;border-radius:99px;background:var(--surface-3,rgba(0,0,0,.07));overflow:hidden}
+  .torre-bar .t i{display:block;height:100%;border-radius:99px;background:#12B886}
+  .torre-bar.hot .t i{background:#DC2626}
+  .torre-bar .n{font-size:12px;font-weight:800;min-width:74px;text-align:right}
+  .torre-pend{display:flex;flex-wrap:wrap;gap:8px}
+  .torre-pend span{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);
+    border-radius:999px;font-size:12.5px}
+  .torre-pend b{font-size:13px}
+  @media(max-width:1100px){ .torre{grid-template-columns:1fr} .torre #torre-diario{max-height:none} }
   .loginov.off{display:none}
   /* Login: la caja se arma sola; el usuario la abre y de adentro sale el formulario. */
   .loginstage{display:flex;flex-direction:column;align-items:center;width:100%;max-width:96vw}
@@ -1086,6 +1105,7 @@
       <button class="navcat-h" data-cat-toggle="ninjaia"><span class="ic">🛰️</span> Ninja IA <span class="navcat-arrow">▾</span></button>
       <div class="navcat-body">
         <button class="nav sub" data-pg="agente"><span class="ic">🛰️</span> Agente <span class="badge" id="nav-agente"></span></button>
+        <button class="nav sub" data-pg="torre"><span class="ic">📡</span> Torre en vivo</button>
         <button class="nav sub" data-pg="aiaudit"><span class="ic">🧠</span> Auditoría IA</button>
       </div>
     </div>
@@ -1773,7 +1793,7 @@
           <div class="kpis" id="asg-kpis"></div>
           <div class="card">
             <div class="h"><h3>Carga por operario</h3><div class="sp" style="flex:1"></div><span class="muted" id="asg-load-sub"></span></div>
-            <div class="tablewrap"><table class="matrix"><thead><tr><th>Operario</th><th class="num">Velocidad (u/h)</th><th class="num">Tareas abiertas</th><th class="num">Unidades</th><th class="num">Horas estimadas</th></tr></thead><tbody id="asg-load-body"></tbody></table></div>
+            <div class="tablewrap"><table class="matrix"><thead><tr><th>Operario</th><th class="num">Velocidad (u/h)</th><th class="num">Velocidad (tareas/h)</th><th class="num">Tareas abiertas</th><th class="num">Unidades</th><th class="num">Horas estimadas</th></tr></thead><tbody id="asg-load-body"></tbody><tfoot id="asg-load-foot"></tfoot></table></div>
           </div>
           <div class="card">
             <div class="h"><h3>Pool de tareas pendientes</h3><div class="sp" style="flex:1"></div><span class="muted" id="asg-pool-sub"></span></div>
@@ -1827,6 +1847,34 @@
         <div class="card">
           <div class="h"><h3>Reglas del agente</h3><div class="sp" style="flex:1"></div><span class="muted">Enciende/apaga cada regla y ajusta su umbral y enfriamiento</span></div>
           <div class="b"><div id="agt-rules"></div></div>
+        </div>
+      </section>
+
+      <!-- Torre en vivo: lo que el agente hace y cómo queda la carga, en una pantalla -->
+      <section class="page" data-pg="torre">
+        <div class="toolbar">
+          <span class="muted">Las dos mitades de la misma historia: lo que el agente va ejecutando y cómo queda repartido el trabajo. Se refresca solo.</span>
+          <div class="sp" style="flex:1"></div>
+          <span class="dash-live" id="torre-live"></span>
+          <button class="btn" id="torre-now" style="padding:8px 14px">Actualizar</button>
+        </div>
+        <div class="torre">
+          <div class="card">
+            <div class="h"><h3>Diario del agente</h3><div class="sp" style="flex:1"></div><span class="muted" id="torre-diario-sub"></span></div>
+            <div class="b"><div id="torre-diario"></div></div>
+          </div>
+          <div class="torre-col">
+            <div class="card">
+              <div class="h"><h3>Carga por operario</h3><div class="sp" style="flex:1"></div><span class="muted" id="torre-carga-sub"></span></div>
+              <div class="b">
+                <div class="tablewrap"><table class="matrix m-skip"><thead><tr><th>Operario</th><th class="num">Tareas</th><th class="num">Unidades</th><th class="num">Horas proyectadas</th></tr></thead><tbody id="torre-carga"></tbody><tfoot id="torre-carga-foot"></tfoot></table></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="h"><h3>Sin asignar</h3><div class="sp" style="flex:1"></div><span class="muted">Trabajo que todavía no tiene dueño</span></div>
+              <div class="b"><div id="torre-pend"></div></div>
+            </div>
+          </div>
         </div>
       </section>
 

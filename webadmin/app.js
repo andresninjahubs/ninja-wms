@@ -88,10 +88,10 @@
     }).join("");
   }
   var NAV_BY_ROLE={
-    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
-    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","branding","clients","users"],
+    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","torre","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
+    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","torre","plan","branding","clients","users"],
     // Sin "billing": la facturación es del administrador de la operación, no del supervisor.
-    SUPERVISOR:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan"],
+    SUPERVISOR:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","torre","plan"],
     OPERATOR:["dashboard","copilot","inventory","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","voicechannel"],
     CLIENT:["dashboard","copilot","inventory","products","orders","inbound","returns","movements","billing","chat","webhooks"]
   };
@@ -502,7 +502,7 @@
   // Cada sección operativa se vuelve a cargar sola mientras esté visible. Se pausa si la
   // pestaña está en segundo plano, si hay un formulario/panel abierto o un tutorial corriendo.
   // El Dashboard recarga la operación completa (stock por zona + kardex + datos del cliente).
-  var LIVE_PAGES={agente:20000,dashboard:30000,multicliente:30000,inventory:30000,inbound:20000,returns:30000,putaway:20000,movements:30000,counts:60000,locations:60000,products:60000,assembly:60000,packaging:60000,billing:60000};
+  var LIVE_PAGES={torre:15000,agente:20000,dashboard:30000,multicliente:30000,inventory:30000,inbound:20000,returns:30000,putaway:20000,movements:30000,counts:60000,locations:60000,products:60000,assembly:60000,packaging:60000,billing:60000};
   var liveLast=Date.now(), liveBusy=false;
   function activePg(){ if(mcMode)return 'multicliente'; var p=document.querySelector('.page.on'); return p?p.getAttribute('data-pg'):null; }
   function liveRefresh(force){
@@ -2458,8 +2458,15 @@
       $("#asg-kpis").innerHTML=k.map(function(x){return '<div class="kpi"><div class="l">'+x.l+'</div><div class="v">'+x.v+'</div><div class="d">'+esc(x.d)+'</div></div>';}).join("");
       $("#asg-load-body").innerHTML=(load.operarios||[]).length?load.operarios.map(function(o){
         var hot=(o.horasEstimadas!=null&&o.horasEstimadas>=6)?' style="color:var(--bad,#c0392b);font-weight:700"':'';
-        return '<tr><td>'+esc(o.nombre||o.operario)+'</td><td class="num">'+(o.velocidadUH||'—')+'</td><td class="num">'+o.tareasAbiertas+'</td><td class="num">'+o.unidades+'</td><td class="num"'+hot+'>'+(o.horasEstimadas!=null?o.horasEstimadas+' h':'—')+'</td></tr>';
-      }).join(""):'<tr><td colspan="5" class="empty">Sin operarios en la operación.</td></tr>';
+        return '<tr><td>'+esc(o.nombre||o.operario)+'</td><td class="num">'+(o.velocidadUH||'—')+'</td><td class="num">'+(o.velocidadTH!=null?o.velocidadTH:'—')+'</td><td class="num">'+o.tareasAbiertas+'</td><td class="num">'+o.unidades+'</td><td class="num"'+hot+'>'+(o.horasEstimadas!=null?o.horasEstimadas+' h':'—')+'</td></tr>';
+      }).join(""):'<tr><td colspan="6" class="empty">Sin operarios en la operación.</td></tr>';
+      // Pie: el TOTAL del equipo y el PROMEDIO por operario. La velocidad total no
+      // es el promedio de las velocidades: es unidades totales sobre horas totales.
+      var T=load.totales, P=load.promedios, pie=$("#asg-load-foot");
+      if(pie)pie.innerHTML=(T&&load.operarios&&load.operarios.length)
+        ? '<tr class="tot"><td>Total ('+T.operarios+' operarios)</td><td class="num">'+(T.velocidadUH!=null?T.velocidadUH:'—')+'</td><td class="num">'+(T.velocidadTH!=null?T.velocidadTH:'—')+'</td><td class="num">'+T.tareasAbiertas+'</td><td class="num">'+fmtInt(T.unidades)+'</td><td class="num">'+T.horasEstimadas+' h</td></tr>'
+          +'<tr class="prom"><td>Promedio por operario</td><td class="num">'+(P.velocidadUH!=null?P.velocidadUH:'—')+'</td><td class="num">—</td><td class="num">'+P.tareasAbiertas+'</td><td class="num">'+fmtInt(P.unidades)+'</td><td class="num">'+P.horasEstimadas+' h</td></tr>'
+        : '';
       var pool=r[1]||[];
       $("#asg-pool-sub").textContent=pool.length+" tareas";
       var opts='<option value="">—</option>'+asgOperators.map(function(o){return '<option value="'+esc(o.id)+'">'+esc(o.name||o.id)+'</option>';}).join("");
@@ -6616,6 +6623,89 @@
     });
   }
 
+
+  // ---- Torre en vivo (v115) ---------------------------------------------------
+  // Las dos mitades de la misma historia en una pantalla: qué está ejecutando el
+  // agente y cómo queda repartido el trabajo. Se refresca sola cada 15 s; se
+  // detiene al salir de la página para no consultar de fondo.
+  var TORRE={timer:null,reloj:null,en:null,ultimo:0,MS:15000};
+  document.addEventListener('visibilitychange',function(){
+    if(document.hidden)return;
+    if(document.querySelector('.page[data-pg="torre"].on'))renderTorre().then(torreTick);
+  });
+
+  function torreTick(){
+    clearTimeout(TORRE.timer);
+    if(!document.querySelector('.page[data-pg="torre"].on')){ clearInterval(TORRE.reloj); return; }
+    TORRE.timer=setTimeout(function(){ renderTorre().then(torreTick); }, TORRE.MS);
+  }
+  function torreFrescura(){
+    var el=$("#torre-live"); if(!el)return;
+    clearInterval(TORRE.reloj);
+    function pinta(){
+      if(!TORRE.ultimo){ el.textContent=''; return; }
+      var seg=Math.max(0,Math.round((Date.now()-TORRE.ultimo)/1000));
+      el.textContent='En vivo · hace '+(seg<60?seg+' s':Math.floor(seg/60)+' min');
+      el.classList.toggle('stale',seg>45);
+    }
+    pinta(); TORRE.reloj=setInterval(pinta,1000);
+  }
+
+  function renderTorre(){
+    if(!op)return Promise.resolve();
+    var btn=$("#torre-now");
+    if(btn&&!btn.__bound){ btn.__bound=true; btn.addEventListener('click',function(){ TORRE.ultimo=0; renderTorre().then(torreTick); }); }
+    if(TORRE.en)return TORRE.en;                       // una consulta a la vez
+    TORRE.en=Promise.all([
+      api('/agent/journal?operationId='+encodeURIComponent(op)+'&limit=40').catch(function(){return [];}),
+      api('/assignments/load?operationId='+encodeURIComponent(op)).catch(function(){return {operarios:[],pendientesSinAsignar:{}};}),
+    ]).then(function(r){
+      TORRE.en=null; TORRE.ultimo=Date.now(); torreFrescura();
+      torreDiario(r[0]||[]);
+      torreCarga(r[1]||{});
+    }, function(){ TORRE.en=null; });
+    return TORRE.en;
+  }
+
+  /** Reusa el mismo armado por ciclo del Agente: una sola forma de leer el diario. */
+  function torreDiario(list){
+    var box=$("#torre-diario"); if(!box)return;
+    var sub=$("#torre-diario-sub");
+    var ciclos=(list||[]).filter(function(e){return e.kind==='cycle';}).length;
+    if(sub)sub.textContent=ciclos?('últimos '+ciclos+' ciclo(s)'):'sin ciclos todavía';
+    var antes=$("#agt-journal");
+    // paintAgentJournal escribe en #agt-journal; se le presta el nodo un instante.
+    var tmp=document.createElement('div'); tmp.id='agt-journal';
+    box.innerHTML=''; box.appendChild(tmp);
+    if(antes)antes.id='agt-journal-real';
+    try{ paintAgentJournal(list); } finally { if(antes)antes.id='agt-journal'; tmp.removeAttribute('id'); }
+  }
+
+  function torreCarga(load){
+    var ops=load.operarios||[], T=load.totales, P=load.promedios;
+    var sub=$("#torre-carga-sub"); if(sub)sub.textContent=ops.length?(ops.length+' operario(s)'):'sin operarios';
+    var maxH=Math.max.apply(null,[1].concat(ops.map(function(o){return o.horasEstimadas||0;})));
+    var cuerpo=$("#torre-carga");
+    if(cuerpo)cuerpo.innerHTML=ops.length?ops.map(function(o){
+      var h=o.horasEstimadas||0, hot=h>=6;
+      return '<tr><td>'+esc(o.nombre||o.operario)
+        +'<div class="torre-bar'+(hot?' hot':'')+'"><span class="t"><i style="width:'+Math.round((h/maxH)*100)+'%"></i></span></div></td>'
+        +'<td class="num">'+o.tareasAbiertas+'</td><td class="num">'+fmtInt(o.unidades)+'</td>'
+        +'<td class="num"'+(hot?' style="color:var(--bad,#c0392b);font-weight:800"':'')+'>'+(o.horasEstimadas!=null?o.horasEstimadas+' h':'—')+'</td></tr>';
+    }).join(''):'<tr><td colspan="4" class="empty">Sin operarios en la operación.</td></tr>';
+    var pie=$("#torre-carga-foot");
+    if(pie)pie.innerHTML=(T&&ops.length)
+      ? '<tr class="tot"><td>Total ('+T.operarios+')</td><td class="num">'+T.tareasAbiertas+'</td><td class="num">'+fmtInt(T.unidades)+'</td><td class="num">'+T.horasEstimadas+' h</td></tr>'
+        +'<tr class="prom"><td>Promedio por operario</td><td class="num">'+P.tareasAbiertas+'</td><td class="num">'+fmtInt(P.unidades)+'</td><td class="num">'+P.horasEstimadas+' h</td></tr>'
+      : '';
+    var pend=load.pendientesSinAsignar||{};
+    var hay=Object.keys(pend).filter(function(k){return pend[k];});
+    var pbox=$("#torre-pend");
+    if(pbox)pbox.innerHTML=hay.length
+      ? '<div class="torre-pend">'+hay.map(function(k){return '<span>'+esc(ASG_TYPE_LABEL[k]||k)+' <b>'+pend[k]+'</b></span>';}).join('')+'</div>'
+      : '<div class="muted" style="padding:4px 2px">Todo el trabajo pendiente está asignado.</div>';
+  }
+
   function paintAgentInstructions(list){
     var box=$('#agt-instr'); if(!box)return; list=list||[];
     var canEdit=can('master');
@@ -6763,11 +6853,11 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
     if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="dashboard"){loadDash().then(dashTick);}else{clearTimeout(dashTimer);}
-    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
+    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});

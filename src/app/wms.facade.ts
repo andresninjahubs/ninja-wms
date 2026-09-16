@@ -429,15 +429,41 @@ export class WmsFacade {
     return out.sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct));
   }
   /** Responde una pregunta en lenguaje natural con datos reales (read-only). */
+  /**
+   * Punto de entrada del copiloto.
+   *
+   * Antes esto era al revés: un router por palabras clave contestaba la PRIMERA
+   * pregunta con una respuesta prearmada y el LLM solo entraba si no reconocía la
+   * intención. El resultado era que las ocho preguntas sugeridas del panel —
+   * justo las que la gente toca— nunca llegaban al modelo, y una pregunta como
+   * "¿por qué la orden X sigue detenida?" se clasificaba como consulta de stock.
+   * Ahora, si el tenant tiene IA conectada, responde SIEMPRE el LLM con todas sus
+   * herramientas; lo determinista queda como respaldo para cuando no hay IA, y
+   * como PISTA ya calculada para que el modelo no tenga que ir a buscarla.
+   */
   async copilotAsk(operationId: string, sellerId: string | null, question: string, history?: { role: 'user' | 'assistant'; content: string }[], actor?: { id?: string; role?: string } | null): Promise<CopilotAnswer> {
+    const cred = await this.resolveAiCredential(operationId, sellerId);
+    if (!cred) {
+      // Sin IA conectada: el router determinista es lo único que hay.
+      return (await this.copilotDeterministicAnswer(operationId, sellerId, question)) ?? {
+        intent: 'help',
+        answer: 'Puedo responder sobre tu operación con datos en vivo. Prueba con una de estas:',
+        suggestions: COPILOT_SUGGESTIONS,
+      };
+    }
+    // Con IA: en la primera pregunta se calcula la respuesta determinista y se le
+    // pasa al modelo como dato de partida (es exacta y sale gratis). En los
+    // seguimientos manda el hilo.
+    const pista = (history && history.length > 0)
+      ? null
+      : await this.copilotDeterministicAnswer(operationId, sellerId, question).catch(() => null);
+    return this.copilotLlmAnswer(operationId, sellerId, question, history || [], cred, actor, pista);
+  }
+
+  /** Router determinista por palabras clave. Devuelve null si no reconoce la intención. */
+  private async copilotDeterministicAnswer(operationId: string, sellerId: string | null, question: string): Promise<CopilotAnswer | null> {
     const parsed = parseCopilotIntent(question || '');
     const scope = await this.copilotScope(operationId, sellerId);
-    // Si es un seguimiento en una conversación en curso y hay IA conectada, respondemos
-    // SIEMPRE con el LLM (con el hilo completo) para que la conversación fluya natural.
-    if (history && history.length > 0) {
-      const cred = await this.resolveAiCredential(operationId, sellerId);
-      if (cred) return this.copilotLlmAnswer(operationId, sellerId, question, history, cred, actor);
-    }
     const link = (pg: string) => pg;
 
     // Detección de SKU real: valida el candidato contra el catálogo del alcance.
@@ -554,18 +580,10 @@ export class WmsFacade {
       };
     }
 
-    // help / no reconocida: si el tenant conectó su LLM, respondemos libre PERO grounded
-    // (con un resumen de datos reales); si no, devolvemos sugerencias deterministas.
-    const cred = await this.resolveAiCredential(operationId, sellerId);
-    if (cred) return this.copilotLlmAnswer(operationId, sellerId, question, history || [], cred, actor);
-    return {
-      intent: 'help',
-      answer: 'Puedo responder sobre tu operación con datos en vivo. Prueba con una de estas:',
-      suggestions: COPILOT_SUGGESTIONS,
-    };
+    return null; // no reconoció la intención: que conteste el LLM (o las sugerencias)
   }
   /** Respuesta conversacional con el LLM del tenant, grounded en el contexto completo. */
-  private async copilotLlmAnswer(operationId: string, sellerId: string | null, question: string, history: { role: 'user' | 'assistant'; content: string }[], cred: AiCredential, actor?: { id?: string; role?: string } | null): Promise<CopilotAnswer> {
+  private async copilotLlmAnswer(operationId: string, sellerId: string | null, question: string, history: { role: 'user' | 'assistant'; content: string }[], cred: AiCredential, actor?: { id?: string; role?: string } | null, pista?: CopilotAnswer | null): Promise<CopilotAnswer> {
     const ctx = await this.copilotContext(operationId, sellerId);
     let sys = [
       'Eres el copiloto de Ninja WMS: hablas como un colega experto de bodega, cercano y claro.',
@@ -588,6 +606,13 @@ export class WmsFacade {
       sys += ' POLÍTICA DEL AGENTE: ' + describePolicy(settings);
     }
     sys += `\n\n=== RESUMEN DE LA OPERACIÓN (punto de partida; usa herramientas para profundizar) ===\n${ctx}`;
+    // Pista: la respuesta que el router determinista ya calculó para esta pregunta.
+    // Son cifras exactas y recién consultadas; el modelo las usa en vez de ir a
+    // buscarlas, pero manda la pregunta: si el usuario preguntó otra cosa, la ignora.
+    if (pista && pista.answer) {
+      const detalle = (pista.items || []).slice(0, 25).map((i: any) => `${i.label}: ${i.value}`).join(' · ');
+      sys += `\n\n=== DATO YA CALCULADO PARA ESTA PREGUNTA (exacto, de ahora mismo) ===\n${pista.answer}${detalle ? '\n' + detalle : ''}\n(Úsalo si responde lo que preguntaron; si la pregunta apunta a otra cosa, ignóralo y usa las herramientas. No lo repitas literal: contesta con tu voz.)`;
+    }
     const tools = canWrite ? [...COPILOT_TOOLS, ...COPILOT_ACTION_TOOLS] : COPILOT_TOOLS;
     // Recolectamos TODAS las acciones propuestas en el turno (el LLM puede pedir varias).
     const pendingActions: CopilotPendingAction[] = [];
@@ -4037,7 +4062,12 @@ export class WmsFacade {
   }
 
   /** Carga de trabajo por operario (para el panel del supervisor y el copiloto). */
-  async operatorLoad(operationId: string): Promise<{ operarios: Array<{ operario: string; nombre: string; velocidadUH: number; tareasAbiertas: number; unidades: number; horasEstimadas: number | null; porTipo: Record<string, number> }>; pendientesSinAsignar: Record<string, number> }> {
+  async operatorLoad(operationId: string): Promise<{
+    operarios: Array<{ operario: string; nombre: string; velocidadUH: number; velocidadTH: number | null; unidadesPorTarea: number | null; tareasAbiertas: number; unidades: number; horasEstimadas: number | null; porTipo: Record<string, number> }>;
+    totales: { operarios: number; tareasAbiertas: number; unidades: number; horasEstimadas: number; velocidadUH: number | null; velocidadTH: number | null; unidadesPorTarea: number | null };
+    promedios: { tareasAbiertas: number; unidades: number; horasEstimadas: number; velocidadUH: number | null };
+    pendientesSinAsignar: Record<string, number>;
+  }> {
     const roster = await this.operatorRoster(operationId);
     const open = this.assignments ? await this.assignments.listOpen(operationId) : [];
     const byOp = new Map<string, WorkAssignment[]>();
@@ -4047,11 +4077,41 @@ export class WmsFacade {
       const unidades = list.reduce((s, a) => s + a.unitsEstimate, 0);
       const porTipo: Record<string, number> = {};
       for (const a of list) porTipo[a.type] = (porTipo[a.type] || 0) + 1;
-      return { operario: op.id, nombre: op.name, velocidadUH: op.speed, tareasAbiertas: list.length, unidades, horasEstimadas: op.speed > 0 ? Math.round((unidades / op.speed) * 10) / 10 : null, porTipo };
+      // Velocidad en TAREAS por hora: la de unidades dividida por el tamaño medio
+      // de sus tareas abiertas. Sirve para planificar ("¿cuántas alcanza a cerrar
+      // en el turno?"), que es distinto de cuántas unidades mueve.
+      const unidadesPorTarea = list.length ? Math.round((unidades / list.length) * 10) / 10 : null;
+      const velocidadTH = unidadesPorTarea && unidadesPorTarea > 0 ? Math.round((op.speed / unidadesPorTarea) * 100) / 100 : null;
+      return {
+        operario: op.id, nombre: op.name, velocidadUH: op.speed, velocidadTH, unidadesPorTarea,
+        tareasAbiertas: list.length, unidades,
+        horasEstimadas: op.speed > 0 ? Math.round((unidades / op.speed) * 10) / 10 : null, porTipo,
+      };
     }).sort((a, b) => (b.horasEstimadas || 0) - (a.horasEstimadas || 0));
+
+    // Totales y promedios. Ojo con la velocidad: el promedio simple de las
+    // velocidades individuales no es la velocidad del equipo. La del equipo es
+    // el total de unidades sobre el total de horas — quien mueve más pesa más.
+    const nOps = operarios.length;
+    const tTareas = operarios.reduce((t, o) => t + o.tareasAbiertas, 0);
+    const tUnidades = operarios.reduce((t, o) => t + o.unidades, 0);
+    const tHoras = Math.round(operarios.reduce((t, o) => t + (o.horasEstimadas || 0), 0) * 10) / 10;
+    const r1 = (x: number) => Math.round(x * 10) / 10;
+    const totales = {
+      operarios: nOps, tareasAbiertas: tTareas, unidades: tUnidades, horasEstimadas: tHoras,
+      velocidadUH: tHoras > 0 ? r1(tUnidades / tHoras) : null,
+      velocidadTH: tHoras > 0 ? Math.round((tTareas / tHoras) * 100) / 100 : null,
+      unidadesPorTarea: tTareas > 0 ? r1(tUnidades / tTareas) : null,
+    };
+    const promedios = {
+      tareasAbiertas: nOps ? r1(tTareas / nOps) : 0,
+      unidades: nOps ? r1(tUnidades / nOps) : 0,
+      horasEstimadas: nOps ? r1(tHoras / nOps) : 0,
+      velocidadUH: nOps ? r1(operarios.reduce((t, o) => t + o.velocidadUH, 0) / nOps) : null,
+    };
     const pendientesSinAsignar: Record<string, number> = {};
     for (const t of ['PICK', 'PUTAWAY', 'RESTOCK', 'PACK', 'SHIP', 'COUNT', 'RECEIVE', 'RESLOT'] as WorkTaskType[]) pendientesSinAsignar[t] = (await this.getTaskPool(operationId, t, { onlyUnassigned: true })).length;
-    return { operarios, pendientesSinAsignar };
+    return { operarios, totales, promedios, pendientesSinAsignar };
   }
 
   /**
