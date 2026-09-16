@@ -189,7 +189,14 @@ export async function buildOperationDashboard(facade: WmsFacade, operationId: st
       (String(o.orderType).toLowerCase() === 'b2b' ? mins.b2b : mins.b2c).push(m);
     }
     const avg = (a: number[]) => (a.length ? Math.round((a.reduce((x, y) => x + y, 0) / a.length) * 10) / 10 : null);
-    return { b2bMin: avg(mins.b2b), b2cMin: avg(mins.b2c), muestrasB2B: mins.b2b.length, muestrasB2C: mins.b2c.length, ventanaDias: 30 };
+    // En horas con un decimal: es la unidad en que se habla de preparación en
+    // bodega. Se conservan los minutos para quien ya los consumía.
+    const horas = (m: number | null) => (m == null ? null : Math.round((m / 60) * 10) / 10);
+    const b2b = avg(mins.b2b), b2c = avg(mins.b2c);
+    return {
+      b2bMin: b2b, b2cMin: b2c, b2bHoras: horas(b2b), b2cHoras: horas(b2c),
+      muestrasB2B: mins.b2b.length, muestrasB2C: mins.b2c.length, ventanaDias: 30,
+    };
   })();
 
   // ---- 7. Ocupación de bodega (en unidades: la capacidad se define así) --------

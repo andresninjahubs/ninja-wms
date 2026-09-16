@@ -1081,17 +1081,31 @@
     <button class="nav" data-pg="voicechannel"><span class="ic">🎙️</span> Canal operaciones</button>
     <button class="nav" data-pg="webhooks"><span class="ic">🔗</span> Webhooks</button>
     <div class="navgroup" data-admin>Administración</div>
-    <button class="nav" data-pg="plan"><span class="ic">◆</span> Plan</button>
+
+    <div class="navcat" data-cat="ninjaia">
+      <button class="navcat-h" data-cat-toggle="ninjaia"><span class="ic">🛰️</span> Ninja IA <span class="navcat-arrow">▾</span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="agente"><span class="ic">🛰️</span> Agente <span class="badge" id="nav-agente"></span></button>
+        <button class="nav sub" data-pg="aiaudit"><span class="ic">🧠</span> Auditoría IA</button>
+      </div>
+    </div>
+
     <button class="nav" data-pg="activity"><span class="ic">📋</span> Actividad</button>
-    <button class="nav" data-pg="aiaudit"><span class="ic">🧠</span> Auditoría IA</button>
     <button class="nav" data-pg="asignaciones"><span class="ic">🧑‍🏭</span> Asignaciones</button>
-    <button class="nav" data-pg="agente"><span class="ic">🛰️</span> Agente <span class="badge" id="nav-agente"></span></button>
     <button class="nav" data-pg="branding"><span class="ic">🎨</span> Marca</button>
     <button class="nav" data-pg="clients"><span class="ic">🏢</span> Clientes</button>
     <button class="nav" data-pg="users"><span class="ic">◍</span> Usuarios</button>
-    <button class="nav" data-pg="pkgmatrix" data-platform><span class="ic">▦</span> Empaquetado</button>
+
+    <div class="navcat" data-cat="comercial">
+      <button class="navcat-h" data-cat-toggle="comercial"><span class="ic">◆</span> Comercial Ninja <span class="navcat-arrow">▾</span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="plan"><span class="ic">◆</span> Plan</button>
+        <button class="nav sub" data-pg="pkgmatrix" data-platform><span class="ic">▦</span> Empaquetado</button>
+        <button class="nav sub" data-pg="usage" data-platform><span class="ic">📈</span> Uso</button>
+      </div>
+    </div>
+
     <button class="nav" data-pg="operations" data-platform><span class="ic">◈</span> Operaciones</button>
-    <button class="nav" data-pg="usage" data-platform><span class="ic">📈</span> Uso</button>
     <button class="nav" data-pg="announcements" data-platform><span class="ic">📣</span> Anuncios</button>
     <div class="spacer"></div>
     <button class="navlearn" id="nt-navcenter" title="Tutoriales y videos de cada sección"><span class="ic">🎓</span> Centro de aprendizaje <span class="cnt"></span></button>

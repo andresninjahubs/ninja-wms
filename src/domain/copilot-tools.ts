@@ -215,6 +215,62 @@ export const COPILOT_TOOLS: ToolSpec[] = [
     description: 'Pool de tareas asignables por tipo, con su id, referencia, cliente, unidades y a quién están asignadas. Tipos: PICK (órdenes por pickear), PACK (órdenes recolectadas por EMPACAR), SHIP (órdenes empacadas por DESPACHAR), PUTAWAY (recepción por GUARDAR en almacenaje), RECEIVE (recepciones por cotejar/recibir), RESLOT (re-slotting sugerido), COUNT (conteos). Úsalo para "¿qué hay pendiente de empacar/despachar/guardar/recepcionar?", "¿qué falta por mover a su ubicación?" y antes de asignar una tarea, para obtener su id.',
     parameters: { type: 'object', properties: { tipo: { type: 'string', enum: ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESLOT', 'COUNT'], description: 'tipo de tarea (def PUTAWAY)' }, soloSinAsignar: { type: 'boolean', description: 'solo las que no tienen operario (def false)' }, limite: int('máx. resultados (def 40)') } },
   },
+  // ---- Lecturas incorporadas en v111: cosas que el sistema sabía y el copiloto no podía mirar ----
+  {
+    name: 'instrucciones_vigentes',
+    description: 'Lee las INSTRUCCIONES que el administrador dejó vigentes para el agente ("hoy priorizar Chilexpress", "no despachar Tienda X"). Consúltala ANTES de proponer o ejecutar algo que pudiera contradecir una directriz ya dada, y cuando te pregunten "¿qué instrucciones tengo?".',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'estado_automatismos',
+    description: 'Estado ACTUAL de los automatismos de la bodega: modo de asignación (advisory/estricto), auto-balanceo continuo encendido o apagado, y si los operarios pueden tomar tareas por su cuenta. Úsala antes de afirmar cómo está configurado algo y antes de cambiarlo, para no describir un estado que no verificaste.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'picklist_orden',
+    description: 'Ruta de picking de una orden, línea por línea: de qué ubicación sacar cada SKU, qué lote y cuánto. Úsala para "¿de dónde saco esto?" o para dictarle a un operario qué recorrer.',
+    parameters: { type: 'object', properties: { orden: str('n° de orden o id'), sellerId: str('id del cliente (opcional)') }, required: ['orden'] },
+  },
+  {
+    name: 'detalle_orden',
+    description: 'Ficha completa de una orden: líneas, destinatario, dirección, courier, tracking, canal, compromiso de salida y estado. Úsala cuando pregunten por los datos de un pedido concreto; listar_ordenes y linea_tiempo_orden no traen destinatario ni tracking.',
+    parameters: { type: 'object', properties: { orden: str('n° de orden o id'), sellerId: str('id del cliente (opcional)') }, required: ['orden'] },
+  },
+  {
+    name: 'tareas_operario',
+    description: 'Qué tiene una persona concreta: sus tareas asignadas, cuál está en curso y qué hay disponible para que tome. Úsala para "¿en qué está Juan?" y SIEMPRE antes de vaciarlo o reasignarle trabajo.',
+    parameters: { type: 'object', properties: { operario: str('nombre o id del operario') }, required: ['operario'] },
+  },
+  {
+    name: 'ordenes_duplicadas',
+    description: 'Detecta pedidos repetidos: mismas órdenes del mismo cliente con la misma referencia externa entradas más de una vez. Sirve para no pickear dos veces lo mismo, que es plata perdida. Úsala si preguntan por duplicados o antes de una jornada grande de picking.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'facturacion_operacion',
+    description: 'Facturación CONSOLIDADA de toda la operación: totales, facturas por estado y evolución. Distinta de facturacion_cliente, que es de un solo cliente. Úsala para "¿cuánto llevamos facturado?" a nivel bodega.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'comparativa_clientes',
+    description: 'Compara a los clientes de la operación en un mes: volumen, órdenes, unidades e ingreso. Úsala para "¿qué cliente pesa más?", "¿dónde poner capacidad?" o rankings del mes.',
+    parameters: { type: 'object', properties: { year: { type: 'number', description: 'año (def. el actual)' }, month: { type: 'number', description: 'mes 1-12 (def. el actual)' } } },
+  },
+  {
+    name: 'sugerir_ubicacion',
+    description: 'Dónde guardar una cantidad de un SKU, según la lógica real del sistema (afinidad, capacidad libre, rotación). Úsala para "¿dónde guardo estos 200?".',
+    parameters: { type: 'object', properties: { sku: str('SKU a guardar'), cantidad: { type: 'number', description: 'unidades a guardar' }, sellerId: str('id del cliente (opcional)') }, required: ['sku', 'cantidad'] },
+  },
+  {
+    name: 'identificar_codigo',
+    description: 'Traduce un código de barras a qué producto es y cuántas unidades base trae ese empaque. Úsala cuando alguien te dicte o escriba un código y haya que saber qué es antes de recibir, guardar o pickear.',
+    parameters: { type: 'object', properties: { codigo: str('código de barras leído o dictado'), sellerId: str('id del cliente (opcional)') }, required: ['codigo'] },
+  },
+  {
+    name: 'reglas_agente',
+    description: 'Cómo está configurado el agente autónomo: sus reglas (encendidas, umbral, enfriamiento, si avisan o ejecutan), su nivel de autonomía, el modo sombra, la ventana horaria y el último ciclo. Úsala para explicar POR QUÉ saltó una alerta, por qué una acción quedó propuesta en vez de ejecutarse, o por qué el agente no hizo nada.',
+    parameters: { type: 'object', properties: {} },
+  },
 ];
 
 /**
@@ -339,6 +395,104 @@ export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
       properties: { operario: str('id o nombre del operario que hay que dejar sin tareas') },
       required: ['operario'],
     },
+  },
+  {
+    name: 'recibir_recepcion',
+    description: 'RECIBE mercadería contra una recepción existente: registra lo que llegó de verdad por línea y lo ingresa al stock. Úsala cuando digan "llegó el camión de X", "recibe 80 de la línea 1". Si no sabes las líneas, usa recepciones primero. Deja movimientos en el kardex.',
+    parameters: {
+      type: 'object',
+      properties: {
+        recepcion: str('referencia o id de la recepción'),
+        sellerId: str('id del cliente (opcional)'),
+        conteos: {
+          type: 'array',
+          description: 'lo recibido por línea',
+          items: { type: 'object', properties: { linea: { type: 'number', description: 'n° de línea' }, cantidad: { type: 'number', description: 'unidades recibidas ahora' }, lote: str('lote (opcional)'), vencimiento: str('vencimiento ISO (opcional)') }, required: ['linea', 'cantidad'] },
+        },
+      },
+      required: ['recepcion', 'conteos'],
+    },
+  },
+  {
+    name: 'cerrar_recepcion',
+    description: 'CIERRA una recepción ya cotejada: no admite más ingresos contra ella. Úsala cuando digan "cierra la recepción X" o "ya terminamos con ese inbound".',
+    parameters: { type: 'object', properties: { recepcion: str('referencia o id'), sellerId: str('id del cliente (opcional)') }, required: ['recepcion'] },
+  },
+  {
+    name: 'cancelar_orden',
+    description: 'CANCELA una orden de salida y libera el stock que tenía reservado. Úsala cuando digan "anula el pedido X" o "el cliente se arrepintió". Se puede deshacer con reactivar_orden.',
+    parameters: { type: 'object', properties: { orden: str('n° de orden o id'), sellerId: str('id del cliente (opcional)') }, required: ['orden'] },
+  },
+  {
+    name: 'reactivar_orden',
+    description: 'REACTIVA una orden cancelada para volver a trabajarla. No vuelve a reservar stock por sí sola: después hay que reservar.',
+    parameters: { type: 'object', properties: { orden: str('n° de orden o id'), sellerId: str('id del cliente (opcional)') }, required: ['orden'] },
+  },
+  {
+    name: 'reservar_ordenes',
+    description: 'RESERVA stock para VARIAS órdenes de una vez. Sin lista de órdenes, reserva todas las que estén ingresadas y tengan stock. Úsala para "reserva todo lo que se pueda" o "reserva los pedidos de hoy".',
+    parameters: {
+      type: 'object',
+      properties: { ordenes: { type: 'array', items: { type: 'string' }, description: 'n° de órdenes; omítelo para reservar todas las que se pueda' }, sellerId: str('id del cliente (opcional)') },
+    },
+  },
+  {
+    name: 'liberar_asignacion',
+    description: 'Le quita UNA tarea concreta al operario que la tiene y la devuelve al pool para que la tome otro. Para dejar a alguien sin NINGUNA tarea usa vaciar_operario.',
+    parameters: { type: 'object', properties: { tipo: { type: 'string', enum: ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'RESLOT', 'COUNT'], description: 'tipo de tarea' }, entidad: str('n° de orden o referencia de la tarea') }, required: ['tipo', 'entidad'] },
+  },
+  {
+    name: 'asignar_tareas_masivo',
+    description: 'Asigna VARIAS tareas a operarios de una vez. Úsala cuando haya que repartir una lista concreta a personas concretas; si solo quieres repartir parejo, usa balancear_carga.',
+    parameters: {
+      type: 'object',
+      properties: {
+        asignaciones: {
+          type: 'array',
+          description: 'lista de tarea → operario',
+          items: { type: 'object', properties: { tipo: { type: 'string', enum: ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'RESLOT', 'COUNT'] }, entidad: str('n° de orden o referencia'), operario: str('nombre o id del operario') }, required: ['tipo', 'entidad', 'operario'] },
+        },
+      },
+      required: ['asignaciones'],
+    },
+  },
+  {
+    name: 'crear_devolucion',
+    description: 'Abre una DEVOLUCIÓN (RMA) contra una orden ya despachada. Úsala cuando digan "el cliente devuelve el pedido X". Después hay que procesarla para decidir qué pasa con cada unidad.',
+    parameters: { type: 'object', properties: { orden: str('n° de la orden original'), motivo: str('motivo de la devolución (opcional)'), sellerId: str('id del cliente (opcional)') }, required: ['orden'] },
+  },
+  {
+    name: 'procesar_devolucion',
+    description: 'PROCESA una devolución: por cada SKU decide cuánto vuelve a stock vendible, cuánto va a merma y cuánto a cuarentena. Mueve inventario de verdad. Úsala cuando digan "de la devolución X, 3 vuelven a stock y 1 a merma".',
+    parameters: {
+      type: 'object',
+      properties: {
+        devolucion: str('referencia o id de la devolución'),
+        sellerId: str('id del cliente (opcional)'),
+        lineas: {
+          type: 'array',
+          description: 'disposición por SKU',
+          items: { type: 'object', properties: { sku: str('SKU'), aStock: { type: 'number', description: 'unidades que vuelven a vendible' }, aMerma: { type: 'number', description: 'unidades dadas de baja' }, aCuarentena: { type: 'number', description: 'unidades a revisar' }, nota: str('nota (opcional)') }, required: ['sku'] },
+        },
+        cerrar: { type: 'boolean', description: 'true (def.) cierra la devolución al procesarla' },
+      },
+      required: ['devolucion', 'lineas'],
+    },
+  },
+  {
+    name: 'cancelar_devolucion',
+    description: 'Anula una devolución abierta que no corresponde. No mueve inventario.',
+    parameters: { type: 'object', properties: { devolucion: str('referencia o id'), sellerId: str('id del cliente (opcional)') }, required: ['devolucion'] },
+  },
+  {
+    name: 'mensaje_a_operario',
+    description: 'Manda un mensaje de texto al canal de operaciones de UN operario, que le llega a su app. Úsala para cerrar el ciclo cuando detectas algo: "avísale a Pedro que la orden 123 es urgente", "dile al equipo de packing que falta cinta". Una vez enviado no se puede borrar.',
+    parameters: { type: 'object', properties: { operario: str('nombre o id del operario destinatario'), mensaje: str('texto del mensaje') }, required: ['operario', 'mensaje'] },
+  },
+  {
+    name: 'recibir_insumos_embalaje',
+    description: 'Ingresa stock de un INSUMO DE EMBALAJE (cajas, cinta, bolsas) que llegó a la bodega. Úsala para "llegaron 500 cajas medianas". Para consultar cuánto queda usa insumos_embalaje.',
+    parameters: { type: 'object', properties: { sku: str('SKU del insumo'), cantidad: { type: 'number', description: 'unidades recibidas' }, referencia: str('n° de factura o guía del proveedor (opcional)'), costoUnitario: { type: 'number', description: 'costo por unidad (opcional)' } }, required: ['sku', 'cantidad'] },
   },
   {
     name: 'reasignar_ociosidad',

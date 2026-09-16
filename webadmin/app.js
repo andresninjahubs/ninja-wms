@@ -659,6 +659,13 @@
     if(!document.querySelector('.page[data-pg="dashboard"].on'))return;
     loadDash(true).then(dashTick);
   });
+  // Horas con un decimal. El backend manda horas ya calculadas; los minutos
+  // quedan de respaldo por si el panel habla con una versión anterior.
+  function hrs(h,min){
+    var v = (h!=null) ? h : (min!=null ? Math.round((min/60)*10)/10 : null);
+    if(v==null)return '—';
+    return v.toLocaleString('es-CL',{minimumFractionDigits:1,maximumFractionDigits:1});
+  }
   function money(n,cur){ try{ return (n||0).toLocaleString('es-CL',{style:'currency',currency:cur||'CLP',maximumFractionDigits:0}); }catch(e){ return '$'+fmtInt(n); } }
   function bar(pct,cls){ return '<div class="t"><i class="'+(cls||'')+'" style="width:'+Math.max(0,Math.min(100,pct||0))+'%"></i></div>'; }
   function hace(min){
@@ -679,7 +686,7 @@
       {cls:'info', l:'Precisión de preparación', v:(p.pct==null?'—':p.pct+'%'),
        s:(p.pct==null? 'aún sin pedidos verificados al empacar'
           : fmtInt(p.pedidosVerificados)+' verificados · '+fmtInt(p.pedidosConError)+' con diferencia · '+p.ventanaDias+' días')},
-      {cls:'info', duo:[{v:(t.b2bMin==null?'—':t.b2bMin), l:'min B2B'},{v:(t.b2cMin==null?'—':t.b2cMin), l:'min B2C'}],
+      {cls:'info', duo:[{v:hrs(t.b2bHoras,t.b2bMin), l:'h B2B'},{v:hrs(t.b2cHoras,t.b2cMin), l:'h B2C'}],
        l:'Tiempo de preparación', s:'promedio de reserva a empaque · últimos '+t.ventanaDias+' días'},
       {cls:(oc.pct==null?'info':oc.pct>=90?'crit':oc.pct>=75?'warn':'good'), l:'Ocupación de bodega',
        v:(oc.pct==null?'—':oc.pct+'%'), s:fmtInt(oc.usado)+' de '+fmtInt(oc.capacidad)+' '+oc.unidad+' · '+oc.ubicaciones+' ubicaciones'}

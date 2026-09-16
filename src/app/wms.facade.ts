@@ -580,7 +580,7 @@ export class WmsFacade {
     const settings = await this.agentSettings(operationId);
     const mode = settings.actionMode;
     if (canWrite) {
-      sys += ' Además puedes EJECUTAR acciones sobre órdenes con la herramienta avanzar_estado_orden (reservar, pickear, empacar, despachar), CREAR una recepción nueva (crear_recepcion) o una orden de salida nueva reservando su stock si te lo piden (crear_orden), asignar CUALQUIER tipo de tarea que ejecuta un operario —PICK, PACK, SHIP, PUTAWAY, RECEIVE, RESLOT o COUNT— (asignar_tarea), balancear la carga sin asignar (balancear_carga), DEJAR SIN TAREAS a un operario concreto repartiendo su carga al resto (vaciar_operario — es la única que le quita trabajo ya asignado a una persona), y CONFIGURAR LOS AUTOMATISMOS de la bodega: activar/desactivar el auto-balanceo continuo (activar_auto_balanceo), fijar el modo de asignación advisory/estricto (fijar_modo_asignacion) y disparar la reasignación por ociosidad (reasignar_ociosidad). Cuando el administrador te da una directriz para "operar en automático" (ej. "mantén el equipo balanceado solo", "que nadie quede ocioso"), traduce esa intención a estas herramientas de automatismo. Para crear órdenes o recepciones, si no sabes el id del cliente usa clientes_operacion y si no conoces los SKU usa catalogo_productos antes de crear. REGLA INNEGOCIABLE sobre lo que informas: describe SOLO lo que la herramienta devolvió. Si el resultado trae sinCambios:true, o un contador en 0, o ok:false, di claramente que NO se hizo el cambio y por qué; nunca lo cuentes como hecho ni inventes a qué operario pasó cada tarea. Si te piden confirmar algo que acabas de hacer, vuelve a consultarlo con la herramienta de lectura antes de responder.';
+      sys += ' Además puedes EJECUTAR acciones sobre órdenes con la herramienta avanzar_estado_orden (reservar, pickear, empacar, despachar), CREAR una recepción nueva (crear_recepcion) o una orden de salida nueva reservando su stock si te lo piden (crear_orden), asignar CUALQUIER tipo de tarea que ejecuta un operario —PICK, PACK, SHIP, PUTAWAY, RECEIVE, RESLOT o COUNT— (asignar_tarea), balancear la carga sin asignar (balancear_carga), DEJAR SIN TAREAS a un operario concreto repartiendo su carga al resto (vaciar_operario — es la única que le quita trabajo ya asignado a una persona), y CONFIGURAR LOS AUTOMATISMOS de la bodega: activar/desactivar el auto-balanceo continuo (activar_auto_balanceo), fijar el modo de asignación advisory/estricto (fijar_modo_asignacion) y disparar la reasignación por ociosidad (reasignar_ociosidad). Cuando el administrador te da una directriz para "operar en automático" (ej. "mantén el equipo balanceado solo", "que nadie quede ocioso"), traduce esa intención a estas herramientas de automatismo. También puedes CERRAR los flujos que antes quedaban a medias: recibir mercadería contra una recepción y cerrarla (recibir_recepcion, cerrar_recepcion), cancelar y reactivar órdenes (cancelar_orden, reactivar_orden), reservar varias de una vez (reservar_ordenes), soltar una tarea al pool o asignar varias de golpe (liberar_asignacion, asignar_tareas_masivo), manejar devoluciones (crear_devolucion, procesar_devolucion, cancelar_devolucion), avisarle a un operario en su app (mensaje_a_operario) e ingresar insumos de embalaje (recibir_insumos_embalaje). Antes de opinar o actuar sobre algo que ya está configurado, MÍRALO: instrucciones_vigentes para las directrices que ya te dieron, estado_automatismos para el modo de asignación y el auto-balanceo, reglas_agente para entender por qué el agente hizo o no hizo algo, y tareas_operario antes de tocarle la carga a alguien. Para crear órdenes o recepciones, si no sabes el id del cliente usa clientes_operacion y si no conoces los SKU usa catalogo_productos antes de crear. REGLA INNEGOCIABLE sobre lo que informas: describe SOLO lo que la herramienta devolvió. Si el resultado trae sinCambios:true, o un contador en 0, o ok:false, di claramente que NO se hizo el cambio y por qué; nunca lo cuentes como hecho ni inventes a qué operario pasó cada tarea. Si te piden confirmar algo que acabas de hacer, vuelve a consultarlo con la herramienta de lectura antes de responder.';
       sys += mode === 'confirm'
         ? ' El modo es CONFIRMACIÓN: las acciones que la política no permite ejecutar directamente NO se ejecutan al invocar la herramienta; quedan PROPUESTAS para que el usuario confirme (el resultado de la herramienta te dirá si se ejecutó o quedó propuesta). Si el usuario pide avanzar VARIAS órdenes (ej. "despacha las 3 que están listas"), invoca la herramienta UNA VEZ POR CADA orden en este mismo turno, para dejarlas TODAS propuestas. Nunca digas que algo se ejecutó si la herramienta respondió que quedó propuesto. No inventes órdenes: usa las herramientas de consulta (listar_ordenes) para saber cuáles corresponden.'
         : ' El modo es DIRECTO: la acción se ejecuta al invocar la herramienta salvo que la política de autonomía la deje propuesta (la herramienta te lo dirá). Si el usuario pide varias órdenes, invoca la herramienta una vez por cada una y confírmale lo realizado.';
@@ -750,6 +750,209 @@ export class WmsFacade {
         return { ok: true, modoAsignacion: modo };
       } catch (e: any) { return { error: (e && e.message) || 'no se pudo fijar el modo' }; }
     }
+    // ---- Acciones incorporadas en v111 ----
+    // Helper local: resolver una recepción por referencia o id dentro del alcance.
+    if (name === 'recibir_recepcion' || name === 'cerrar_recepcion') {
+      if (!canWrite) return { error: 'No tienes permisos sobre recepciones.' };
+      const clave = String(args?.recepcion ?? args?.referencia ?? '').trim();
+      if (!clave) return { error: 'Falta la recepción. Usa recepciones para ver las pendientes.' };
+      let encontrada: { sellerId: string; rec: any } | null = null;
+      for (const sid of await this.copilotScope(operationId, sellerId)) {
+        const rec = (await this.listReceipts(sid).catch(() => [] as any[])).find((r: any) => r.id === clave || r.reference === clave);
+        if (rec) { encontrada = { sellerId: sid, rec }; break; }
+      }
+      if (!encontrada) return { error: `No encontré la recepción "${clave}".` };
+      if (name === 'cerrar_recepcion') {
+        // Si ya quedó completa al recibir, cerrarla otra vez no es un error:
+        // es que no había nada que hacer. Decirlo es más útil que reventar.
+        if (String(encontrada.rec.status) === 'RECEIVED') {
+          return { ok: true, sinCambios: true, recepcion: encontrada.rec.reference || encontrada.rec.id, estado: encontrada.rec.status, mensaje: 'Esa recepción ya estaba cerrada (se completó al recibir).' };
+        }
+        try {
+          const r = await this.closeReceipt(encontrada.sellerId, encontrada.rec.id, actor?.id || 'copiloto');
+          await this.recordAgentAction({ operationId, sellerId: encontrada.sellerId, agent: 'copilot', decision: `cerrar recepción ${clave}`, actor: actor?.id || 'copiloto', orderRef: clave, result: `ok: ${r.status}`, recommendationId: null });
+          return { ok: true, recepcion: r.reference || r.id, estado: r.status };
+        } catch (e: any) { return { error: (e && e.message) || 'no se pudo cerrar la recepción' }; }
+      }
+      const conteos = Array.isArray(args?.conteos) ? args.conteos : [];
+      if (!conteos.length) return { error: 'Faltan los conteos por línea. Ej: [{ "linea": 1, "cantidad": 80 }].' };
+      const counts = conteos.map((c: any) => ({
+        lineNo: Math.trunc(Number(c?.linea ?? c?.lineNo)),
+        qty: Number(c?.cantidad ?? c?.qty),
+        lot: c?.lote ?? c?.lot ?? null,
+        expiry: c?.vencimiento ?? c?.expiry ?? null,
+      }));
+      const mala = counts.find((c: any) => !Number.isFinite(c.lineNo) || !(c.qty > 0));
+      if (mala) return { error: 'Cada conteo necesita un n° de línea y una cantidad mayor que cero.' };
+      try {
+        const r: any = await this.receiveReceipt(encontrada.sellerId, encontrada.rec.id, counts as any, actor?.id || 'copiloto');
+        const recibidas = (r.lines || []).reduce((t: number, l: any) => t + (l.receivedQty || 0), 0);
+        const esperadas = (r.lines || []).reduce((t: number, l: any) => t + (l.expectedQty || 0), 0);
+        await this.recordAgentAction({ operationId, sellerId: encontrada.sellerId, agent: 'copilot', decision: `recibir recepción ${clave}`, actor: actor?.id || 'copiloto', orderRef: clave, result: `ok: ${recibidas}/${esperadas}`, recommendationId: null });
+        return { ok: true, recepcion: r.reference || r.id, estado: r.status, unidadesRecibidas: recibidas, unidadesEsperadas: esperadas, pendientes: Math.max(0, esperadas - recibidas) };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo recibir' }; }
+    }
+    if (name === 'cancelar_orden' || name === 'reactivar_orden') {
+      if (!canWrite) return { error: 'No tienes permisos sobre órdenes.' };
+      const r = await this.copilotResolveOrder(operationId, sellerId, String(args?.orden || ''));
+      if (!r) return { error: `No encontré la orden "${args?.orden ?? ''}".` };
+      try {
+        const o = name === 'cancelar_orden'
+          ? await this.cancelOrder(r.sellerId, r.order.id, actor?.id || 'copiloto')
+          : await this.reactivateOrder(r.sellerId, r.order.id, actor?.id || 'copiloto');
+        await this.recordAgentAction({ operationId, sellerId: r.sellerId, agent: 'copilot', decision: `${name} ${r.order.externalOrderId || r.order.id}`, actor: actor?.id || 'copiloto', orderRef: r.order.externalOrderId || r.order.id, result: `ok: ${o.status}`, recommendationId: null });
+        // La nota se deriva del estado REAL que devolvió el dominio, no de lo que
+        // uno supone que hace reactivar: según el caso vuelve con reserva o sin ella.
+        const nota = name === 'cancelar_orden'
+          ? 'El stock que tenía reservado quedó liberado.'
+          : (o.status === 'RECEIVED'
+            ? 'La orden volvió a estar abierta SIN stock reservado: hay que reservarla.'
+            : `La orden volvió a ${o.status}: su reserva sigue en pie.`);
+        return { ok: true, orden: o.externalOrderId || o.id, estado: o.status, nota };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo' }; }
+    }
+    if (name === 'reservar_ordenes') {
+      if (!canWrite) return { error: 'No tienes permisos para reservar.' };
+      const scope = await this.copilotScope(operationId, sellerId);
+      const pedidas: string[] | null = Array.isArray(args?.ordenes) && args.ordenes.length ? args.ordenes.map(String) : null;
+      let solicitadas = 0, reservadas = 0, conError = 0; const detalle: any[] = [];
+      try {
+        if (pedidas) {
+          // Resuelve cada orden a su cliente: el usuario escribe n° de orden, no ids.
+          const porCliente = new Map<string, string[]>();
+          for (const num of pedidas) {
+            const r = await this.copilotResolveOrder(operationId, sellerId, num);
+            if (!r) { conError++; detalle.push({ orden: num, error: 'no encontrada' }); continue; }
+            porCliente.set(r.sellerId, (porCliente.get(r.sellerId) || []).concat(r.order.id));
+          }
+          for (const [sid, ids] of porCliente) {
+            const r: any = await this.allocateOrders(sid, ids, actor?.id || 'copiloto');
+            solicitadas += r.solicitadas; reservadas += r.reservadas; conError += r.conError;
+            detalle.push(...(r.reserved || []));
+          }
+        } else {
+          for (const sid of scope) {
+            const r: any = await this.allocateOrders(sid, null, actor?.id || 'copiloto');
+            solicitadas += r.solicitadas; reservadas += r.reservadas; conError += r.conError;
+            detalle.push(...(r.reserved || []));
+          }
+        }
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo reservar' }; }
+      await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: 'reservar órdenes en lote', actor: actor?.id || 'copiloto', orderRef: null, result: `ok: ${reservadas}/${solicitadas}`, recommendationId: null });
+      if (!reservadas) return { ok: true, sinCambios: true, solicitadas, reservadas: 0, conError, mensaje: 'No se reservó ninguna orden: o no había órdenes ingresadas, o no hay stock disponible. NO digas que se reservó nada.' };
+      return { ok: true, solicitadas, reservadas, conError, detalle: detalle.slice(0, 15) };
+    }
+    if (name === 'liberar_asignacion') {
+      if (!canWrite) return { error: 'No tienes permisos sobre asignaciones.' };
+      const tipo = String(args?.tipo || 'PICK') as WorkTaskType;
+      const clave = String(args?.entidad || '').trim();
+      if (!clave) return { error: 'Falta la tarea a liberar.' };
+      const abiertas = this.assignments ? await this.assignments.listOpen(operationId) : [];
+      const asig = abiertas.find((x) => x.type === tipo && (x.entityId === clave || x.entityRef === clave));
+      if (!asig) return { error: `No hay una tarea ${tipo} asignada con referencia "${clave}". Usa tareas_operario o trabajo_pendiente para ubicarla.` };
+      try {
+        const r = await this.releaseAssignment(operationId, asig.entityId, tipo, actor?.id || 'copiloto');
+        if (!r.ok) return { error: 'No se pudo liberar la tarea.' };
+        await this.recordAgentAction({ operationId, sellerId: asig.sellerId, agent: 'copilot', decision: `liberar ${tipo} ${clave}`, actor: actor?.id || 'copiloto', orderRef: clave, result: 'ok', recommendationId: null });
+        return { ok: true, tipo, tarea: asig.entityRef, estabaEn: asig.operator, mensaje: 'La tarea volvió al pool: ya la puede tomar otro operario.' };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo liberar' }; }
+    }
+    if (name === 'asignar_tareas_masivo') {
+      if (!canWrite) return { error: 'No tienes permisos para asignar tareas.' };
+      const lista = Array.isArray(args?.asignaciones) ? args.asignaciones : [];
+      if (!lista.length) return { error: 'Falta la lista de asignaciones.' };
+      const items: any[] = []; const errores: any[] = [];
+      for (const it of lista) {
+        const tipo = String(it?.tipo || 'PICK') as WorkTaskType;
+        const quien = await this.copilotResolveOperator(operationId, it?.operario);
+        if (!quien) { errores.push({ entidad: it?.entidad, error: `operario "${it?.operario ?? ''}" no identificado` }); continue; }
+        const clave = String(it?.entidad || '').trim();
+        const pool = await this.getTaskPool(operationId, tipo).catch(() => [] as any[]);
+        const t = pool.find((x: any) => x.entityId === clave || x.entityRef === clave);
+        if (!t) { errores.push({ entidad: clave, error: `no hay tarea ${tipo} pendiente con esa referencia` }); continue; }
+        items.push({ type: tipo, entityId: t.entityId, entityRef: t.entityRef, sellerId: t.sellerId, unitsEstimate: t.unidades, operator: quien.id });
+      }
+      if (!items.length) return { ok: false, asignadas: 0, errores, mensaje: 'No se asignó ninguna tarea. NO digas que se asignó algo.' };
+      try {
+        const r = await this.bulkAssign(operationId, items, actor?.id || 'copiloto');
+        await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `asignación masiva (${r.asignadas})`, actor: actor?.id || 'copiloto', orderRef: null, result: `ok: ${r.asignadas}`, recommendationId: null });
+        return { ok: true, asignadas: r.asignadas, errores: errores.length ? errores : undefined };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo asignar' }; }
+    }
+    if (name === 'crear_devolucion' || name === 'procesar_devolucion' || name === 'cancelar_devolucion') {
+      if (!canWrite) return { error: 'No tienes permisos sobre devoluciones.' };
+      if (name === 'crear_devolucion') {
+        const r = await this.copilotResolveOrder(operationId, sellerId, String(args?.orden || ''));
+        if (!r) return { error: `No encontré la orden "${args?.orden ?? ''}" para devolver.` };
+        try {
+          const dev: any = await this.createReturn(r.sellerId, { originalOrderRef: r.order.externalOrderId || r.order.id, reason: args?.motivo ?? null }, actor?.id || 'copiloto');
+          await this.recordAgentAction({ operationId, sellerId: r.sellerId, agent: 'copilot', decision: `crear devolución de ${r.order.externalOrderId || r.order.id}`, actor: actor?.id || 'copiloto', orderRef: dev.reference || dev.id, result: 'ok', recommendationId: null });
+          return { ok: true, devolucion: dev.reference || dev.id, id: dev.id, ordenOriginal: r.order.externalOrderId || r.order.id, estado: dev.status, siguiente: 'Falta procesarla: decidir por SKU cuánto vuelve a stock, cuánto a merma y cuánto a cuarentena.' };
+        } catch (e: any) { return { error: (e && e.message) || 'no se pudo crear la devolución' }; }
+      }
+      const clave = String(args?.devolucion ?? args?.referencia ?? '').trim();
+      if (!clave) return { error: 'Falta la devolución. Usa devoluciones para ver las abiertas.' };
+      let hallada: { sellerId: string; dev: any } | null = null;
+      for (const sid of await this.copilotScope(operationId, sellerId)) {
+        const d = (await this.listReturns(sid).catch(() => [] as any[])).find((x: any) => x.id === clave || x.reference === clave);
+        if (d) { hallada = { sellerId: sid, dev: d }; break; }
+      }
+      if (!hallada) return { error: `No encontré la devolución "${clave}".` };
+      if (name === 'cancelar_devolucion') {
+        try {
+          const d: any = await this.cancelReturn(hallada.sellerId, hallada.dev.id, actor?.id || 'copiloto');
+          await this.recordAgentAction({ operationId, sellerId: hallada.sellerId, agent: 'copilot', decision: `cancelar devolución ${clave}`, actor: actor?.id || 'copiloto', orderRef: clave, result: 'ok', recommendationId: null });
+          return { ok: true, devolucion: d.reference || d.id, estado: d.status };
+        } catch (e: any) { return { error: (e && e.message) || 'no se pudo cancelar' }; }
+      }
+      const lineas = Array.isArray(args?.lineas) ? args.lineas : [];
+      if (!lineas.length) return { error: 'Faltan las líneas: por cada SKU, cuánto vuelve a stock, a merma o a cuarentena.' };
+      const parsed = lineas.map((l: any) => ({
+        sku: String(l?.sku || '').trim(),
+        toStock: Number(l?.aStock ?? l?.toStock ?? 0) || 0,
+        toMerma: Number(l?.aMerma ?? l?.toMerma ?? 0) || 0,
+        toQuarantine: Number(l?.aCuarentena ?? l?.toQuarantine ?? 0) || 0,
+        note: l?.nota ?? l?.note ?? null,
+      }));
+      if (parsed.some((l: any) => !l.sku)) return { error: 'Cada línea necesita su SKU.' };
+      if (parsed.every((l: any) => !l.toStock && !l.toMerma && !l.toQuarantine)) return { error: 'Todas las líneas vienen en cero: indica cuántas unidades van a cada destino.' };
+      try {
+        const d: any = await this.processReturn(hallada.sellerId, hallada.dev.id, { lines: parsed as any, close: args?.cerrar !== false }, actor?.id || 'copiloto');
+        const aStock = parsed.reduce((t: number, l: any) => t + l.toStock, 0);
+        const aMerma = parsed.reduce((t: number, l: any) => t + l.toMerma, 0);
+        const aCuar = parsed.reduce((t: number, l: any) => t + l.toQuarantine, 0);
+        await this.recordAgentAction({ operationId, sellerId: hallada.sellerId, agent: 'copilot', decision: `procesar devolución ${clave}`, actor: actor?.id || 'copiloto', orderRef: clave, result: `ok: ${aStock} stock / ${aMerma} merma / ${aCuar} cuarentena`, recommendationId: null });
+        return { ok: true, devolucion: d.reference || d.id, estado: d.status, aStock, aMerma, aCuarentena: aCuar };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo procesar la devolución' }; }
+    }
+    if (name === 'mensaje_a_operario') {
+      if (!canWrite) return { error: 'No tienes permisos para escribir al canal de operaciones.' };
+      const quien = await this.copilotResolveOperator(operationId, args?.operario);
+      if (!quien) return { error: `No identifiqué al operario "${args?.operario ?? ''}". Usa carga_operarios para ver los nombres.` };
+      const texto = String(args?.mensaje || '').trim();
+      if (!texto) return { error: 'Falta el texto del mensaje.' };
+      try {
+        await this.sendOpsMessage(operationId, {
+          threadUserId: quien.id, senderId: actor?.id || 'copiloto', senderName: 'Copiloto',
+          senderRole: String(actor?.role || 'ADMIN'), kind: 'text', text: texto,
+        } as any);
+        await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `mensaje a ${quien.name}`, actor: actor?.id || 'copiloto', orderRef: null, result: 'ok', recommendationId: null });
+        return { ok: true, destinatario: quien.name, mensaje: texto, nota: 'Le llega a su app. Una vez enviado no se puede borrar.' };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo enviar el mensaje' }; }
+    }
+    if (name === 'recibir_insumos_embalaje') {
+      if (!canWrite) return { error: 'No tienes permisos sobre insumos de embalaje.' };
+      const sku = String(args?.sku || '').trim();
+      const qty = Number(args?.cantidad);
+      if (!sku) return { error: 'Falta el SKU del insumo. Usa insumos_embalaje para ver los que existen.' };
+      if (!(qty > 0)) return { error: 'La cantidad recibida tiene que ser mayor que cero.' };
+      try {
+        await this.receivePackagingStock(operationId, sku, qty, actor?.id || 'copiloto', args?.referencia ?? null, args?.costoUnitario != null ? Number(args.costoUnitario) : null);
+        const m = (await this.listPackaging(operationId).catch(() => [] as any[])).find((x: any) => x.sku === sku);
+        await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `recibir embalaje ${sku} x${qty}`, actor: actor?.id || 'copiloto', orderRef: args?.referencia ?? null, result: 'ok', recommendationId: null });
+        return { ok: true, sku, nombre: m ? m.name : sku, recibidas: qty, referencia: args?.referencia ?? null };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo recibir el insumo' }; }
+    }
     if (name === 'reasignar_ociosidad') {
       if (!canWrite) return { error: 'No tienes permisos para reasignar.' };
       try {
@@ -837,6 +1040,18 @@ export class WmsFacade {
       case 'balancear_carga': return `repartir tareas ${a.tipo || 'PICK'}`;
       case 'reasignar_ociosidad': return 'mover tareas del más cargado al más libre';
       case 'vaciar_operario': return `dejar sin tareas a ${a.operario || '?'} y repartirlas al resto`;
+      case 'liberar_asignacion': return `soltar ${a.tipo || 'PICK'} ${a.entidad || '?'} de vuelta al pool`;
+      case 'asignar_tareas_masivo': return `${(a.asignaciones || []).length} tarea(s) a operarios`;
+      case 'reservar_ordenes': return (a.ordenes || []).length ? `reservar ${(a.ordenes || []).length} orden(es)` : 'reservar todas las órdenes que se pueda';
+      case 'cancelar_orden': return `cancelar la orden ${a.orden || '?'}`;
+      case 'reactivar_orden': return `reactivar la orden ${a.orden || '?'}`;
+      case 'recibir_recepcion': return `recibir ${(a.conteos || []).reduce((t: number, c: any) => t + (Number(c?.cantidad) || 0), 0)} un en la recepción ${a.recepcion || '?'}`;
+      case 'cerrar_recepcion': return `cerrar la recepción ${a.recepcion || '?'}`;
+      case 'crear_devolucion': return `abrir devolución de la orden ${a.orden || '?'}`;
+      case 'procesar_devolucion': return `procesar la devolución ${a.devolucion || '?'} (${(a.lineas || []).length} línea(s))`;
+      case 'cancelar_devolucion': return `cancelar la devolución ${a.devolucion || '?'}`;
+      case 'mensaje_a_operario': return `mensaje a ${a.operario || '?'}: "${String(a.mensaje || '').slice(0, 60)}"`;
+      case 'recibir_insumos_embalaje': return `ingresar ${a.cantidad || '?'} un de ${a.sku || '?'}`;
       case 'activar_auto_balanceo': return a.activar === false || a.activar === 'false' ? 'desactivar auto-balanceo' : 'activar auto-balanceo';
       case 'fijar_modo_asignacion': return `modo ${a.modo || 'advisory'}`;
       case 'crear_recepcion': return `recepción ${a.referencia || ''} ${(a.lineas || []).length} línea(s)${a.sellerId ? ' cliente ' + a.sellerId : ''}`.trim();
@@ -1186,6 +1401,127 @@ export class WmsFacade {
         case 'brief_ejecutivo': {
           const sid = pickSeller(a.sellerId);
           return this.getExecutiveBrief(operationId, { sellerId: sid });
+        }
+        // ---- Lecturas incorporadas en v111 ----
+        case 'instrucciones_vigentes': {
+          const list = await this.agentInstructions(operationId);
+          return {
+            total: list.length,
+            instrucciones: list.map((i: any) => ({ texto: i.text, desde: i.at, vence: i.expiresAt ?? null, puestaPor: i.actor ?? null })),
+          };
+        }
+        case 'estado_automatismos': {
+          const [modo, auto, self] = await Promise.all([
+            this.getAssignmentMode(operationId).catch(() => null),
+            this.getAutoBalanceEnabled(operationId).catch(() => null),
+            this.getOperatorSelfPickup(operationId).catch(() => null),
+          ]);
+          return {
+            modoAsignacion: modo,
+            modoAsignacionTexto: modo === 'strict' ? 'estricto: solo el operario asignado puede ejecutar su tarea' : 'advisory: cualquiera puede tomar cualquier tarea',
+            autoBalanceoContinuo: auto,
+            operariosTomanSolos: self,
+          };
+        }
+        case 'picklist_orden': {
+          const r = await this.copilotResolveOrder(operationId, pickSeller(a.sellerId), String(a.orden || ''));
+          if (!r) return { error: `No encontré la orden "${a.orden ?? ''}".` };
+          // Una orden sin reservar todavía no tiene ruta de picking. Eso es una
+          // respuesta, no un error: el copiloto tiene que poder explicarlo.
+          const lineas = await this.getPickList(r.sellerId, r.order.id).catch(() => null);
+          if (!lineas) {
+            return {
+              orden: r.order.externalOrderId || r.order.id, estado: r.order.status, cliente: r.sellerId,
+              lineas: [], totalUnidades: 0,
+              nota: `Todavía no hay ruta de picking: la orden está en ${r.order.status}. Hay que reservar su stock primero.`,
+            };
+          }
+          return {
+            orden: r.order.externalOrderId || r.order.id, estado: r.order.status, cliente: r.sellerId,
+            lineas: lineas.map((l: any) => ({ sku: l.sku, ubicacion: l.locationCode ?? l.locationId, lote: l.lot ?? null, cantidad: l.qty })),
+            totalUnidades: lineas.reduce((t: number, l: any) => t + (l.qty || 0), 0),
+          };
+        }
+        case 'detalle_orden': {
+          const r = await this.copilotResolveOrder(operationId, pickSeller(a.sellerId), String(a.orden || ''));
+          if (!r) return { error: `No encontré la orden "${a.orden ?? ''}".` };
+          const o: any = await this.getOrder(r.sellerId, r.order.id) || r.order;
+          return {
+            orden: o.externalOrderId || o.id, id: o.id, cliente: r.sellerId, estado: o.status, tipo: o.orderType ?? null,
+            canal: o.salesChannel ?? null, courier: o.carrier ?? null, tracking: o.trackingNumber ?? null,
+            compromiso: o.dueAt ?? null, origenCompromiso: o.dueSource ?? null, creada: o.createdAt ?? null,
+            destinatario: o.shipTo ?? null,
+            lineas: (o.lines || []).map((l: any) => ({ sku: l.sku, cantidad: l.qty, lote: l.lot ?? null })),
+            unidades: (o.lines || []).reduce((t: number, l: any) => t + (l.qty || 0), 0),
+            empaque: o.packing ? { bultos: o.packing.bultos ?? null, empacadaEn: o.packing.packedAt ?? null, verificacion: o.packing.verification ?? null } : null,
+          };
+        }
+        case 'tareas_operario': {
+          const quien = await this.copilotResolveOperator(operationId, a.operario);
+          if (!quien) return { error: `No identifiqué al operario "${a.operario ?? ''}". Usa carga_operarios para ver los nombres.` };
+          const board: any = await this.operatorBoard(operationId, quien.id);
+          return {
+            operario: quien.name,
+            tieneAsignadas: (board.mine || []).length,
+            enCurso: (board.mine || []).filter((t: any) => t.estado === 'in_progress').map((t: any) => ({ tipo: t.type, referencia: t.entityRef, cliente: t.cliente, unidades: t.unitsEstimate })),
+            asignadas: (board.mine || []).filter((t: any) => t.estado !== 'in_progress').map((t: any) => ({ tipo: t.type, referencia: t.entityRef, cliente: t.cliente, unidades: t.unitsEstimate })),
+            disponiblesParaTomar: (board.available || []).slice(0, 15).map((t: any) => ({ tipo: t.type, referencia: t.entityRef, cliente: t.cliente, unidades: t.unidades, motivo: t.motivo })),
+            modoAsignacion: board.mode, puedeTomarSolo: board.selfPickup,
+          };
+        }
+        case 'ordenes_duplicadas': {
+          const r = await this.auditDuplicateOrders(operationId);
+          return {
+            gruposDuplicados: (r.groups || []).length, ordenesRepetidas: r.totalDuplicates,
+            detalle: (r.groups || []).slice(0, 20).map((g) => ({ cliente: g.sellerId, referencia: g.externalOrderId, veces: g.count })),
+          };
+        }
+        case 'facturacion_operacion': {
+          return this.billingDashboard(operationId);
+        }
+        case 'comparativa_clientes': {
+          const ahora = new Date(this.clockNow());
+          return this.clientsOverview(operationId, {
+            year: Number(a.year) || ahora.getUTCFullYear(),
+            month: Number(a.month) || (ahora.getUTCMonth() + 1),
+          });
+        }
+        case 'sugerir_ubicacion': {
+          const sid = pickSeller(a.sellerId) || (await this.copilotScope(operationId, sellerScope))[0];
+          if (!sid) return { error: 'No pude determinar el cliente.' };
+          const qty = Number(a.cantidad);
+          if (!(qty > 0)) return { error: 'Falta la cantidad a guardar.' };
+          return this.suggestPutaway(sid, { sku: String(a.sku || ''), qty } as any);
+        }
+        case 'identificar_codigo': {
+          const codigo = String(a.codigo || '').trim();
+          if (!codigo) return { error: 'Falta el código de barras.' };
+          for (const sid of await this.copilotScope(operationId, pickSeller(a.sellerId))) {
+            const pack: any = await this.resolveBarcode(sid, codigo).catch(() => null);
+            if (pack) return { cliente: sid, sku: pack.sku, empaque: pack.code, unidadesPorEmpaque: pack.factor, codigo };
+          }
+          return { error: `El código "${codigo}" no corresponde a ningún producto ni empaque registrado.` };
+        }
+        case 'reglas_agente': {
+          const [reglas, estado] = await Promise.all([
+            this.agentRules(operationId).catch(() => [] as any[]),
+            this.agentStatus(operationId).catch(() => null as any),
+          ]);
+          return {
+            reglas: (reglas as any[]).map((r) => ({
+              regla: r.name, key: r.ruleKey, encendida: r.enabled, umbral: r.threshold, unidad: r.unit,
+              enfriamientoMin: r.cooldownMin, severidad: r.severity,
+              accion: r.autoAction ? r.autoAction.label : null,
+              modoAccion: r.actionType === 'execute' ? (r.actionMode === 'directo' ? 'ejecuta directo' : 'ejecuta con confirmación') : 'solo avisa',
+            })),
+            agente: estado ? {
+              nivelAutonomia: estado.settings.autonomyLevel, modoSombra: estado.settings.shadowMode,
+              enPausa: estado.settings.paused, planificacionConIA: estado.settings.llmPlanning,
+              llamadasLlmHoy: estado.llmCallsToday, maxLlamadasDia: estado.settings.maxLlmCallsPerDay,
+              ventanaHoraria: estado.ventana ? { dentro: estado.ventana.dentro, resumen: estado.ventana.resumen, proximaApertura: estado.ventana.proximaAperturaIso } : null,
+              ultimoCiclo: estado.lastCycle ? estado.lastCycle.at : null,
+            } : null,
+          };
         }
         case 'carga_operarios': {
           return this.operatorLoad(operationId);

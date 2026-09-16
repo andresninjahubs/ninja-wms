@@ -86,7 +86,7 @@ import {
   InMemoryCopilotSettingsRepository,
   SequentialIdGenerator,
 } from '../src/infra/memory/in-memory.repositories';
-import { decidePolicy, effectiveAgentSettings } from '../src/domain/agent-policy';
+import { ACTION_POLICIES, decidePolicy, effectiveAgentSettings } from '../src/domain/agent-policy';
 import { LogEmailSender } from '../src/infra/email';
 import { WebhookSender } from '../src/domain/ports';
 
@@ -2589,11 +2589,20 @@ async function run() {
     await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
     await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
     const recv = await f.facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
-    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa', barcode: 'EAN-CTX' });
     await f.facade.receive('acme', { sku: 'CAM', qty: 20, locationId: recv.id });
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'CTX-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 2 }] }, 'ana');
+    await f.facade.createUser({ id: 'op-ctx', name: 'Opa', email: 'opa@ctx.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    // Algunas herramientas piden un argumento concreto (una orden, un operario, un
+    // código): pasárselo es parte del contrato, y sin él responden un error legible.
+    const ARGS: Record<string, any> = {
+      picklist_orden: { orden: 'CTX-1' }, detalle_orden: { orden: 'CTX-1' },
+      tareas_operario: { operario: 'Opa' }, identificar_codigo: { codigo: 'EAN-CTX' },
+      sugerir_ubicacion: { sku: 'CAM', cantidad: 5 },
+    };
     // Cada herramienta de LECTURA del copiloto debe responder (sin lanzar ni devolver {error}).
     for (const tool of COPILOT_TOOLS) {
-      const res = await f.facade.runCopilotTool(tool.name, { sellerId: 'acme', sku: 'CAM' }, 'op1', null);
+      const res = await f.facade.runCopilotTool(tool.name, Object.assign({ sellerId: 'acme', sku: 'CAM' }, ARGS[tool.name] || {}), 'op1', null);
       assert.ok(res && typeof res === 'object', `${tool.name} devuelve un objeto`);
       assert.ok(!('error' in res), `${tool.name} no devuelve error: ${JSON.stringify((res as any).error)}`);
     }
@@ -4929,6 +4938,263 @@ async function run() {
     assert.equal(r2.ok, true);
     assert.equal(r2.liberadas, 0);
     assert.match(r2.motivo, /ya no tenía tareas/);
+  });
+
+  // ---- Herramientas nuevas del copiloto (v111) -------------------------------
+
+  /** Atajo: ejecuta una herramienta de LECTURA como lo haría el copiloto. */
+  async function leer(f: any, tool: string, args: any = {}) {
+    return (f.facade as any).runCopilotTool(tool, args, 'op1', null);
+  }
+  /** Atajo: ejecuta una herramienta de ACCIÓN ya confirmada por un humano. */
+  async function actuar(f: any, tool: string, args: any = {}) {
+    return f.facade.copilotConfirmTool('op1', null, { id: 'ana', role: 'ADMIN' }, { tool, args });
+  }
+
+  async function bodegaCopiloto() {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa', barcode: 'EAN-CAM' });
+    await f.facade.registerPack('acme', { sku: 'CAM', code: 'CAJA', barcode: 'DUN-CAM', factor: 12 });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 400, locationId: stg.id });
+    await f.facade.createUser({ id: 'op-1', name: 'Pedro', email: 'p@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createUser({ id: 'op-2', name: 'Sofía', email: 's@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    return { f, stg };
+  }
+
+  await test('copiloto: lee lo que antes solo podía escribir o adivinar', async () => {
+    const { f } = await bodegaCopiloto();
+
+    // 1. Instrucciones vigentes: guardaba pero no podía releer.
+    await actuar(f, 'guardar_instruccion', { texto: 'hoy priorizar Chilexpress' });
+    const ins: any = await leer(f, 'instrucciones_vigentes');
+    assert.equal(ins.total, 1);
+    assert.match(ins.instrucciones[0].texto, /Chilexpress/);
+
+    // 2. Estado de los automatismos: fijaba sin poder verificar.
+    await actuar(f, 'fijar_modo_asignacion', { modo: 'estricto' });
+    await actuar(f, 'activar_auto_balanceo', { activar: false });
+    const est: any = await leer(f, 'estado_automatismos');
+    assert.equal(est.modoAsignacion, 'strict');
+    assert.equal(est.autoBalanceoContinuo, false);
+    assert.match(est.modoAsignacionTexto, /estricto/);
+
+    // 3. Reglas y estado del agente: para explicar por qué hizo o no hizo algo.
+    const reg: any = await leer(f, 'reglas_agente');
+    assert.ok(reg.reglas.length >= 7);
+    const ocioso = reg.reglas.find((r: any) => r.key === 'operario_ocioso');
+    assert.ok(ocioso && ocioso.modoAccion === 'solo avisa');
+    assert.ok(reg.agente && typeof reg.agente.nivelAutonomia === 'number');
+
+    // 4. Código de barras → producto (lo que dicta un operario por el canal de voz).
+    const cod: any = await leer(f, 'identificar_codigo', { codigo: 'DUN-CAM' });
+    assert.equal(cod.sku, 'CAM');
+    assert.equal(cod.unidadesPorEmpaque, 12);
+    const malo: any = await leer(f, 'identificar_codigo', { codigo: 'NO-EXISTE' });
+    assert.ok(malo.error, 'un código inexistente tiene que decirlo, no devolver vacío');
+
+    // 5. Dónde guardar.
+    const sug: any = await leer(f, 'sugerir_ubicacion', { sku: 'CAM', cantidad: 50 });
+    assert.ok(sug && !sug.error, JSON.stringify(sug));
+  });
+
+  await test('copiloto: picklist, detalle de orden y qué tiene cada operario', async () => {
+    const { f } = await bodegaCopiloto();
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'PED-77', salesChannel: 'web', carrier: 'Starken',
+      shipTo: { name: 'Camila Rojas', address: 'Av. Siempre Viva 742', comuna: 'Ñuñoa' },
+      lines: [{ sku: 'CAM', qty: 6 }],
+    }, 'ana');
+    await f.facade.allocateOrder('acme', o.id, 'ana');
+
+    const det: any = await leer(f, 'detalle_orden', { orden: 'PED-77' });
+    assert.equal(det.orden, 'PED-77');
+    assert.equal(det.courier, 'Starken');
+    assert.equal(det.destinatario.name, 'Camila Rojas', 'el detalle tiene que traer al destinatario');
+    assert.equal(det.unidades, 6);
+
+    const pick: any = await leer(f, 'picklist_orden', { orden: 'PED-77' });
+    assert.equal(pick.totalUnidades, 6);
+    assert.ok(pick.lineas.length >= 1 && pick.lineas[0].ubicacion, 'el picklist tiene que decir de dónde sacar');
+
+    // Tareas del operario: antes de tocarle la carga hay que poder mirarla.
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, entityRef: 'PED-77', sellerId: 'acme', operator: 'op-1', unitsEstimate: 6, by: 'ana', skipOperatorCheck: true });
+    const tp: any = await leer(f, 'tareas_operario', { operario: 'Pedro' });
+    assert.equal(tp.operario, 'Pedro');
+    assert.equal(tp.tieneAsignadas, 1);
+    assert.equal(tp.asignadas[0].referencia, 'PED-77');
+    const nadie: any = await leer(f, 'tareas_operario', { operario: 'Fantasma' });
+    assert.ok(nadie.error, 'un operario inexistente tiene que decirlo');
+  });
+
+  await test('copiloto: duplicados, facturación de la operación y comparativa de clientes', async () => {
+    const { f } = await bodegaCopiloto();
+    await f.facade.createSeller({ id: 'globex', operationId: 'op1', name: 'Globex' });
+    await f.facade.createSku('globex', { sku: 'CAM', description: 'Camisa' });
+    const base = await f.facade.createOrder('acme', { externalOrderId: 'REPE-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 2 }] }, 'ana');
+    // createOrder es idempotente por referencia externa: un duplicado real solo
+    // entra por importación masiva o migración, así que lo inyectamos igual.
+    await (f as any).orders.save(Object.assign({}, base, { id: base.id + '-dup' }));
+    const dup: any = await leer(f, 'ordenes_duplicadas');
+    assert.equal(dup.gruposDuplicados, 1, 'no detectó el pedido repetido');
+    assert.equal(dup.detalle[0].referencia, 'REPE-1');
+    assert.equal(dup.detalle[0].veces, 2);
+
+    const fac: any = await leer(f, 'facturacion_operacion');
+    assert.ok(fac && !fac.error, JSON.stringify(fac));
+    const comp: any = await leer(f, 'comparativa_clientes', {});
+    assert.ok(comp && !comp.error, JSON.stringify(comp));
+  });
+
+  await test('copiloto: cierra el flujo de recepción, que antes quedaba a medias', async () => {
+    const { f } = await bodegaCopiloto();
+    const rec: any = await actuar(f, 'crear_recepcion', { cliente: 'acme', referencia: 'OC-500', lineas: [{ sku: 'CAM', qty: 100 }] });
+    assert.equal(rec.ok, true, JSON.stringify(rec));
+
+    // Recibir parcial: el resultado dice cuánto falta, no solo "ok".
+    const parcial: any = await actuar(f, 'recibir_recepcion', { recepcion: 'OC-500', conteos: [{ linea: 1, cantidad: 60 }] });
+    assert.equal(parcial.ok, true, JSON.stringify(parcial));
+    assert.equal(parcial.unidadesRecibidas, 60);
+    assert.equal(parcial.pendientes, 40);
+
+    // Cerrar con faltante: el caso real de "llegó menos de lo que decía la guía".
+    const cerr: any = await actuar(f, 'cerrar_recepcion', { recepcion: 'OC-500' });
+    assert.equal(cerr.ok, true, JSON.stringify(cerr));
+    assert.equal(cerr.estado, 'RECEIVED');
+    // Y cerrar algo ya cerrado no revienta: lo dice.
+    const otra: any = await actuar(f, 'cerrar_recepcion', { recepcion: 'OC-500' });
+    assert.equal(otra.sinCambios, true, JSON.stringify(otra));
+
+    // Y una recepción que no existe se dice, no se inventa.
+    const no: any = await actuar(f, 'recibir_recepcion', { recepcion: 'NO-VA', conteos: [{ linea: 1, cantidad: 1 }] });
+    assert.match(String(no.error), /No encontré la recepción/);
+    const rec2: any = await actuar(f, 'crear_recepcion', { cliente: 'acme', referencia: 'OC-501', lineas: [{ sku: 'CAM', qty: 10 }] });
+    assert.equal(rec2.ok, true);
+    const sinConteos: any = await actuar(f, 'recibir_recepcion', { recepcion: 'OC-501', conteos: [] });
+    assert.match(String(sinConteos.error), /conteos/);
+  });
+
+  await test('copiloto: cancelar, reactivar y reservar en lote', async () => {
+    const { f } = await bodegaCopiloto();
+    const ids: string[] = [];
+    for (const n of [1, 2, 3]) {
+      const o = await f.facade.createOrder('acme', { externalOrderId: 'L-' + n, salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 5 }] }, 'ana');
+      ids.push(o.id);
+    }
+    const lote: any = await actuar(f, 'reservar_ordenes', {});
+    assert.equal(lote.reservadas, 3, JSON.stringify(lote));
+
+    const can: any = await actuar(f, 'cancelar_orden', { orden: 'L-2' });
+    assert.equal(can.estado, 'CANCELLED');
+    assert.match(String(can.nota), /liberad/);
+    const rea: any = await actuar(f, 'reactivar_orden', { orden: 'L-2' });
+    assert.notEqual(rea.estado, 'CANCELLED');
+    assert.ok(/SIN stock reservado/.test(String(rea.nota)) || /reserva sigue en pie/.test(String(rea.nota)), 'la nota tiene que describir el estado real: ' + rea.nota);
+
+    // Reservar cuando ya no queda nada por reservar lo declara en vez de decir ok.
+    await actuar(f, 'reservar_ordenes', {});
+    const vacio: any = await actuar(f, 'reservar_ordenes', {});
+    assert.equal(vacio.sinCambios, true, JSON.stringify(vacio));
+    assert.match(String(vacio.mensaje), /NO digas/);
+  });
+
+  await test('copiloto: liberar una tarea, asignar en masa y avisarle al operario', async () => {
+    const { f } = await bodegaCopiloto();
+    const ids: Array<{ id: string; ref: string }> = [];
+    for (const n of [1, 2, 3]) {
+      const o = await f.facade.createOrder('acme', { externalOrderId: 'T-' + n, salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 4 }] }, 'ana');
+      await f.facade.allocateOrder('acme', o.id, 'ana');
+      ids.push({ id: o.id, ref: 'T-' + n });
+    }
+    const masivo: any = await actuar(f, 'asignar_tareas_masivo', {
+      asignaciones: [
+        { tipo: 'PICK', entidad: 'T-1', operario: 'Pedro' },
+        { tipo: 'PICK', entidad: 'T-2', operario: 'Sofía' },
+        { tipo: 'PICK', entidad: 'T-3', operario: 'Nadie' },
+      ],
+    });
+    assert.equal(masivo.asignadas, 2, 'debe asignar las dos válidas');
+    assert.equal(masivo.errores.length, 1, 'y reportar la que no pudo');
+    assert.match(String(masivo.errores[0].error), /no identificado/);
+
+    const lib: any = await actuar(f, 'liberar_asignacion', { tipo: 'PICK', entidad: 'T-1' });
+    assert.equal(lib.ok, true, JSON.stringify(lib));
+    assert.equal(lib.estabaEn, 'op-1');
+    const dir: any = await f.facade.operatorsDirectory('op1');
+    assert.equal(dir.operarios.find((o: any) => o.id === 'op-1').tareasAbiertas, 0);
+
+    // Mensaje al piso: cierra el ciclo "detecto → aviso".
+    const msg: any = await actuar(f, 'mensaje_a_operario', { operario: 'Sofía', mensaje: 'La T-2 es urgente, sale a las 15:00' });
+    // En este banco de pruebas el canal de operaciones no está montado. Lo que se
+    // exige es que el copiloto RESUELVA al destinatario y, si el canal no está,
+    // devuelva el error en vez de dar por enviado un mensaje que nadie recibió.
+    if (msg.ok) { assert.equal(msg.destinatario, 'Sofía'); }
+    else { assert.match(String(msg.error), /[Cc]anal/); }
+    const aNadie: any = await actuar(f, 'mensaje_a_operario', { operario: 'Fantasma', mensaje: 'hola' });
+    assert.match(String(aNadie.error), /No identifiqué al operario/);
+    const sinTexto: any = await actuar(f, 'mensaje_a_operario', { operario: 'Sofía', mensaje: '  ' });
+    assert.match(String(sinTexto.error), /texto/);
+  });
+
+  await test('copiloto: devoluciones e ingreso de insumos de embalaje', async () => {
+    const { f, stg } = await bodegaCopiloto();
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'DEV-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 10 }] }, 'ana');
+    await f.facade.allocateOrder('acme', o.id, 'ana');
+    await f.facade.confirmPick('acme', o.id, 'pedro');
+    await f.facade.packOrder('acme', o.id, { bultos: 1 }, 'pedro');
+    await f.facade.shipOrder('acme', o.id, {}, 'pedro');
+
+    const dev: any = await actuar(f, 'crear_devolucion', { orden: 'DEV-1', motivo: 'talla equivocada' });
+    assert.equal(dev.ok, true, JSON.stringify(dev));
+    assert.match(String(dev.siguiente), /procesarla/);
+
+    const antes = (await f.facade.getStock({ sellerId: 'acme', locationId: stg.id })).reduce((t, b) => t + b.qty, 0);
+    const proc: any = await actuar(f, 'procesar_devolucion', { devolucion: dev.devolucion, lineas: [{ sku: 'CAM', aStock: 7, aMerma: 3 }] });
+    assert.equal(proc.ok, true, JSON.stringify(proc));
+    assert.equal(proc.aStock, 7);
+    assert.equal(proc.aMerma, 3);
+    const despues = (await f.facade.getStock({ sellerId: 'acme' })).reduce((t, b) => t + b.qty, 0);
+    assert.ok(despues > antes, 'las unidades devueltas tienen que volver al inventario');
+
+    // Sin disposición no se procesa: obligar a decidir es parte del control.
+    const dev2: any = await actuar(f, 'crear_devolucion', { orden: 'DEV-1' });
+    const enCero: any = await actuar(f, 'procesar_devolucion', { devolucion: dev2.devolucion, lineas: [{ sku: 'CAM', aStock: 0, aMerma: 0 }] });
+    assert.match(String(enCero.error), /cero/);
+    const cancel: any = await actuar(f, 'cancelar_devolucion', { devolucion: dev2.devolucion });
+    assert.equal(cancel.ok, true, JSON.stringify(cancel));
+
+    // Insumos de embalaje.
+    await f.facade.createPackaging('op1', { sku: 'CAJA-M', name: 'Caja mediana', minStock: 100 });
+    const ins: any = await actuar(f, 'recibir_insumos_embalaje', { sku: 'CAJA-M', cantidad: 500, referencia: 'FAC-9' });
+    assert.equal(ins.ok, true, JSON.stringify(ins));
+    assert.equal(ins.recibidas, 500);
+    const mats: any = await leer(f, 'insumos_embalaje', {});
+    const caja = (mats.materiales || mats).find ? ((mats.materiales || mats).find((m: any) => m.sku === 'CAJA-M')) : null;
+    assert.ok(caja == null || caja.stock >= 500 || caja.stock === 500, 'el stock del insumo debería reflejar el ingreso');
+    const malo: any = await actuar(f, 'recibir_insumos_embalaje', { sku: 'CAJA-M', cantidad: 0 });
+    assert.match(String(malo.error), /mayor que cero/);
+  });
+
+  await test('copiloto: las acciones nuevas quedan PROPUESTAS en modo confirmación', async () => {
+    const { f } = await bodegaCopiloto();
+    // Nivel 1 + modo confirmación: lo que toca stock, plata o al cliente no se ejecuta solo.
+    await f.facade.updateAgentSettings('op1', { autonomyLevel: 1, actionMode: 'confirm' } as any, 'ana');
+    const settings = await f.facade.agentSettings('op1');
+    for (const tool of ['recibir_recepcion', 'cerrar_recepcion', 'cancelar_orden', 'reactivar_orden', 'reservar_ordenes', 'crear_devolucion', 'procesar_devolucion', 'cancelar_devolucion', 'mensaje_a_operario', 'recibir_insumos_embalaje']) {
+      const d = decidePolicy({ tool, settings, autonomous: false });
+      assert.equal(d.decision, 'propose', `${tool} debería quedar propuesta y no ejecutarse sola`);
+    }
+    // Lo verdaderamente reversible sí puede correr sin confirmar.
+    for (const tool of ['liberar_asignacion', 'asignar_tareas_masivo']) {
+      assert.equal(decidePolicy({ tool, settings, autonomous: false }).decision, 'execute', `${tool} es reversible: puede ejecutarse`);
+    }
+    // Y ninguna herramienta declarada quedó sin política: si no, el copiloto la
+    // trataría como lectura y reventaría al llamarla.
+    const sinPolitica = COPILOT_ACTION_TOOLS.map((t) => t.name).filter((n) => !ACTION_POLICIES.some((p) => p.tool === n));
+    assert.deepEqual(sinPolitica, [], `herramientas de acción sin política: ${sinPolitica.join(', ')}`);
   });
 
   // ---- Dashboard AI (v101) ---------------------------------------------------

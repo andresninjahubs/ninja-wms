@@ -32,7 +32,7 @@ export interface ActionPolicy {
   /** Si exige evidencia física (escaneo/confirmación de operario) para ser automática. */
   requiresEvidence: boolean;
   /** Categoría para límites y reporting. */
-  category: 'workload' | 'order' | 'inbound' | 'config' | 'memory';
+  category: 'workload' | 'order' | 'inbound' | 'returns' | 'comms' | 'config' | 'memory';
   label: string;
 }
 
@@ -50,6 +50,21 @@ export const ACTION_POLICIES: ActionPolicy[] = [
   { tool: 'crear_orden',            minLevel: 2, reversible: true,  requiresEvidence: false, category: 'order',    label: 'Crear orden' },
   { tool: 'avanzar_estado_orden',   minLevel: 2, reversible: false, requiresEvidence: true,  category: 'order',    label: 'Avanzar estado de orden' },
   { tool: 'fijar_deadline_orden',   minLevel: 2, reversible: true,  requiresEvidence: false, category: 'order',    label: 'Fijar deadline de preparación' },
+  // ---- v111: el copiloto pasa de crear cosas a media máquina a cerrar los flujos ----
+  // Nivel 1 = reversible de verdad (la tarea vuelve al pool y se reasigna).
+  { tool: 'liberar_asignacion',     minLevel: 1, reversible: true,  requiresEvidence: false, category: 'workload', label: 'Liberar una tarea asignada' },
+  { tool: 'asignar_tareas_masivo',  minLevel: 1, reversible: true,  requiresEvidence: false, category: 'workload', label: 'Asignar varias tareas de una vez' },
+  // Nivel 2 = toca stock, plata o al cliente: en modo confirmación queda propuesta.
+  { tool: 'reservar_ordenes',       minLevel: 2, reversible: true,  requiresEvidence: false, category: 'order',    label: 'Reservar stock de varias órdenes' },
+  { tool: 'cancelar_orden',         minLevel: 2, reversible: true,  requiresEvidence: true,  category: 'order',    label: 'Cancelar una orden' },
+  { tool: 'reactivar_orden',        minLevel: 2, reversible: true,  requiresEvidence: false, category: 'order',    label: 'Reactivar una orden cancelada' },
+  { tool: 'recibir_recepcion',      minLevel: 2, reversible: false, requiresEvidence: true,  category: 'inbound',  label: 'Recibir mercadería contra una recepción' },
+  { tool: 'cerrar_recepcion',       minLevel: 2, reversible: false, requiresEvidence: false, category: 'inbound',  label: 'Cerrar una recepción' },
+  { tool: 'crear_devolucion',       minLevel: 2, reversible: true,  requiresEvidence: false, category: 'returns',  label: 'Abrir una devolución' },
+  { tool: 'procesar_devolucion',    minLevel: 2, reversible: false, requiresEvidence: true,  category: 'returns',  label: 'Procesar una devolución (mueve stock)' },
+  { tool: 'cancelar_devolucion',    minLevel: 2, reversible: true,  requiresEvidence: false, category: 'returns',  label: 'Cancelar una devolución' },
+  { tool: 'mensaje_a_operario',     minLevel: 2, reversible: false, requiresEvidence: false, category: 'comms',    label: 'Mandar un mensaje a un operario' },
+  { tool: 'recibir_insumos_embalaje', minLevel: 2, reversible: false, requiresEvidence: true, category: 'inbound', label: 'Ingresar insumos de embalaje' },
 ];
 
 export function actionPolicy(tool: string): ActionPolicy | undefined {
