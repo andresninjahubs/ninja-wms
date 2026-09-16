@@ -41,6 +41,7 @@ export const ACTION_POLICIES: ActionPolicy[] = [
   { tool: 'balancear_carga',        minLevel: 1, reversible: true,  requiresEvidence: false, category: 'workload', label: 'Balancear carga' },
   { tool: 'reasignar_ociosidad',    minLevel: 1, reversible: true,  requiresEvidence: false, category: 'workload', label: 'Reasignar por ociosidad' },
   { tool: 'liberar_inactivos',      minLevel: 1, reversible: true,  requiresEvidence: false, category: 'workload', label: 'Liberar carga de operarios inactivos' },
+  { tool: 'asignar_a_ociosos',      minLevel: 1, reversible: true,  requiresEvidence: false, category: 'workload', label: 'Asignar carga a operarios sin trabajo' },
   { tool: 'guardar_instruccion',    minLevel: 1, reversible: true,  requiresEvidence: false, category: 'memory',   label: 'Guardar instrucción' },
   { tool: 'activar_auto_balanceo',  minLevel: 2, reversible: true,  requiresEvidence: false, category: 'config',   label: 'Auto-balanceo continuo' },
   { tool: 'fijar_modo_asignacion',  minLevel: 2, reversible: true,  requiresEvidence: false, category: 'config',   label: 'Modo de asignación' },

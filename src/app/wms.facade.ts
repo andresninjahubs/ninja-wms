@@ -3676,11 +3676,39 @@ export class WmsFacade {
     return next;
   }
 
+  // Trabajo de EJECUCIÓN: lo que de verdad hace fila esperando a alguien. El orden
+  // importa: primero lo que sale (picking, empaque, despacho), después lo interno.
+  // COUNT y RESLOT quedan fuera a propósito: son sugerencias permanentes del
+  // sistema (siempre hay una ubicación que conviene contar o re-slotear), así que
+  // contarlas como "pendiente" haría que el aviso de operario ocioso no se apagara
+  // nunca y terminara ignorándose.
+  private static readonly TIPOS = ['PICK', 'PACK', 'SHIP', 'RECEIVE', 'PUTAWAY', 'RESTOCK'] as const;
+
+  /** Trabajo pendiente SIN asignar, por tipo de tarea. Lo usa la regla del operario ocioso. */
+  private async trabajoSinAsignar(operationId: string): Promise<{ total: number; detalle: string }> {
+    let total = 0; const partes: string[] = [];
+    for (const t of WmsFacade.TIPOS) {
+      const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true }).catch(() => [] as any[]);
+      if (pool.length) { total += pool.length; partes.push(`${pool.length} ${t}`); }
+    }
+    return { total, detalle: partes.join(', ') };
+  }
+
   /** Ejecuta una herramienta de acción del agente (reversible + auditada). Devuelve el resultado legible. */
   private async runAgentTool(operationId: string, tool: string, actor: string): Promise<string> {
     if (tool === 'balancear_carga') {
       const r = await this.autoBalance(operationId, { type: 'PICK', execute: true, by: actor });
       return `${r.asignadas} tarea(s) de picking repartida(s)`;
+    }
+    if (tool === 'asignar_a_ociosos') {
+      // Reparte TODO lo pendiente, de todos los tipos de tarea: el ocioso puede
+      // tomar un picking, pero también un guardado o un empaque.
+      let total = 0; const porTipo: string[] = [];
+      for (const t of WmsFacade.TIPOS) {
+        const r = await this.autoBalance(operationId, { type: t, execute: true, by: actor });
+        if (r.asignadas) { total += r.asignadas; porTipo.push(`${r.asignadas} ${t}`); }
+      }
+      return total ? `${total} tarea(s) repartida(s) entre operarios activos (${porTipo.join(', ')})` : 'no había trabajo sin asignar';
     }
     if (tool === 'liberar_inactivos') {
       // Libera las tareas abiertas de los operarios INACTIVOS y las redistribuye entre los activos.
@@ -3780,6 +3808,20 @@ export class WmsFacade {
         title: `${o.nombre} inactivo con ${o.tareasAbiertas} tarea(s) abierta(s)`,
         detail: `Última conexión ${o.ultimaConexion ? o.ultimaConexion.slice(0, 16).replace('T', ' ') : 'desconocida'}.`,
         action: 'Reasigna su carga a operarios activos.',
+      }));
+    }
+    if (def.key === 'operario_ocioso') {
+      // Un operario sin tareas solo es un problema si HAY trabajo esperando. Sin
+      // eso, avisar sería ruido: nadie está fallando cuando la bodega está al día.
+      const pendiente = await this.trabajoSinAsignar(operationId);
+      if (!pendiente.total) return [];
+      const dir = await this.operatorsDirectory(operationId);
+      const minimo = Math.max(1, cfg.threshold);
+      return dir.operarios.filter((o) => o.activo && o.tareasAbiertas < minimo).map((o) => ({
+        sellerId: null, entityRef: o.id, entityType: 'OPERATOR' as const,
+        title: `${o.nombre} activo ${o.tareasAbiertas ? `con solo ${o.tareasAbiertas} tarea(s)` : 'y sin tareas asignadas'}`,
+        detail: `Hay ${pendiente.total} tarea(s) sin asignar (${pendiente.detalle}).`,
+        action: 'Asígnale carga balanceando el trabajo entre los operarios activos.',
       }));
     }
     if (def.key === 'lote_por_vencer') {

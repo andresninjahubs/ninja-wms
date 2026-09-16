@@ -7,7 +7,7 @@
 import { AgentRuleSeverity } from './types';
 
 /** Herramientas que una regla puede ejecutar automáticamente (Fase 3). Reversibles y auditadas. */
-export type AgentActionTool = 'liberar_inactivos' | 'balancear_carga';
+export type AgentActionTool = 'liberar_inactivos' | 'balancear_carga' | 'asignar_a_ociosos';
 
 export interface AgentRuleDef {
   key: string;
@@ -56,6 +56,13 @@ export const AGENT_RULES: AgentRuleDef[] = [
     description: 'Operarios inactivos que todavía tienen tareas abiertas sin completar.',
     unit: 'mínimo', defaultThreshold: 1, defaultSeverity: 'warn', defaultCooldownMin: 60, link: 'asignaciones',
     autoAction: { tool: 'liberar_inactivos', label: 'Reasignar su carga a operarios activos' },
+  },
+  {
+    key: 'operario_ocioso',
+    name: 'Operario activo sin carga',
+    description: 'Operarios activos sin tareas abiertas mientras hay trabajo pendiente sin asignar.',
+    unit: 'mínimo', defaultThreshold: 1, defaultSeverity: 'warn', defaultCooldownMin: 30, link: 'asignaciones',
+    autoAction: { tool: 'asignar_a_ociosos', label: 'Asignarle carga balanceando entre operarios activos' },
   },
   {
     key: 'lote_por_vencer',

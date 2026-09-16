@@ -2431,7 +2431,7 @@ async function run() {
     const { facade } = buildFacade();
     await facade.createOperation({ id: 'op1', name: 'Op 1' });
     const rules = await facade.agentRules('op1');
-    assert.equal(rules.length, 6, 'seis reglas en el catálogo');
+    assert.equal(rules.length, 7, 'siete reglas en el catálogo');
     assert.ok(rules.every((r) => typeof r.enabled === 'boolean' && r.threshold >= 0), 'cada regla trae config efectiva');
     const upd = await facade.updateAgentRule('op1', 'orden_estancada', { threshold: 6, enabled: false }, 'ana');
     assert.equal(upd.threshold, 6); assert.equal(upd.enabled, false);
@@ -4791,6 +4791,59 @@ async function run() {
     const sombra = d2.map((e) => e.data && (e.data as any).accion).filter(Boolean).find((x: any) => x.estado === 'sombra');
     assert.ok(sombra, 'el modo sombra no dejó una acción marcada como sombra');
     assert.equal(sombra.herramienta, 'liberar_inactivos');
+  });
+
+  /**
+   * Regla nueva: operario activo SIN carga. El punto fino es que solo debe
+   * avisar cuando hay trabajo esperando: un operario libre con la bodega al día
+   * no es un problema, y avisarlo sería ruido que enseña a ignorar al agente.
+   */
+  await test('regla operario ocioso: avisa solo si hay trabajo sin asignar, y reparte al ejecutar', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 200, locationId: stg.id });
+    // Dos operarios activos, ninguno con tareas.
+    await f.facade.createUser({ id: 'pedro', name: 'Pedro', email: 'pedro@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createUser({ id: 'sofia', name: 'Sofía', email: 'sofia@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.updateAgentRule('op1', 'operario_ocioso', { enabled: true, cooldownMin: 0 }, 'ana');
+    // El resto apagado: queremos ver ESTA regla, no las demás.
+    for (const k of ['orden_estancada', 'sla_despacho', 'deadline_riesgo', 'quiebre_stock', 'operario_inactivo', 'lote_por_vencer']) {
+      await f.facade.updateAgentRule('op1', k, { enabled: false }, 'ana');
+    }
+
+    // 1) Bodega al día: nadie tiene carga, pero tampoco hay trabajo. No se avisa.
+    await f.facade.runAgentSweep('op1', { autonomous: true });
+    let alertas: any = await f.facade.agentAlerts('op1');
+    assert.equal((alertas.abiertas || []).length, 0, 'avisó de operarios ociosos sin haber trabajo pendiente');
+
+    // 2) Entran órdenes reservadas: ahora sí hay picking esperando.
+    for (const n of [1, 2, 3, 4]) {
+      const o = await f.facade.createOrder('acme', { externalOrderId: 'O-' + n, salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 5 }] }, 'ana');
+      await f.facade.allocateOrder('acme', o.id, 'ana');
+    }
+    await f.facade.runAgentSweep('op1', { autonomous: true });
+    alertas = await f.facade.agentAlerts('op1');
+    const ociosos = (alertas.abiertas || []).filter((a: any) => a.ruleKey === 'operario_ocioso');
+    assert.equal(ociosos.length, 2, 'los dos operarios activos y sin carga deben aparecer');
+    assert.match(ociosos[0].detail, /tarea\(s\) sin asignar/);
+    assert.match(ociosos[0].action, /balance/i);
+
+    // 3) Al ejecutar la acción, el trabajo queda repartido y los operarios dejan de estar ociosos.
+    await f.facade.updateAgentSettings('op1', { autonomyLevel: 3, shadowMode: false } as any, 'ana');
+    await f.facade.updateAgentRule('op1', 'operario_ocioso', { actionType: 'execute', actionMode: 'directo', cooldownMin: 0 }, 'ana');
+    for (const a of ociosos) await f.facade.ackAgentAlert('op1', a.id, 'ana').catch(() => null);
+    f.clock.set('2026-09-17T12:30:00.000Z');
+    const r: any = await f.facade.runAgentSweep('op1', { autonomous: true });
+    assert.ok(r.ejecutadas > 0, 'la acción no se ejecutó');
+    const dir: any = await f.facade.operatorsDirectory('op1');
+    assert.ok(dir.operarios.every((o: any) => o.tareasAbiertas > 0), 'quedó un operario sin carga después de repartir');
+    // Y el reparto es balanceado: nadie se queda con todo.
+    const cargas = dir.operarios.map((o: any) => o.tareasAbiertas).sort();
+    assert.ok(cargas[cargas.length - 1] - cargas[0] <= 1, `reparto desbalanceado: ${cargas.join(' vs ')}`);
   });
 
   // ---- Dashboard AI (v101) ---------------------------------------------------
