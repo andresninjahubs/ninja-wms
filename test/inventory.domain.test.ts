@@ -4406,6 +4406,234 @@ async function run() {
     assert.equal(solo.cargaPorCliente.length, 1);
   });
 
+  /**
+   * El panel tiene que alimentarse SOLO, de punta a punta. Esta prueba siembra
+   * el sandbox completo (el mismo que usa el administrador) y exige que los
+   * trece bloques traigan datos coherentes con lo sembrado: si mañana alguien
+   * rompe una consulta, el bloque se vacía y esto falla.
+   */
+  await test('panel: los trece bloques se alimentan con la data sembrada', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T15:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    const semilla = await f.facade.seedAgentSandbox('op1', 'ana');
+    // Un minuto después de sembrar: las ventanas se cuentan en [desde, ahora),
+    // así que con el reloj congelado en el mismo instante nada entraría.
+    f.clock.set('2026-09-17T15:01:00.000Z');
+    const d: any = await f.facade.operationDashboard('op1', { window: '30d' });
+
+    // Alcance y sello de tiempo: el panel dice cuándo se generó y qué abarca.
+    assert.equal(d.alcance.operationId, 'op1');
+    assert.equal(d.alcance.consolidado, true);
+    assert.equal(d.generadoEn, '2026-09-17T15:01:00.000Z');
+    assert.equal(d.ventana.tipo, '30d');
+
+    // 1. Actividad: el sandbox despacha y recibe, así que algo tiene que marcar.
+    for (const k of ['ordenesPreparadas', 'unidadesPreparadas', 'ordenesRecibidas', 'unidadesRecibidas', 'movimientos']) {
+      assert.ok(d.actividad[k] && typeof d.actividad[k].valor === 'number', `actividad.${k} sin forma`);
+    }
+    assert.ok(d.actividad.movimientos.valor > 0, 'la actividad no ve ningún movimiento');
+    assert.ok(d.actividad.unidadesPreparadas.valor > 0, 'no cuenta unidades preparadas');
+    assert.ok(d.actividad.unidadesRecibidas.valor > 0, 'no cuenta unidades recibidas');
+
+    // 2. Productividad: las tareas se derivan solas del ledger al abrir el panel.
+    assert.ok(d.productividad.length > 0, 'productividad vacía: no se derivaron las tareas');
+    assert.equal(d.productividad[0].tareas, d.actividad.ordenesPreparadas.valor);
+    assert.ok(d.productividad[0].unidades > 0);
+
+    // 3. Pre-facturación: suma el mes en curso y cuadra con el detalle por cliente.
+    assert.equal(d.prefacturacion.periodo, '2026-09');
+    assert.ok(d.prefacturacion.total > 0, 'pre-facturación en cero');
+    assert.equal(d.prefacturacion.total, d.prefacturacion.porCliente.reduce((t: number, c: any) => t + c.monto, 0));
+
+    // 6. Tiempos de preparación: hay muestras B2C con las órdenes empacadas.
+    assert.ok(d.tiempos.muestrasB2C > 0, 'ningún tiempo de preparación medido');
+    assert.equal(d.tiempos.ventanaDias, 30);
+
+    // 4. Deadlines: los números del panel cuadran con los que reportó la semilla.
+    assert.equal(d.despacho.conCompromiso + d.despacho.sinCompromiso, d.despacho.abiertasTotal);
+    assert.equal(d.despacho.aTiempo + d.despacho.atrasadas, d.despacho.conCompromiso);
+    assert.equal(d.despacho.atrasadas, semilla.deadlines.vencidas, 'las vencidas del panel no son las sembradas');
+
+    // 5. Precisión: la semilla deja una verificación con diferencia a propósito.
+    assert.ok(d.precision.pedidosVerificados > 0, 'no llegó ninguna verificación de empaque');
+    assert.equal(d.precision.pedidosConError, 1);
+    assert.ok(d.precision.coberturaPct !== null);
+
+    // 7. Ocupación: hay ubicaciones con capacidad y stock guardado en ellas.
+    assert.equal(d.ocupacion.unidad, 'unidades');
+    assert.ok(d.ocupacion.ubicaciones >= semilla.ubicaciones, 'faltan ubicaciones');
+    assert.ok(d.ocupacion.capacidad > 0 && d.ocupacion.usado > 0, 'ocupación vacía');
+    assert.equal(d.ocupacion.pct, Math.round((d.ocupacion.usado / d.ocupacion.capacidad) * 1000) / 10);
+    const zonas = Object.values(d.ocupacion.porZona) as any[];
+    assert.equal(zonas.reduce((t, z) => t + z.usado, 0), d.ocupacion.usado, 'las zonas no suman el total');
+
+    // 8/9/10. Carga, cola por courier y estados: consistentes entre sí.
+    assert.ok(d.cargaPorCliente.length >= 1);
+    assert.equal(d.cargaPorCliente.reduce((t: number, c: any) => t + c.ordenes, 0), d.despacho.abiertasTotal);
+    assert.ok(d.colaPorCourier.length >= 1, 'ninguna orden en cola de courier');
+    assert.equal(Object.values(d.ordenesPorEstado).reduce((a: any, b: any) => a + b, 0), semilla.ordenes);
+
+    // 11. Embalaje: la semilla deja un insumo bajo el mínimo para que se vea.
+    assert.ok(d.embalaje.length > 0, 'el bloque de embalaje llegó vacío');
+    assert.ok(d.embalaje.some((m: any) => m.estado === 'critico' || m.estado === 'bajo'), 'ningún insumo bajo mínimo');
+    assert.ok(d.embalaje.every((m: any) => typeof m.stock === 'number' && typeof m.sugerido === 'number'));
+
+    // 12. Excepciones: el agente ve trabajo pendiente y lo reporta acá.
+    assert.ok(Array.isArray(d.excepciones));
+    assert.ok(d.excepciones.every((e: any) => e.titulo && e.severidad && e.cliente));
+
+    // Nada se cayó silenciosamente: los únicos faltantes aceptables son los que
+    // dependen de configuración del cliente, no de que el panel no sepa leer.
+    const rotos = (d.faltantes as string[]).filter((x) => ['productividad', 'embalaje', 'excepciones'].includes(x));
+    assert.deepEqual(rotos, [], `bloques caídos: ${rotos.join(', ')}`);
+  });
+
+  /**
+   * La prueba que faltaba: los números de "Actividad operativa" con valores
+   * exactos. El panel leía un campo que no existe (`value` en vez de `current`)
+   * y mostraba 0 con −100 % en todas las tarjetas sin que nada fallara.
+   */
+  await test('panel: actividad cuenta el período actual y lo compara con el anterior', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    f.clock.set('2026-09-20T12:00:00.000Z');
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+
+    // Período ANTERIOR de la ventana de 7 días: [ahora−14d, ahora−7d).
+    f.clock.set('2026-09-09T10:00:00.000Z');
+    await f.facade.receive('acme', { sku: 'CAM', qty: 10, locationId: stg.id });
+    // Período ACTUAL: [ahora−7d, ahora).
+    f.clock.set('2026-09-16T10:00:00.000Z');
+    await f.facade.receive('acme', { sku: 'CAM', qty: 30, locationId: stg.id });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 5, locationId: stg.id });
+
+    f.clock.set('2026-09-20T12:00:00.000Z');
+    const d: any = await f.facade.operationDashboard('op1', { window: '7d' });
+    assert.equal(d.actividad.unidadesRecibidas.valor, 35, 'no suma las unidades del período actual');
+    assert.equal(d.actividad.unidadesRecibidas.anterior, 10, 'no suma las del período anterior');
+    assert.equal(d.actividad.unidadesRecibidas.cambioPct, 250, '35 sobre 10 es +250 %');
+    assert.equal(d.actividad.movimientos.valor, 2);
+    assert.equal(d.actividad.movimientos.anterior, 1);
+
+    // Otra ventana, otro corte: a 30 días las tres recepciones caen en el actual.
+    const m: any = await f.facade.operationDashboard('op1', { window: '30d' });
+    assert.equal(m.actividad.unidadesRecibidas.valor, 45);
+    assert.equal(m.actividad.unidadesRecibidas.anterior, 0);
+    assert.equal(m.actividad.unidadesRecibidas.cambioPct, null, 'sin base de comparación no se inventa un %');
+
+    // Y a 24 horas no hubo nada: cero de verdad, no cero por leer mal el campo.
+    const h: any = await f.facade.operationDashboard('op1', { window: '24h' });
+    assert.equal(h.actividad.unidadesRecibidas.valor, 0);
+
+    // Rango personalizado: mismo camino, otra consulta.
+    const r: any = await f.facade.operationDashboard('op1', { from: '2026-09-15T00:00:00.000Z', to: '2026-09-20T12:00:00.000Z' });
+    assert.equal(r.ventana.tipo, 'personalizado');
+    assert.equal(r.actividad.unidadesRecibidas.valor, 35, 'el rango personalizado tampoco lee bien el campo');
+    assert.equal(r.actividad.movimientos.valor, 2);
+  });
+
+  /**
+   * El panel filtrado por cliente tiene que recortar TODO, no solo la tabla de
+   * órdenes: actividad, pre-facturación y carga incluidas.
+   */
+  await test('panel: filtrar por cliente recorta todos los bloques, no solo las órdenes', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await f.facade.createSeller({ id: 'globex', operationId: 'op1', name: 'Globex' });
+    f.clock.set('2026-09-20T12:00:00.000Z');
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    for (const sid of ['acme', 'globex']) await f.facade.createSku(sid, { sku: 'CAM', description: 'Camisa' });
+    f.clock.set('2026-09-18T10:00:00.000Z');
+    await f.facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
+    await f.facade.receive('globex', { sku: 'CAM', qty: 7, locationId: stg.id });
+    f.clock.set('2026-09-20T12:00:00.000Z');
+
+    const todo: any = await f.facade.operationDashboard('op1', { window: '7d' });
+    assert.equal(todo.actividad.unidadesRecibidas.valor, 107, 'consolidado debe sumar los dos clientes');
+    assert.equal(todo.alcance.clientes, 2);
+
+    const solo: any = await f.facade.operationDashboard('op1', { window: '7d', sellerId: 'globex' });
+    assert.equal(solo.alcance.clientes, 1);
+    assert.equal(solo.alcance.consolidado, false);
+    assert.equal(solo.actividad.unidadesRecibidas.valor, 7, 'el filtro por cliente no recorta la actividad');
+    assert.equal(solo.prefacturacion.porCliente.length <= 1, true);
+    // La ocupación es de la bodega, no del cliente: sigue contando solo su stock.
+    assert.equal(solo.ocupacion.usado, 7);
+  });
+
+  /**
+   * Reposición de embalaje: el panel tiene que decidir crítico / bajo / ok y
+   * cuánto pedir, con el consumo real de los últimos 30 días.
+   */
+  await test('panel: reposición de embalaje clasifica y sugiere con el consumo real', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    f.clock.set('2026-09-20T12:00:00.000Z');
+    await f.facade.createPackaging('op1', { sku: 'CAJA-M', name: 'Caja mediana', minStock: 100 });
+    await f.facade.createPackaging('op1', { sku: 'BOLSA', name: 'Bolsa', minStock: 50 });
+    await f.facade.createPackaging('op1', { sku: 'CINTA', name: 'Cinta', minStock: 0 }); // sin mínimo: se avisa
+
+    // Entradas y consumo.
+    await f.facade.adjustPackagingStock('op1', 'CAJA-M', 400, 'ana');
+    await f.facade.adjustPackagingStock('op1', 'BOLSA', 100, 'ana');
+    await f.facade.adjustPackagingStock('op1', 'CINTA', 30, 'ana');
+    f.clock.set('2026-09-19T12:00:00.000Z');
+    await f.facade.adjustPackagingStock('op1', 'CAJA-M', -340, 'ana'); // queda 60 < 100 → crítico
+    await f.facade.adjustPackagingStock('op1', 'CINTA', -12, 'ana');   // consumo sin mínimo
+    f.clock.set('2026-09-20T12:00:00.000Z');
+
+    const d: any = await f.facade.operationDashboard('op1', { window: '30d' });
+    const byId = Object.fromEntries(d.embalaje.map((m: any) => [m.sku, m]));
+    assert.equal(byId['CAJA-M'].stock, 60);
+    assert.equal(byId['CAJA-M'].consumo30, 340);
+    assert.equal(byId['CAJA-M'].estado, 'critico');
+    assert.equal(byId['CAJA-M'].sugerido, 140, 'sugiere llegar al doble del mínimo');
+    assert.equal(byId['BOLSA'].stock, 100);
+    assert.equal(byId['BOLSA'].estado, 'ok');
+    assert.equal(byId['BOLSA'].sugerido, 0);
+    // Lo crítico va primero: el panel se lee de arriba hacia abajo.
+    assert.equal(d.embalaje[0].sku, 'CAJA-M');
+    // Y avisa del insumo sin mínimo en vez de tratarlo como si estuviera bien.
+    assert.ok(d.faltantes.some((x: string) => x.startsWith('embalaje:')), 'no avisa del insumo sin mínimo');
+  });
+
+  /**
+   * Tiempo de preparación: se mide entre ALLOCATED y PACKED, separando B2B de
+   * B2C, porque son operaciones distintas y mezclarlas no dice nada.
+   */
+  await test('panel: mide el tiempo de preparación y separa B2B de B2C', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    f.clock.set('2026-09-20T08:00:00.000Z');
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
+
+    async function correr(ext: string, tipo: any, minutos: number) {
+      f.clock.set('2026-09-20T09:00:00.000Z');
+      const o = await f.facade.createOrder('acme', { externalOrderId: ext, salesChannel: 'web', orderType: tipo, shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 2 }] }, 'ana');
+      await f.facade.allocateOrder('acme', o.id, 'ana');
+      f.clock.set(new Date(Date.parse('2026-09-20T09:00:00.000Z') + minutos * 60000).toISOString());
+      await f.facade.confirmPick('acme', o.id, 'pedro');
+      await f.facade.packOrder('acme', o.id, { bultos: 1 }, 'pedro');
+    }
+    await correr('B2C-1', OrderType.B2C, 20);
+    await correr('B2C-2', OrderType.B2C, 40);
+    await correr('B2B-1', OrderType.B2B, 180);
+
+    f.clock.set('2026-09-20T14:00:00.000Z');
+    const d: any = await f.facade.operationDashboard('op1', { window: '24h' });
+    assert.equal(d.tiempos.muestrasB2C, 2);
+    assert.equal(d.tiempos.muestrasB2B, 1);
+    assert.equal(d.tiempos.b2cMin, 30, 'promedio de 20 y 40 minutos');
+    assert.equal(d.tiempos.b2bMin, 180);
+  });
+
   // ---- Dashboard AI (v101) ---------------------------------------------------
 
   await test('dashboard AI: valida lo que propone el modelo y rechaza lo inventado', () => {

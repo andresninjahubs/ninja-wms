@@ -762,6 +762,13 @@
       radial-gradient(760px 520px at 82% 8%, var(--glow-violet), transparent 62%),
       radial-gradient(760px 520px at 12% 96%, var(--glow-teal), transparent 60%),
       var(--bg);}
+  /* Sello de frescura del panel: se actualiza solo cada 30 s. */
+  .dash-live{display:inline-flex;align-items:center;gap:6px;margin-right:12px;font-size:12px;font-weight:700;
+    letter-spacing:.02em;color:#0E9F6E;white-space:nowrap}
+  .dash-live:empty{display:none}
+  .dash-live::before{content:"";width:7px;height:7px;border-radius:50%;background:#12B886;animation:dash-pulse 2s ease-in-out infinite}
+  .dash-live.stale{color:var(--ink-3)} .dash-live.stale::before{background:var(--ink-3);animation:none}
+  @keyframes dash-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
   .loginov.off{display:none}
   /* Login: la caja se arma sola; el usuario la abre y de adentro sale el formulario. */
   .loginstage{display:flex;flex-direction:column;align-items:center;width:100%;max-width:96vw}
@@ -828,16 +835,16 @@
   /* La tarjeta se hunde de vuelta en la caja. `animation:none` es obligatorio:
      la animación de salida fija opacity:1 y le gana a la transición. */
   .loginstage.viajando .loginbox{animation:none;opacity:0;transform:translateY(-34px) scale(.72);
-    transition:opacity 200ms ease,transform 260ms cubic-bezier(.5,0,.75,0);pointer-events:none}
-  .loginstage.viajando .lh-type{opacity:0;transition:opacity 160ms ease;pointer-events:none}
+    transition:opacity 400ms ease,transform 520ms cubic-bezier(.5,0,.75,0);pointer-events:none}
+  .loginstage.viajando .lh-type{opacity:0;transition:opacity 320ms ease;pointer-events:none}
   /* Fuera del flujo: así la caja queda sola y centrada mientras dura el viaje. */
   .loginstage.viajando .loginbox,.loginstage.viajando .lh-type{position:absolute;left:50%;top:50%;margin:0}
   .loginstage.viajando .loginhero{width:100vw;height:100vh;margin:0;filter:none;
-    transition:width 240ms cubic-bezier(.4,0,.2,1),height 240ms cubic-bezier(.4,0,.2,1)}
+    transition:width 480ms cubic-bezier(.4,0,.2,1),height 480ms cubic-bezier(.4,0,.2,1)}
   .loginstage.viajando .lh-canvas{border-radius:0}
   /* Destello final: cierra el viaje en blanco y entrega el panel sin costura. */
   .loginstage.viajando::after{content:"";position:fixed;inset:0;pointer-events:none;
-    background:#fff;opacity:0;animation:lh-flash 820ms ease-in forwards}
+    background:#fff;opacity:0;animation:lh-flash 1560ms ease-in forwards}
   @keyframes lh-flash{0%,55%{opacity:0}82%{opacity:.35}100%{opacity:1}}
   @media(max-width:720px){
     .loginhero{width:220px;height:138px}
@@ -1071,6 +1078,7 @@
           <div class="opm-head">
             <div><h3 style="margin:0">Actividad operativa</h3><span class="muted" id="opm-sub">Últimas 24 horas · comparado con el período anterior</span></div>
             <div class="sp" style="flex:1"></div>
+            <span class="dash-live" id="dash-live" title="El panel se actualiza solo cada 30 segundos"></span>
             <div class="billtabs" id="dash-scope" style="margin:0 10px 0 0">
               <button class="segbtn on" data-scope="op">Toda la operación</button>
               <button class="segbtn" data-scope="seller">Cliente actual</button>

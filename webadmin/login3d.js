@@ -3,7 +3,7 @@
  * ---------------------------------------------------------------------------
  * La caja se arma sola, espera el clic de la persona, se abre, y de adentro sale
  * el formulario. Al entrar, la cámara VIAJA hacia dentro de la caja: es el gesto
- * de "entrar al WMS", y dura menos de un segundo.
+ * de "entrar al WMS": la cámara cae dentro de la caja en 1,4 s.
  *
  * Reglas que se respetan sí o sí:
  *   - Si no hay WebGL, o la librería no carga, o la persona pidió menos movimiento,
@@ -236,8 +236,8 @@
         cam.lookAt(0, 0.35 + ease(q) * 0.25, 0);
         if (q >= 1 && estado === 'abriendo') { estado = 'abierta'; if (opts.onAbierta) opts.onAbierta(); }
       } else if (estado === 'entrando') {
-        // El viaje: la cámara cae dentro de la caja en menos de un segundo.
-        var e = Math.min(1, (now - tEntrar) / 700);
+        // El viaje: la cámara cae dentro de la caja. Dura 1,4 s.
+        var e = Math.min(1, (now - tEntrar) / 1400);
         var k = easeIn(e);
         cam.position.z = 6.05 - k * 6.2;
         cam.position.y = 2.65 - k * 2.6;
@@ -261,7 +261,7 @@
         estado = 'abriendo'; tAbrir = performance.now();
         return true;
       },
-      /** Viaje hacia dentro de la caja. Llama a `listo` al terminar (<1 s). */
+      /** Viaje hacia dentro de la caja. Llama a `listo` al terminar (1,4 s). */
       entrar: function (listo) {
         if (estado === 'entrando') return;
         estado = 'entrando'; tEntrar = performance.now(); cbEntrada = listo;

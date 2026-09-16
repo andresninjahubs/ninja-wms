@@ -60,25 +60,27 @@ export async function buildOperationDashboard(facade: WmsFacade, operationId: st
       movimientos: { valor: 0, anterior: 0 },
     };
     const custom = !!(opts.from && opts.to);
+    // OJO: MetricValue se llama { current, previous, pct }. Leer `.value` devolvía
+    // undefined y dejaba TODO este bloque en cero — el panel mostraba 0 y −100 %.
     for (const s of sellers) {
       try {
         if (custom) {
           const r: any = await facade.dashboardMetricsRange(s.id, opts.from as string, opts.to as string);
           const w = r.windows ? r.windows[0] : r;
-          acc.ordenesPreparadas.valor += w.ordersPrepared?.value ?? 0; acc.ordenesPreparadas.anterior += w.ordersPrepared?.previous ?? 0;
-          acc.unidadesPreparadas.valor += w.unitsPrepared?.value ?? 0; acc.unidadesPreparadas.anterior += w.unitsPrepared?.previous ?? 0;
-          acc.ordenesRecibidas.valor += w.ordersReceived?.value ?? 0; acc.ordenesRecibidas.anterior += w.ordersReceived?.previous ?? 0;
-          acc.unidadesRecibidas.valor += w.unitsReceived?.value ?? 0; acc.unidadesRecibidas.anterior += w.unitsReceived?.previous ?? 0;
-          acc.movimientos.valor += w.movements?.value ?? 0; acc.movimientos.anterior += w.movements?.previous ?? 0;
+          acc.ordenesPreparadas.valor += w.ordersPrepared?.current ?? 0; acc.ordenesPreparadas.anterior += w.ordersPrepared?.previous ?? 0;
+          acc.unidadesPreparadas.valor += w.unitsPrepared?.current ?? 0; acc.unidadesPreparadas.anterior += w.unitsPrepared?.previous ?? 0;
+          acc.ordenesRecibidas.valor += w.ordersReceived?.current ?? 0; acc.ordenesRecibidas.anterior += w.ordersReceived?.previous ?? 0;
+          acc.unidadesRecibidas.valor += w.unitsReceived?.current ?? 0; acc.unidadesRecibidas.anterior += w.unitsReceived?.previous ?? 0;
+          acc.movimientos.valor += w.movements?.current ?? 0; acc.movimientos.anterior += w.movements?.previous ?? 0;
         } else {
           const r: any = await facade.dashboardMetrics(s.id);
           const w = (r.windows || []).find((x: any) => x.window === ventana);
           if (!w) continue;
-          acc.ordenesPreparadas.valor += w.ordersPrepared?.value ?? 0; acc.ordenesPreparadas.anterior += w.ordersPrepared?.previous ?? 0;
-          acc.unidadesPreparadas.valor += w.unitsPrepared?.value ?? 0; acc.unidadesPreparadas.anterior += w.unitsPrepared?.previous ?? 0;
-          acc.ordenesRecibidas.valor += w.ordersReceived?.value ?? 0; acc.ordenesRecibidas.anterior += w.ordersReceived?.previous ?? 0;
-          acc.unidadesRecibidas.valor += w.unitsReceived?.value ?? 0; acc.unidadesRecibidas.anterior += w.unitsReceived?.previous ?? 0;
-          acc.movimientos.valor += w.movements?.value ?? 0; acc.movimientos.anterior += w.movements?.previous ?? 0;
+          acc.ordenesPreparadas.valor += w.ordersPrepared?.current ?? 0; acc.ordenesPreparadas.anterior += w.ordersPrepared?.previous ?? 0;
+          acc.unidadesPreparadas.valor += w.unitsPrepared?.current ?? 0; acc.unidadesPreparadas.anterior += w.unitsPrepared?.previous ?? 0;
+          acc.ordenesRecibidas.valor += w.ordersReceived?.current ?? 0; acc.ordenesRecibidas.anterior += w.ordersReceived?.previous ?? 0;
+          acc.unidadesRecibidas.valor += w.unitsReceived?.current ?? 0; acc.unidadesRecibidas.anterior += w.unitsReceived?.previous ?? 0;
+          acc.movimientos.valor += w.movements?.current ?? 0; acc.movimientos.anterior += w.movements?.previous ?? 0;
         }
       } catch { /* un cliente sin datos no rompe el panel */ }
     }
@@ -95,10 +97,21 @@ export async function buildOperationDashboard(facade: WmsFacade, operationId: st
   const productividad = await (async () => {
     try {
       const desde = new Date(now - WIN_DAYS[ventana] * 86400000).toISOString();
+      // Las tareas de trabajo se derivan del ledger bajo demanda. Sin esto el
+      // bloque salía vacío salvo que alguien llamara antes a /analytics/labor/derive.
+      // Es idempotente (el id es PICK:<movimiento>), así que re-derivar no duplica.
+      await facade.deriveLaborFromLedger(operationId).catch(() => null);
       const r: any = await facade.laborProductivity(operationId, { from: desde, to: nowIso });
       const users = await facade.listUsers(operationId).catch(() => [] as any[]);
       const nm = new Map((users || []).map((u: any) => [u.id, u.name] as const));
-      return (r.operators || []).slice(0, 8).map((o: any) => ({
+      // El ledger solo guarda UN timestamp por movimiento, así que las tareas
+      // derivadas de él no tienen duración: unidades/hora solo sale de las tareas
+      // que captura la PWA (inicio y fin reales). Se dice, no se inventa.
+      const ops = r.operators || [];
+      if (ops.length && ops.every((o: any) => !(o.hoursWorked > 0))) {
+        faltantes.push('productividad-horas: unidades/hora necesita tareas cronometradas desde la app del operario');
+      }
+      return ops.slice(0, 8).map((o: any) => ({
         operario: o.operator,
         nombre: nm.get(o.operator) || o.operator,
         unidades: o.units,

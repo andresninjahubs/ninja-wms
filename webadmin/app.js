@@ -153,8 +153,8 @@
 
   // ---- Login ----------------------------------------------------------------
   /**
-   * El viaje hacia dentro de la caja: la cámara cae adentro en menos de un
-   * segundo y recién ahí aparece el panel. Si no hay escena 3D, entra directo.
+   * El viaje hacia dentro de la caja: la cámara cae adentro en 1,4 segundos
+   * y recién ahí aparece el panel. Si no hay escena 3D, entra directo.
    */
   function entrarAlWms(listo){
     var esc=window.__login3d, stage=document.getElementById('loginstage');
@@ -167,10 +167,10 @@
     var t0=performance.now();
     (function remedir(){
       try{ window.dispatchEvent(new Event('resize')); }catch(e){}
-      if(performance.now()-t0<1200)requestAnimationFrame(remedir);
+      if(performance.now()-t0<2000)requestAnimationFrame(remedir);
     })();
     setTimeout(function(){ esc.entrar(fin); }, 80);   // deja que el canvas empiece a crecer
-    setTimeout(fin, 1000);                            // red de seguridad: nadie se queda afuera
+    setTimeout(fin, 1900);                            // red de seguridad: nadie se queda afuera
   }
 
   function doLogin(){
@@ -608,22 +608,57 @@
   // Una sola llamada trae todo lo que muestra la pantalla, y se refresca sola cada
   // 30 s mientras el Dashboard está a la vista (no corre en segundo plano).
   var DASH=null, dashTimer=null, DASH_MS=30000;
+  // Una sola consulta a la vez y un piso de 5 s entre consultas: el panel se pinta
+  // desde varios lados (al entrar, al cambiar de cliente, al volver a la pestaña)
+  // y sin esto se disparaban dos cadenas de refresco pidiendo lo mismo dos veces.
+  var dashEnVuelo=null, dashUltimo=0, dashRelojChip=null;
   // El panel arranca consolidado (toda la operación); el cliente es un filtro opcional.
   var dashOnlySeller=false;
   function dashScope(){ return (dashOnlySeller&&seller) ? ('&sellerId='+encodeURIComponent(seller)) : ''; }
-  function loadDash(){
+  function loadDash(forzar){
     if(!op||!$("#dash-cards"))return Promise.resolve();
+    if(dashEnVuelo)return dashEnVuelo;                                    // ya viene en camino
+    if(!forzar&&Date.now()-dashUltimo<5000)return Promise.resolve();      // recién refrescado
     var q='window='+(opmWindow==='custom'?'24h':opmWindow)+dashScope();
     if(opmWindow==='custom'&&dashRange)q+='&from='+encodeURIComponent(dashRange.from)+'&to='+encodeURIComponent(dashRange.to);
-    return api('/operations/'+op+'/dashboard?'+q).then(function(d){ DASH=d; renderDash(); paintOpMetrics(); }).catch(function(){});
+    function cerrar(){ dashEnVuelo=null; dashUltimo=Date.now(); }
+    dashEnVuelo=api('/operations/'+op+'/dashboard?'+q).then(function(d){
+      DASH=d; cerrar(); renderDash(); paintOpMetrics(); pintaFrescura();
+    },function(){ cerrar(); });
+    return dashEnVuelo;
+  }
+
+  /**
+   * "En vivo · hace Xs". El panel se refresca solo; si el usuario no lo ve, no
+   * lo cree. El reloj corre aparte del refresco para que el contador avance.
+   */
+  function pintaFrescura(){
+    var el=$("#dash-live"); if(!el)return;
+    clearInterval(dashRelojChip);
+    function pinta(){
+      if(!DASH||!DASH.generadoEn){ el.textContent=''; return; }
+      var seg=Math.max(0,Math.round((Date.now()-Date.parse(DASH.generadoEn))/1000));
+      el.textContent='En vivo · hace '+(seg<60?seg+' s':Math.floor(seg/60)+' min');
+      el.classList.toggle('stale',seg>90);
+    }
+    pinta();
+    dashRelojChip=setInterval(pinta,1000);
   }
   var dashRange=null;
   function dashTick(){
     clearTimeout(dashTimer);
     var visible=document.querySelector('.page[data-pg="dashboard"].on');
-    if(!visible)return; // fuera del dashboard no se consulta
-    dashTimer=setTimeout(function(){ loadDash().then(dashTick); }, DASH_MS);
+    if(!visible){ clearInterval(dashRelojChip); return; } // fuera del dashboard no se consulta
+    dashTimer=setTimeout(function(){ loadDash(true).then(dashTick); }, DASH_MS);
   }
+
+  // Al volver a la pestaña, refresca de inmediato: el navegador frena los
+  // temporizadores en segundo plano y el panel podría quedar viejo.
+  document.addEventListener('visibilitychange',function(){
+    if(document.hidden)return;
+    if(!document.querySelector('.page[data-pg="dashboard"].on'))return;
+    loadDash(true).then(dashTick);
+  });
   function money(n,cur){ try{ return (n||0).toLocaleString('es-CL',{style:'currency',currency:cur||'CLP',maximumFractionDigits:0}); }catch(e){ return '$'+fmtInt(n); } }
   function bar(pct,cls){ return '<div class="t"><i class="'+(cls||'')+'" style="width:'+Math.max(0,Math.min(100,pct||0))+'%"></i></div>'; }
   function hace(min){
