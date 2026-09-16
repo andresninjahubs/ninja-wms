@@ -64,6 +64,7 @@ export class AiDashboardController {
     return this.wms.aiDashboardChat(
       id, actorOperation(user, dto.operationId), this.owner(user),
       dto.sellerId || user?.sellerId || null, dto.prompt || '', dto.historial || [],
+      user?.role || null,
     );
   }
 

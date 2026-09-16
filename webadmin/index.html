@@ -76,7 +76,11 @@
   @media(max-width:860px){.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center}}
   .brand{display:flex;align-items:center;gap:10px;padding:8px 8px 16px}
   .brand .brandlogo{display:flex;align-items:center;line-height:0}
-  .brand .brandlogo-svg{width:158px;height:auto;display:block}
+  /* El viewBox lleva holgura a propósito: si Sora no alcanza a cargar, el
+     navegador cae a una tipografía más ancha y el logo se cortaba por la derecha.
+     Con holgura peor caso se ve un poco más chico, nunca cortado; y al terminar de
+     cargar las fuentes se ajusta al ancho real (ver ajustarLogo en app.js). */
+  .brand .brandlogo-svg{width:132px;height:auto;display:block;overflow:visible}
   /* var() NO se resuelve dentro del atributo fill de un <tspan>: el color va por CSS. */
   .brand .brandlogo-svg .wm-a{fill:var(--primary)}
   .brand .brandlogo-svg .wm-b{fill:var(--ink)}
@@ -1059,7 +1063,7 @@
 <div class="layout">
   <aside class="side">
     <button class="sidetoggle" id="side-toggle" type="button" title="Colapsar el menú" aria-label="Colapsar el menú">«</button>
-    <div class="brand"><div class="brandlogo" id="brandLogo" title="Ninja WMS"><svg class="brandlogo-svg" viewBox="0 0 208 46" role="img" aria-label="Ninja WMS" xmlns="http://www.w3.org/2000/svg"><text x="0" y="35" font-family="Sora, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.5"><tspan class="wm-a">Ninja</tspan><tspan class="wm-b" dx="8">WMS</tspan></text></svg></div></div>
+    <div class="brand"><div class="brandlogo" id="brandLogo" title="Ninja WMS"><svg class="brandlogo-svg" viewBox="0 0 240 46" preserveAspectRatio="xMinYMid meet" role="img" aria-label="Ninja WMS" xmlns="http://www.w3.org/2000/svg"><text x="0" y="35" font-family="Sora, sans-serif" font-weight="800" font-size="40" letter-spacing="0.5"><tspan class="wm-a">Ninja</tspan><tspan class="wm-b" dx="8">WMS</tspan></text></svg></div></div>
     <button class="nav on" data-pg="dashboard"><span class="ic">◧</span> Dashboard</button>
     <button class="nav" data-pg="copilot"><span class="ic">✨</span> Copiloto</button>
     <button class="nav" data-pg="aidash"><span class="ic">🧩</span> Dashboard AI</button>

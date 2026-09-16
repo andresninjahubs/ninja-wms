@@ -35,6 +35,15 @@ import { CORE_FEATURE, LIMIT_KEYS, MODULE_CATALOG, PLAN_CATALOG, PlanConfig, Pla
 import { looksLikeJwt, signToken, verifyToken } from './auth-token';
 import { toDomainEvents } from '../domain/domain-events';
 
+/**
+ * Ámbito de credencial de IA del super admin de la plataforma.
+ *
+ * No es un operationId real: es una clave reservada en la tabla de credenciales
+ * para que el personal de plataforma tenga la suya propia, separada de la de
+ * cada administrador de operación y sin herencia en ninguna dirección.
+ */
+export const PLATFORM_AI_SCOPE = '__plataforma__';
+
 /** Elimina el hash de contraseña antes de exponer un usuario por la API. */
 function safeUser(u: User): User {
   const { passwordHash, ...rest } = u;
@@ -223,8 +232,8 @@ export class WmsFacade {
     return this.aiDash().data(id, operationId, ownerId, sellerScope);
   }
   /** Le pide al LLM que cree o modifique el tablero. Valida antes de guardar. */
-  async aiDashboardChat(id: string, operationId: string, ownerId: string, sellerScope: string | null, prompt: string, historial?: Array<{ role: 'user' | 'assistant'; content: string }>) {
-    const cred = await this.resolveAiCredential(operationId, sellerScope).catch(() => null);
+  async aiDashboardChat(id: string, operationId: string, ownerId: string, sellerScope: string | null, prompt: string, historial?: Array<{ role: 'user' | 'assistant'; content: string }>, actorRole?: string | null) {
+    const cred = await this.resolveAiCredential(operationId, sellerScope, actorRole).catch(() => null);
     // Contexto real de la operación: sin esto el modelo pregunta cosas genéricas
     // ("¿de qué cliente?") en vez de ofrecer los clientes que existen de verdad.
     let contexto = '';
@@ -442,7 +451,7 @@ export class WmsFacade {
    * como PISTA ya calculada para que el modelo no tenga que ir a buscarla.
    */
   async copilotAsk(operationId: string, sellerId: string | null, question: string, history?: { role: 'user' | 'assistant'; content: string }[], actor?: { id?: string; role?: string } | null): Promise<CopilotAnswer> {
-    const cred = await this.resolveAiCredential(operationId, sellerId);
+    const cred = await this.resolveAiCredential(operationId, sellerId, actor?.role);
     if (!cred) {
       // Sin IA conectada: el router determinista es lo único que hay.
       return (await this.copilotDeterministicAnswer(operationId, sellerId, question)) ?? {
@@ -2156,7 +2165,9 @@ export class WmsFacade {
   // ---- Credenciales de IA por tenant (para el copiloto) --------------------
   /** Conecta/actualiza la clave LLM de una operación (sellerId=null) o de un seller. */
   async setAiConfig(operationId: string, sellerId: string | null, input: { provider?: string; baseUrl?: string; chatModel?: string; apiKey: string }): Promise<{ connected: boolean }> {
-    await this.assertFeature(operationId, 'ai_copilot', 'El copiloto con IA');
+    // La plataforma no contrata un plan a sí misma: la comprobación de feature
+    // aplica a los tenants, no al ámbito del super admin.
+    if (operationId !== PLATFORM_AI_SCOPE) await this.assertFeature(operationId, 'ai_copilot', 'El copiloto con IA');
     if (!this.aiConfig) throw new ValidationError('Configuración de IA no disponible');
     if (!input.apiKey || !input.apiKey.trim()) throw new ValidationError('Falta la API key');
     const providerKey = (input.provider || 'openai').trim().toLowerCase();
@@ -2179,8 +2190,14 @@ export class WmsFacade {
   /** Catálogo de proveedores soportados (para poblar el formulario del front). */
   aiProviders() { return COPILOT_PROVIDERS; }
   /** Estado de la conexión de IA (SIN exponer la clave: solo últimos 4 + metadatos). */
-  async getAiConfigStatus(operationId: string, sellerId: string | null): Promise<{ connected: boolean; scope: 'seller' | 'operation' | 'none'; provider?: string; providerLabel?: string; baseUrl?: string; chatModel?: string; last4?: string; updatedAt?: string }> {
+  async getAiConfigStatus(operationId: string, sellerId: string | null): Promise<{ connected: boolean; scope: 'seller' | 'operation' | 'plataforma' | 'none'; provider?: string; providerLabel?: string; baseUrl?: string; chatModel?: string; last4?: string; updatedAt?: string }> {
     if (!this.aiConfig) return { connected: false, scope: 'none' };
+    if (operationId === PLATFORM_AI_SCOPE) {
+      const p = await this.aiConfig.get(PLATFORM_AI_SCOPE, null);
+      if (!p || !p.active) return { connected: false, scope: 'none' };
+      const lbl = ((COPILOT_PROVIDERS as any)[p.provider] || {}).label || p.provider;
+      return { connected: true, scope: 'plataforma', provider: p.provider, providerLabel: lbl, baseUrl: p.baseUrl, chatModel: p.chatModel, last4: p.apiKey.slice(-4), updatedAt: p.updatedAt };
+    }
     const own = sellerId ? await this.aiConfig.get(operationId, sellerId) : null;
     const opLevel = await this.aiConfig.get(operationId, null);
     const eff = (own && own.active) ? own : (opLevel && opLevel.active ? opLevel : null);
@@ -2198,9 +2215,28 @@ export class WmsFacade {
     if (this.aiConfig) await this.aiConfig.delete(operationId, sellerId);
     return { connected: false };
   }
-  /** Resuelve la credencial efectiva: la del seller manda; si no, la de la operación. */
-  private async resolveAiCredential(operationId: string, sellerId: string | null): Promise<AiCredential | null> {
+  /**
+   * Resuelve la credencial efectiva de IA.
+   *
+   * Dentro de un tenant: la del seller manda y, si no tiene, la de la operación.
+   *
+   * El SUPER ADMIN de la plataforma es un caso aparte y NO hereda: usa su propia
+   * credencial y ninguna otra. Dos razones, y las dos importan: la clave de un
+   * cliente la paga el cliente —que el personal de plataforma la gaste sin que se
+   * entere no corresponde—, y al revés, la clave de la plataforma tampoco debe
+   * quedar disponible para los tenants. Si el super admin no conectó la suya,
+   * sencillamente no tiene IA: es preferible a usar la de otro por descuido.
+   */
+  private async resolveAiCredential(operationId: string, sellerId: string | null, actorRole?: string | null): Promise<AiCredential | null> {
     if (!this.aiConfig) return null;
+    if (actorRole === 'PLATFORM_ADMIN') {
+      const p = await this.aiConfig.get(PLATFORM_AI_SCOPE, null);
+      return p && p.active ? p : null;
+    }
+    if (operationId === PLATFORM_AI_SCOPE) {
+      const p = await this.aiConfig.get(PLATFORM_AI_SCOPE, null);
+      return p && p.active ? p : null;
+    }
     if (sellerId) { const s = await this.aiConfig.get(operationId, sellerId); if (s && s.active) return s; }
     const op = await this.aiConfig.get(operationId, null);
     return op && op.active ? op : null;

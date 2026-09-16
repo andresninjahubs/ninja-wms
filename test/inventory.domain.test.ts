@@ -47,7 +47,7 @@ import { CycleCountService } from '../src/domain/cyclecount.service';
 import { UserService } from '../src/domain/user.service';
 import { BarcodeService } from '../src/domain/barcode.service';
 import { OperationService } from '../src/domain/operation.service';
-import { WmsFacade } from '../src/app/wms.facade';
+import { PLATFORM_AI_SCOPE, WmsFacade } from '../src/app/wms.facade';
 import {
   FixedClock,
   InMemoryLocationRepository,
@@ -71,6 +71,7 @@ import {
   InMemoryUserRepository,
   InMemoryWebhookRepository,
   InMemoryAuthTokenRepository,
+  InMemoryAiConfigRepository,
   InMemoryPlanConfigRepository,
   InMemoryCountAuditRepository,
   InMemoryEventRepository,
@@ -956,9 +957,10 @@ async function run() {
     const authTokens = new InMemoryAuthTokenRepository();
     const emailSender = new LogEmailSender();
     const planConfig = new InMemoryPlanConfigRepository();
+    const aiConfig = new InMemoryAiConfigRepository();
     const facade = new WmsFacade(inventory, orderService, receiptService, productService, billingService, sellers, skus, locations, ids, advisor, cyc, userSvc, bc, opSvc, metricsService, chatService, platformUsageService, announcementService, webhookService, shippingLabels, returnService, serials, packagingService,
-      undefined, undefined, clock, undefined, undefined, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal);
-    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings };
+      undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal);
+    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig };
   }
 
   async function seedScan(facade: WmsFacade) {
@@ -5621,6 +5623,47 @@ async function run() {
     assert.match(r2.rechazados[0], /tema desconocido/);
     assert.match(r2.rechazados[1], /no existe la plantilla/);
     assert.equal(r2.dashboard.tema, 'torre', 'el tema válido anterior se conserva');
+  });
+
+  // ---- Credenciales de IA: el super admin no hereda (v117) -----------------
+  await test('IA: la credencial del super admin vive en su propio ámbito y no se hereda', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    // El admin de la operación conecta SU clave.
+    await facade.setAiConfig('op1', null, { provider: 'compatible', baseUrl: 'http://a', apiKey: 'sk-admin-1111', chatModel: 'm-admin' });
+    const opSt = await facade.getAiConfigStatus('op1', null);
+    assert.equal(opSt.connected, true);
+    assert.equal(opSt.scope, 'operation');
+    assert.equal(opSt.last4, '1111');
+    // El ámbito de plataforma sigue vacío: NO hereda la de la operación.
+    const p0 = await facade.getAiConfigStatus(PLATFORM_AI_SCOPE, null);
+    assert.equal(p0.connected, false, 'el super admin no debe heredar la clave del tenant');
+    assert.equal(p0.scope, 'none');
+    // El super admin conecta la suya: conviven, distintas.
+    await facade.setAiConfig(PLATFORM_AI_SCOPE, null, { provider: 'compatible', baseUrl: 'http://p', apiKey: 'sk-super-9999', chatModel: 'm-super' });
+    const p1 = await facade.getAiConfigStatus(PLATFORM_AI_SCOPE, null);
+    assert.equal(p1.scope, 'plataforma');
+    assert.equal(p1.last4, '9999');
+    assert.equal(p1.chatModel, 'm-super');
+    const op1 = await facade.getAiConfigStatus('op1', null);
+    assert.equal(op1.last4, '1111', 'la clave de la operación queda intacta');
+    // Desconectar la de plataforma no deja al super admin usando la del tenant.
+    await facade.deleteAiConfig(PLATFORM_AI_SCOPE, null);
+    assert.equal((await facade.getAiConfigStatus(PLATFORM_AI_SCOPE, null)).connected, false);
+    assert.equal((await facade.getAiConfigStatus('op1', null)).connected, true);
+  });
+
+  await test('IA: el ámbito de plataforma no exige plan contratado (el tenant sí)', async () => {
+    const { facade } = buildFacade();
+    const res = await facade.registerSelfServe({ companyName: 'Sin IA', name: 'Ana', email: 'ana@sinia.cl', password: 'clave12345', track: 'brand' });
+    await facade.setOperationPlan(res.operationId, 'free'); // Free no incluye ai_copilot
+    await expectThrows(
+      () => facade.setAiConfig(res.operationId, null, { provider: 'openai', apiKey: 'sk-xxxxxxxx', chatModel: 'gpt-4o-mini' }),
+      PlanLimitError,
+    );
+    // La plataforma no se contrata un plan a sí misma: su ámbito no pasa por el gate.
+    const r = await facade.setAiConfig(PLATFORM_AI_SCOPE, null, { provider: 'openai', apiKey: 'sk-plataforma-1', chatModel: 'gpt-4o-mini' });
+    assert.equal(r.connected, true);
   });
 
   // ---- Resumen --------------------------------------------------------------

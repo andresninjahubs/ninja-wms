@@ -225,6 +225,7 @@
 
   // ---- Init tras login ------------------------------------------------------
   function init(){
+    ajustarLogo();
     $("#sess-wrap").style.display="none";
     $("#who-nm").textContent=me.name; $("#who-rl").textContent=role.replace("_"," "); $("#who-av").textContent=(me.name||"?")[0];
     var allowed=NAV_BY_ROLE[role]||[];
@@ -384,7 +385,10 @@
       var pb=document.getElementById('poweredby');
       if(role==='PLATFORM_ADMIN'){
         root.style.removeProperty('--primary');
-        if(host){host.innerHTML=defaultBrandHTML;host.title='Ninja WMS';}
+        // Ojo: esto REPONE el markup original del logo, así que hay que volver a
+        // ajustarlo. Sin esta llamada el ajuste hecho en init() se perdía acá, y
+        // el super admin —que siempre pasa por esta rama— veía el logo cortado.
+        if(host){host.innerHTML=defaultBrandHTML;host.title='Ninja WMS';ajustarLogo();}
         if(pb)pb.style.display='';
         return;
       }
@@ -393,7 +397,7 @@
       if(host){
         if(b&&b.logoDataUri){host.innerHTML='<img alt="'+esc(dispName)+'" style="width:158px;height:auto;display:block" src="'+b.logoDataUri+'">';host.title=dispName;}
         else if(dispName){host.innerHTML='<div class="n" style="font-size:20px;font-weight:800;color:var(--primary)">'+esc(dispName)+'</div>';host.title=dispName;}
-        else {host.innerHTML=defaultBrandHTML;host.title='Ninja WMS';} // operación sin marca → Ninja por defecto
+        else {host.innerHTML=defaultBrandHTML;host.title='Ninja WMS';ajustarLogo();} // operación sin marca → Ninja por defecto
       }
       if(pb)pb.style.display=(dispName||(b&&b.logoDataUri))?'none':'';
     }catch(e){}
@@ -1972,7 +1976,7 @@
     api('/copilot/ai-config?'+copScopeQ()).then(function(s){
       copAiConnected=!!(s&&s.connected);
       if(copAiConnected){
-        var scope=s.scope==='seller'?'de tu cuenta':'de la operación';
+        var scope=s.scope==='plataforma'?'de la plataforma (super admin)':(s.scope==='seller'?'de tu cuenta':'de la operación');
         el.innerHTML='<span style="display:inline-flex;align-items:center;gap:5px;background:var(--primary-wash);color:var(--primary-ink);padding:3px 9px;border-radius:999px;font-weight:700;font-size:11.5px">✨ '+esc(s.providerLabel||'IA')+' conectada</span>'
           +'<button class="btn" id="cop-ai-btn" style="padding:4px 10px;font-size:12px">Cambiar</button>';
         el.title=(s.providerLabel||'')+' · modelo '+(s.chatModel||'')+' · clave •••'+(s.last4||'')+' ('+scope+')';
@@ -1988,7 +1992,7 @@
     var connected=copAiConnected;
     var opts=Object.keys(copProviders).map(function(k){return '<option value="'+esc(k)+'">'+esc(copProviders[k].label)+'</option>';}).join('');
     var html='<div class="form">'
-      +'<p class="muted" style="margin:0 0 12px;max-width:66ch">Conecta la cuenta del proveedor de IA que prefieras. La clave se guarda del lado del servidor y <b>nunca se muestra completa</b>. Aplica a '+(role==='CLIENT'?'tu cuenta (seller)':'toda tu operación')+'.</p>'
+      +'<p class="muted" style="margin:0 0 12px;max-width:66ch">Conecta la cuenta del proveedor de IA que prefieras. La clave se guarda del lado del servidor y <b>nunca se muestra completa</b>. Aplica a '+(role==='PLATFORM_ADMIN'?'<b>tu cuenta de super admin</b>: es independiente de la clave de cada operación y no se hereda en ninguna direcci\u00f3n':(role==='CLIENT'?'tu cuenta (seller)':'toda tu operación'))+'.</p>'
       +'<div class="fld"><label>Proveedor</label><select id="cai-prov">'+opts+'</select></div>'
       +'<div class="fld" id="cai-url-fld"><label>Base URL (API)</label><input id="cai-url" placeholder="https://…"></div>'
       +'<div class="fld"><label>Modelo <button type="button" id="cai-models-btn" class="btn" style="padding:2px 8px;font-size:11px;margin-left:6px">Ver modelos</button></label><input id="cai-model" placeholder="modelo"><div id="cai-models" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div></div>'
@@ -6623,6 +6627,29 @@
     });
   }
 
+
+  /**
+   * Ajusta el viewBox del logotipo al ancho REAL del texto una vez que las
+   * fuentes terminaron de cargar. Sin esto quedaba atado a un viewBox fijo
+   * calculado con Sora: si la fuente no llegaba, el navegador caía a una
+   * tipografía más ancha (system-ui mide 225 donde Sora mide 193) y la "S" de
+   * WMS quedaba cortada. Ahora se mide y se acomoda, sea cual sea la fuente.
+   */
+  function ajustarLogo(){
+    var svg=document.querySelector('.brandlogo-svg'); if(!svg)return;
+    var t=svg.querySelector('text'); if(!t)return;
+    function medir(){
+      try{
+        var bb=t.getBBox();
+        if(!bb||!bb.width)return;
+        var m=4; // respiro a la derecha para el remate de la última letra
+        svg.setAttribute('viewBox','0 0 '+Math.ceil(bb.width+m)+' 46');
+      }catch(e){ /* si getBBox falla (nodo oculto), queda el viewBox holgado */ }
+    }
+    medir();
+    if(document.fonts&&document.fonts.ready&&document.fonts.ready.then)document.fonts.ready.then(medir);
+    setTimeout(medir,1200); // red por si fonts.ready no está disponible
+  }
 
   // ---- Torre en vivo (v115) ---------------------------------------------------
   // Las dos mitades de la misma historia en una pantalla: qué está ejecutando el

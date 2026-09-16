@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Inject, Post, Put, Query } from '@nestjs/common';
-import { WmsFacade } from '../app/wms.facade';
+import { PLATFORM_AI_SCOPE, WmsFacade } from '../app/wms.facade';
 import { CopilotAskDto, AiConfigDto, CopilotConfirmActionDto, CopilotSettingsDto } from './dto';
 import { actorOperation, CurrentUser } from './auth/current-user.decorator';
 import { RequirePermission } from './auth/permissions.decorator';
@@ -73,8 +73,21 @@ export class CopilotController {
 
   /** Alcance donde el usuario CONFIGURA su IA: un CLIENT en su seller; el staff a nivel operación. */
   private configScope(user: User | null, bodySellerId?: string): string | null {
+    if (user && user.role === UserRole.PLATFORM_ADMIN) return null; // el super admin configura su propio ámbito
     if (user && user.role === UserRole.CLIENT) return user.sellerId || null;
     return bodySellerId || null; // staff: operación (null) o un seller indicado
+  }
+
+  /**
+   * Operación contra la que se lee/escribe la credencial de IA.
+   *
+   * El super admin de la plataforma NO comparte clave con los administradores de
+   * cada operación: la suya vive en un ámbito propio y no se hereda en ninguna
+   * dirección. El resto del staff sigue configurando la de su operación.
+   */
+  private configOperation(user: User | null, operationId?: string): string {
+    if (user && user.role === UserRole.PLATFORM_ADMIN) return PLATFORM_AI_SCOPE;
+    return actorOperation(user, operationId);
   }
 
   /** Catálogo de proveedores soportados (para poblar el formulario). */
@@ -88,7 +101,7 @@ export class CopilotController {
   @Get('ai-config')
   @RequirePermission('stock:read')
   aiStatus(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('sellerId') sellerId?: string) {
-    const op = actorOperation(user, operationId);
+    const op = this.configOperation(user, operationId);
     return this.wms.getAiConfigStatus(op, this.configScope(user, sellerId));
   }
 
@@ -96,7 +109,7 @@ export class CopilotController {
   @Put('ai-config')
   @RequirePermission('stock:read')
   aiSet(@Body() dto: AiConfigDto, @CurrentUser() user: User | null) {
-    const op = actorOperation(user, dto.operationId);
+    const op = this.configOperation(user, dto.operationId);
     return this.wms.setAiConfig(op, this.configScope(user, dto.sellerId), {
       provider: dto.provider, baseUrl: dto.baseUrl, chatModel: dto.chatModel, apiKey: dto.apiKey,
     });
@@ -106,7 +119,7 @@ export class CopilotController {
   @Post('ai-test')
   @RequirePermission('stock:read')
   aiTest(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('sellerId') sellerId?: string) {
-    const op = actorOperation(user, operationId);
+    const op = this.configOperation(user, operationId);
     return this.wms.testAiConfig(op, this.configScope(user, sellerId));
   }
 
@@ -122,7 +135,7 @@ export class CopilotController {
   @Get('ai-models')
   @RequirePermission('stock:read')
   aiModels(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('sellerId') sellerId?: string) {
-    const op = actorOperation(user, operationId);
+    const op = this.configOperation(user, operationId);
     return this.wms.listAiModels(op, this.configScope(user, sellerId));
   }
 
@@ -130,7 +143,7 @@ export class CopilotController {
   @Delete('ai-config')
   @RequirePermission('stock:read')
   aiDelete(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('sellerId') sellerId?: string) {
-    const op = actorOperation(user, operationId);
+    const op = this.configOperation(user, operationId);
     return this.wms.deleteAiConfig(op, this.configScope(user, sellerId));
   }
 }
