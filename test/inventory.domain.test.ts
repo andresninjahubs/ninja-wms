@@ -19,7 +19,7 @@ import { OpsChannelService, classifyHeuristic, insightsHeuristic } from '../src/
 import { parseCopilotIntent, buildInsights } from '../src/domain/copilot';
 import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS } from '../src/domain/copilot-tools';
 import { deadlineBoost, deadlineState, nextCutoff, resolveDueAt } from '../src/domain/deadline';
-import { aplicarPatch, primerHueco, transformar, validarWidget } from '../src/domain/ai-dashboard';
+import { PLANTILLAS, aplicarPatch, opsDePlantilla, primerHueco, transformar, validarWidget } from '../src/domain/ai-dashboard';
 import { InMemoryOpsChannelRepository } from '../src/infra/memory/in-memory.repositories';
 import { MetricsService } from '../src/domain/metrics.service';
 import { RollupService } from '../src/domain/rollup.service';
@@ -4506,6 +4506,43 @@ async function run() {
     // Filtro simple.
     const filtrado = transformar(bruto, { tipo: 'tabla', source: { path: 'items' }, transform: { filter: { field: 'cliente', op: '=', value: 'ACME' } } } as any);
     assert.equal(filtrado.filas.length, 2);
+  });
+
+  await test('dashboard AI: las tres plantillas se arman sin widgets encimados', () => {
+    const tools = [
+      'panel_operacion', 'flujo_mercaderia', 'serie_diaria', 'inventario_por_cliente',
+      'trabajo_pendiente', 'ordenes_por_vencer', 'ocupacion_ubicaciones', 'alertas_activas',
+    ];
+    assert.deepEqual(PLANTILLAS.map((p) => p.id), ['torre', 'premium', 'galeria']);
+    for (const p of PLANTILLAS) {
+      const id = (() => { let n = 0; return () => `w${++n}`; })();
+      const base: any = { id: 'd1', operationId: 'op1', ownerId: 'ana', nombre: 'x', widgets: [], version: 1, createdAt: 'a', updatedAt: 'a' };
+      const r = aplicarPatch(base, opsDePlantilla(p), tools, id, '2026-09-17T12:00:00.000Z');
+      assert.equal(r.rechazados.length, 0, `${p.id}: ${r.rechazados.join(' · ')}`);
+      assert.equal(r.dashboard.widgets.length, p.widgets.length, `${p.id}: faltan widgets`);
+      assert.equal(r.dashboard.tema, p.tema, `${p.id}: tema`);
+      // Ningún par de widgets puede ocupar la misma celda de la grilla.
+      const ws = r.dashboard.widgets;
+      for (let i = 0; i < ws.length; i++) for (let j = i + 1; j < ws.length; j++) {
+        const a = ws[i], b = ws[j];
+        const chocan = a.x < b.x + b.ancho && b.x < a.x + a.ancho && a.y < b.y + b.alto && b.y < a.y + a.alto;
+        assert.equal(chocan, false, `${p.id}: "${a.titulo}" se encima con "${b.titulo}"`);
+      }
+      // Y nadie se sale de las 12 columnas.
+      for (const w of ws) assert.ok(w.x + w.ancho <= 12, `${p.id}: "${w.titulo}" se sale de la grilla`);
+    }
+  });
+
+  await test('dashboard AI: el tema se cambia y una plantilla inventada se rechaza', () => {
+    const id = (() => { let n = 0; return () => `w${++n}`; })();
+    const base: any = { id: 'd1', operationId: 'op1', ownerId: 'ana', nombre: 'x', widgets: [], version: 1, createdAt: 'a', updatedAt: 'a' };
+    const r = aplicarPatch(base, [{ op: 'tema', tema: 'torre' } as any], [], id, 'a');
+    assert.equal(r.dashboard.tema, 'torre');
+    const r2 = aplicarPatch(r.dashboard, [{ op: 'tema', tema: 'neón' } as any, { op: 'plantilla', plantilla: 'inexistente' } as any], [], id, 'a');
+    assert.equal(r2.rechazados.length, 2);
+    assert.match(r2.rechazados[0], /tema desconocido/);
+    assert.match(r2.rechazados[1], /no existe la plantilla/);
+    assert.equal(r2.dashboard.tema, 'torre', 'el tema válido anterior se conserva');
   });
 
   // ---- Resumen --------------------------------------------------------------

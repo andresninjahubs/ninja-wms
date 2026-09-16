@@ -101,6 +101,31 @@ export const COPILOT_TOOLS: ToolSpec[] = [
     parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional)'), maxHoras: int('horas detenido para marcar riesgo (opcional, def 24)'), limite: int('máx. resultados (opcional, def 50)') } },
   },
   {
+    name: 'panel_operacion',
+    description: 'Panel consolidado de la operación en UNA llamada: actividad con comparativo, productividad, pre-facturación del mes, cumplimiento de deadlines (aTiempo/atrasadas), precisión de preparación, tiempos B2B/B2C, ocupación de bodega, carga por cliente, cola por courier, órdenes por estado, reposición de embalaje y excepciones. Es la fuente preferida para armar tableros: casi todo lo que un widget necesita sale de acá. Rutas útiles: actividad.ordenesPreparadas.valor, despacho.atrasadas, precision, ocupacion, cargaPorCliente, ordenesPorEstado, colaPorCourier, embalaje, excepciones, productividad, prefacturacion.porCliente.',
+    parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional; sin él, toda la operación)'), ventana: str('24h | 7d | 30d | 90d (opcional, def 24h)') } },
+  },
+  {
+    name: 'flujo_mercaderia',
+    description: 'Flujo de la mercadería entre etapas (recepción → almacenaje → picking → empaque → despacho, más reposición y devoluciones), con las unidades que pasaron por cada tramo. Pensado para un widget de tipo sankey.',
+    parameters: { type: 'object', properties: { dias: int('ventana en días (opcional, def 30)'), sellerId: str('id del cliente (opcional)') } },
+  },
+  {
+    name: 'serie_diaria',
+    description: 'Serie de un indicador día por día, para gráficos de área, línea o calendario de calor. Métricas: unidadesPreparadas, ordenesPreparadas, unidadesRecibidas, movimientos.',
+    parameters: { type: 'object', properties: { dias: int('cuántos días hacia atrás (opcional, def 30)'), metrica: str('unidadesPreparadas | ordenesPreparadas | unidadesRecibidas | movimientos'), sellerId: str('id del cliente (opcional)') } },
+  },
+  {
+    name: 'inventario_por_cliente',
+    description: 'Unidades en stock agrupadas por cliente y, dentro de cada uno, por sus SKUs principales. Pensado para un treemap.',
+    parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional)'), topSkus: int('cuántos SKUs por cliente (opcional, def 6)') } },
+  },
+  {
+    name: 'trabajo_pendiente',
+    description: 'Cuántas tareas hay pendientes de cada tipo (picking, empaque, despacho, recepción, guardado, reposición, conteo, re-slot). Pensado para un rosco o unas barras.',
+    parameters: { type: 'object', properties: { soloSinAsignar: str('true para contar solo lo no asignado (opcional)') } },
+  },
+  {
     name: 'ordenes_por_vencer',
     description: 'Órdenes con el DEADLINE DE PREPARACIÓN vencido o por vencer: mira hacia adelante (cuánta holgura queda contra el compromiso de salida: corte del courier o SLA del cliente), a diferencia de ordenes_en_riesgo que mira cuánto llevan detenidas. Úsalo para "¿qué tiene que salir hoy?", "¿qué está por incumplir?", "¿qué priorizo ahora?".',
     parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional)'), horas: int('ventana en horas hacia adelante (opcional, def 4)'), limite: int('máx. resultados (opcional, def 50)') } },

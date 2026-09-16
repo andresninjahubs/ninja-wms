@@ -15,10 +15,54 @@
  * widget no puede pedir nada que esa persona no pudiera ver por su cuenta.
  */
 
-/** Tipos de widget que el panel sabe dibujar. */
-export type WidgetType = 'kpi' | 'tabla' | 'barras' | 'lineas' | 'lista' | 'texto';
+/**
+ * Tipos de widget que el panel sabe dibujar.
+ * Los seis primeros son los básicos (HTML puro); el resto se dibuja con ECharts,
+ * que el panel carga solo cuando entras a la sección.
+ */
+export type WidgetType =
+  | 'kpi' | 'tabla' | 'barras' | 'lineas' | 'lista' | 'texto'
+  | 'gauge'      // aguja radial: ocupación, precisión, cumplimiento
+  | 'rosco'      // dona con el total al centro
+  | 'area'       // tendencia con degradado
+  | 'apiladas'   // barras apiladas (composición)
+  | 'radar'      // perfil multidimensional
+  | 'treemap'    // qué pesa más
+  | 'calendario' // mapa de calor por día
+  | 'sankey'     // flujo entre etapas
+  | 'mapa3d'     // bodega isométrica por ubicación
+  | 'bullet'     // valor contra su meta
+  | 'latido';    // últimos hechos, con pulso
 
-export const WIDGET_TYPES: WidgetType[] = ['kpi', 'tabla', 'barras', 'lineas', 'lista', 'texto'];
+export const WIDGET_TYPES: WidgetType[] = [
+  'kpi', 'tabla', 'barras', 'lineas', 'lista', 'texto',
+  'gauge', 'rosco', 'area', 'apiladas', 'radar', 'treemap', 'calendario', 'sankey', 'mapa3d', 'bullet', 'latido',
+];
+
+/** Qué hace cada tipo, en una línea. Lo lee el LLM y también la ayuda del panel. */
+export const WIDGET_HELP: Record<WidgetType, string> = {
+  kpi: 'un número grande con su unidad',
+  tabla: 'filas y columnas',
+  barras: 'barras horizontales con su valor',
+  lineas: 'mini gráfico de línea (sparkline)',
+  lista: 'lista simple de clave y valor',
+  texto: 'una nota fija escrita por la persona',
+  gauge: 'aguja radial de 0 a 100 con zona de riesgo (ocupación, precisión, cumplimiento)',
+  rosco: 'dona con el total al centro (composición de un todo)',
+  area: 'tendencia en el tiempo con degradado',
+  apiladas: 'barras apiladas por categoría (composición por hora, estado o courier)',
+  radar: 'perfil de varias dimensiones a la vez (desempeño de un operario o cliente)',
+  treemap: 'rectángulos proporcionales: qué pesa más',
+  calendario: 'mapa de calor por día del año (ritmo de la operación)',
+  sankey: 'flujo entre etapas: por dónde pasa la mercadería y dónde se atasca',
+  mapa3d: 'la bodega vista de arriba: cada ubicación con su ocupación en color y altura',
+  bullet: 'valor contra su meta, con la marca del compromiso',
+  latido: 'los últimos hechos de la operación con su pulso de color',
+};
+
+/** Aspecto del tablero completo. */
+export type DashboardTema = 'claro' | 'torre';
+export const TEMAS: DashboardTema[] = ['claro', 'torre'];
 
 /** Agregaciones disponibles al transformar los datos de la herramienta. */
 export type Agg = 'suma' | 'promedio' | 'conteo' | 'maximo' | 'minimo' | 'primero';
@@ -80,6 +124,11 @@ export interface AiDashboard {
   descripcion?: string | null;
   /** Cliente al que se acota el tablero completo (null = toda la operación). */
   sellerId?: string | null;
+  /**
+   * Aspecto: 'claro' (el del panel) o 'torre' (oscuro, pensado para la pantalla
+   * colgada en la bodega y para mostrar la operación a un cliente).
+   */
+  tema?: DashboardTema;
   widgets: Widget[];
   /** Sube en cada guardado; permite volver a la versión anterior. */
   version: number;
@@ -224,6 +273,8 @@ export type DashboardPatch =
   | { op: 'eliminar'; id: string }
   | { op: 'mover'; id: string; x?: number; y?: number; ancho?: number; alto?: number }
   | { op: 'renombrar'; nombre: string; descripcion?: string }
+  | { op: 'tema'; tema: DashboardTema }
+  | { op: 'plantilla'; plantilla: string }
   | { op: 'limpiar' };
 
 export interface AplicarResultado {
@@ -247,6 +298,7 @@ export function aplicarPatch(
   let widgets = dashboard.widgets.slice();
   let nombre = dashboard.nombre;
   let descripcion = dashboard.descripcion ?? null;
+  let tema: DashboardTema = dashboard.tema || 'claro';
   const aplicados: string[] = [];
   const rechazados: string[] = [];
 
@@ -307,6 +359,22 @@ export function aplicarPatch(
         aplicados.push(`renombrado a "${n}"`);
         break;
       }
+      case 'plantilla': {
+        const p = PLANTILLAS.find((x) => x.id === String(op.plantilla));
+        if (!p) { rechazados.push(`no existe la plantilla "${op.plantilla}". Disponibles: ${PLANTILLAS.map((x) => x.id).join(', ')}`); break; }
+        // Se expande a operaciones normales: pasa por la misma validación que el resto.
+        const r = aplicarPatch({ ...dashboard, widgets, nombre, descripcion, tema }, opsDePlantilla(p), herramientasValidas, idGen, nowIso);
+        widgets = r.dashboard.widgets; tema = r.dashboard.tema || tema;
+        aplicados.push(`plantilla aplicada: ${p.nombre} (${r.aplicados.length - 2} widgets)`);
+        for (const x of r.rechazados) rechazados.push(x);
+        break;
+      }
+      case 'tema': {
+        if (!TEMAS.includes(op.tema)) { rechazados.push(`tema desconocido: ${op.tema}. Disponibles: ${TEMAS.join(', ')}`); break; }
+        tema = op.tema;
+        aplicados.push(`tema: ${op.tema === 'torre' ? 'torre de control' : 'claro'}`);
+        break;
+      }
       case 'limpiar': {
         widgets = [];
         aplicados.push('tablero vaciado');
@@ -320,7 +388,7 @@ export function aplicarPatch(
   return {
     dashboard: {
       ...dashboard,
-      nombre, descripcion,
+      nombre, descripcion, tema,
       widgets: normalizarLayout(widgets),
       version: dashboard.version + (aplicados.length ? 1 : 0),
       updatedAt: aplicados.length ? nowIso : dashboard.updatedAt,
@@ -426,4 +494,117 @@ function agregar(items: any[], field: string | undefined, agg: Agg): number {
     case 'primero': return vals[0];
     default: return Math.round(vals.reduce((a, b) => a + b, 0) * 100) / 100;
   }
+}
+
+// ---- Plantillas invocables ---------------------------------------------------
+
+/**
+ * Tableros listos para invocar de una vez. Existen porque la hoja en blanco es el
+ * peor punto de partida: con una plantilla la persona ve el tablero armado en dos
+ * segundos y desde ahí lo edita, en vez de tener que imaginárselo.
+ *
+ * El LLM también puede invocarlas por nombre ("arma la torre de control").
+ */
+export interface PlantillaDef {
+  id: string;
+  nombre: string;
+  descripcion: string;
+  tema: DashboardTema;
+  widgets: Array<Omit<Widget, 'id'>>;
+}
+
+const W = (w: Omit<Widget, 'id'>) => w;
+
+export const PLANTILLAS: PlantillaDef[] = [
+  {
+    id: 'torre',
+    nombre: 'Torre de control',
+    descripcion: 'Oscuro, para la pantalla colgada en la bodega: flujo, ocupación 3D, ritmo y latido en vivo.',
+    tema: 'torre',
+    widgets: [
+      W({ tipo: 'kpi', titulo: 'Órdenes preparadas', x: 0, y: 0, ancho: 3, alto: 5,
+        source: { tool: 'panel_operacion', path: 'actividad.ordenesPreparadas.valor' }, transform: null,
+        display: { formato: 'numero', nota: 'últimas 24 h' } }),
+      W({ tipo: 'kpi', titulo: 'Unidades preparadas', x: 3, y: 0, ancho: 3, alto: 5,
+        source: { tool: 'panel_operacion', path: 'actividad.unidadesPreparadas.valor' }, transform: null,
+        display: { formato: 'numero', unidad: 'un', nota: 'últimas 24 h' } }),
+      W({ tipo: 'kpi', titulo: 'Órdenes atrasadas', x: 6, y: 0, ancho: 3, alto: 5,
+        source: { tool: 'ordenes_por_vencer', args: { horas: 0 }, path: 'items' }, transform: { agg: 'conteo' },
+        display: { formato: 'numero', color: '#FF6B6B', nota: 'pasadas de su deadline' } }),
+      W({ tipo: 'gauge', titulo: 'Ocupación', x: 9, y: 0, ancho: 3, alto: 5,
+        source: { tool: 'panel_operacion', path: 'ocupacion' }, transform: null, display: { nota: 'unidades sobre capacidad' } }),
+      W({ tipo: 'mapa3d', titulo: 'Mapa de ocupación por ubicación', x: 0, y: 4, ancho: 5, alto: 9,
+        source: { tool: 'ocupacion_ubicaciones', path: 'masOcupadas' }, transform: null, display: { nota: 'altura y color = ocupación' } }),
+      W({ tipo: 'sankey', titulo: 'Flujo de la mercadería', x: 5, y: 4, ancho: 7, alto: 9,
+        source: { tool: 'flujo_mercaderia' }, transform: null, display: { nota: 'últimos 30 días' } }),
+      W({ tipo: 'latido', titulo: 'Latido de la operación', x: 0, y: 13, ancho: 5, alto: 8,
+        source: { tool: 'alertas_activas', path: 'alertas' }, transform: { limit: 8 }, display: null }),
+      W({ tipo: 'calendario', titulo: 'Ritmo de preparación', x: 5, y: 13, ancho: 7, alto: 8,
+        source: { tool: 'serie_diaria', args: { dias: 90, metrica: 'unidadesPreparadas' }, path: 'series' }, transform: null,
+        display: { nota: 'unidades preparadas por día' } }),
+      W({ tipo: 'treemap', titulo: 'Inventario por cliente', x: 0, y: 21, ancho: 12, alto: 7,
+        source: { tool: 'inventario_por_cliente', path: 'porCliente' }, transform: null, display: null }),
+    ],
+  },
+  {
+    id: 'premium',
+    nombre: 'Panel premium',
+    descripcion: 'Claro, para la dirección: tendencia, cumplimiento por cliente, mezcla de trabajo y desempeño.',
+    tema: 'claro',
+    widgets: [
+      W({ tipo: 'area', titulo: 'Unidades preparadas por día', x: 0, y: 0, ancho: 6, alto: 7,
+        source: { tool: 'serie_diaria', args: { dias: 14, metrica: 'unidadesPreparadas' }, path: 'series' }, transform: null,
+        display: { nota: 'últimos 14 días' } }),
+      W({ tipo: 'kpi', titulo: 'A tiempo vs. deadline', x: 6, y: 0, ancho: 3, alto: 7,
+        source: { tool: 'panel_operacion', path: 'despacho.aTiempo' }, transform: null, display: { formato: 'numero' } }),
+      W({ tipo: 'kpi', titulo: 'Atrasadas', x: 9, y: 0, ancho: 3, alto: 7,
+        source: { tool: 'panel_operacion', path: 'despacho.atrasadas' }, transform: null, display: { formato: 'numero', color: '#E05A4B' } }),
+      W({ tipo: 'gauge', titulo: 'Precisión de preparación', x: 8, y: 7, ancho: 4, alto: 7,
+        source: { tool: 'panel_operacion', path: 'precision' }, transform: null, display: { nota: 'pedidos verificados al empacar' } }),
+      W({ tipo: 'rosco', titulo: 'Mezcla de trabajo pendiente', x: 0, y: 7, ancho: 4, alto: 8,
+        source: { tool: 'trabajo_pendiente', path: 'porTipo' }, transform: null, display: null }),
+      W({ tipo: 'bullet', titulo: 'Carga pendiente por cliente', x: 4, y: 7, ancho: 4, alto: 8,
+        source: { tool: 'panel_operacion', path: 'cargaPorCliente' }, transform: { field: 'unidades' }, display: { nota: 'unidades abiertas' } }),
+      W({ tipo: 'barras', titulo: 'Productividad de bodega', x: 8, y: 11, ancho: 4, alto: 8,
+        source: { tool: 'panel_operacion', path: 'productividad' }, transform: { groupBy: 'nombre', field: 'unidades', agg: 'suma', sortBy: 'valor', sortDir: 'desc', limit: 8 },
+        display: { unidad: 'u' } }),
+      W({ tipo: 'apiladas', titulo: 'Órdenes por estado', x: 0, y: 15, ancho: 12, alto: 7,
+        source: { tool: 'panel_operacion', path: 'ordenesPorEstado' }, transform: null, display: null }),
+    ],
+  },
+  {
+    id: 'galeria',
+    nombre: 'Galería de widgets',
+    descripcion: 'Uno de cada tipo, con datos reales: para ver todo lo que se puede pedir antes de armar el tuyo.',
+    tema: 'claro',
+    widgets: [
+      W({ tipo: 'gauge', titulo: 'Gauge · ocupación', x: 0, y: 0, ancho: 3, alto: 6, source: { tool: 'panel_operacion', path: 'ocupacion' }, transform: null, display: null }),
+      W({ tipo: 'sankey', titulo: 'Sankey · flujo', x: 3, y: 0, ancho: 6, alto: 6, source: { tool: 'flujo_mercaderia' }, transform: null, display: null }),
+      W({ tipo: 'rosco', titulo: 'Rosco · trabajo pendiente', x: 9, y: 0, ancho: 3, alto: 6, source: { tool: 'trabajo_pendiente', path: 'porTipo' }, transform: null, display: null }),
+      W({ tipo: 'treemap', titulo: 'Treemap · inventario', x: 0, y: 6, ancho: 4, alto: 6, source: { tool: 'inventario_por_cliente', path: 'porCliente' }, transform: null, display: null }),
+      W({ tipo: 'calendario', titulo: 'Calendario · ritmo', x: 4, y: 6, ancho: 8, alto: 6,
+        source: { tool: 'serie_diaria', args: { dias: 90, metrica: 'unidadesPreparadas' }, path: 'series' }, transform: null, display: null }),
+      W({ tipo: 'mapa3d', titulo: 'Mapa 3D · racks', x: 0, y: 12, ancho: 5, alto: 8, source: { tool: 'ocupacion_ubicaciones', path: 'masOcupadas' }, transform: null, display: null }),
+      W({ tipo: 'area', titulo: 'Área · tendencia', x: 5, y: 12, ancho: 7, alto: 8,
+        source: { tool: 'serie_diaria', args: { dias: 14, metrica: 'unidadesPreparadas' }, path: 'series' }, transform: null, display: null }),
+      W({ tipo: 'bullet', titulo: 'Bullet · carga por cliente', x: 0, y: 20, ancho: 4, alto: 7, source: { tool: 'panel_operacion', path: 'cargaPorCliente' }, transform: { field: 'unidades' }, display: null }),
+      W({ tipo: 'apiladas', titulo: 'Apiladas · órdenes por estado', x: 4, y: 20, ancho: 4, alto: 7, source: { tool: 'panel_operacion', path: 'ordenesPorEstado' }, transform: null, display: null }),
+      W({ tipo: 'latido', titulo: 'Latido · alertas', x: 8, y: 20, ancho: 4, alto: 7, source: { tool: 'alertas_activas', path: 'alertas' }, transform: { limit: 6 }, display: null }),
+    ],
+  },
+];
+
+/**
+ * Convierte una plantilla en operaciones de patch (así pasa por la misma validación).
+ *
+ * A propósito NO se le pasan las coordenadas: el acomodador busca el primer hueco
+ * libre para cada widget, en orden. Escribir x/y a mano en la plantilla es pedir
+ * que dos widgets terminen encimados el día que alguien cambie un alto.
+ */
+export function opsDePlantilla(p: PlantillaDef): DashboardPatch[] {
+  return ([{ op: 'limpiar' }, { op: 'tema', tema: p.tema }] as DashboardPatch[])
+    .concat(p.widgets.map((w) => {
+      const { x, y, ...resto } = w as any;
+      return { op: 'agregar', widget: resto } as DashboardPatch;
+    }));
 }

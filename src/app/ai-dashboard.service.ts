@@ -14,8 +14,8 @@ import { AiCredential } from '../domain/ports';
 import { askCopilotChat, ChatTurn } from '../domain/copilot-llm';
 import { COPILOT_TOOLS } from '../domain/copilot-tools';
 import {
-  AiDashboard, DashboardPatch, GRID_COLS, Widget, WIDGET_TYPES,
-  aplicarPatch, transformar, validarWidget,
+  AiDashboard, DashboardPatch, GRID_COLS, PLANTILLAS, Widget, WIDGET_HELP, WIDGET_TYPES,
+  aplicarPatch, opsDePlantilla, transformar, validarWidget,
 } from '../domain/ai-dashboard';
 import { WmsFacade } from './wms.facade';
 
@@ -61,19 +61,38 @@ export function capacidades() {
       'Ejecutar código, HTML o consultas SQL libres.',
       'Inventar datos: si algo no se mide todavía, el widget queda vacío y lo dice.',
     ],
-    tiposDeWidget: WIDGET_TYPES,
+    tiposDeWidget: WIDGET_TYPES.map((t) => ({ tipo: t, para: WIDGET_HELP[t] })),
+    plantillas: PLANTILLAS.map((p) => ({ id: p.id, nombre: p.nombre, descripcion: p.descripcion, tema: p.tema, widgets: p.widgets.length })),
+    temas: [
+      { id: 'claro', nombre: 'Claro', para: 'el día a día, dentro del panel' },
+      { id: 'torre', nombre: 'Torre de control', para: 'pantalla colgada en la bodega o demo a un cliente' },
+    ],
     areas,
   };
 }
 
 /** Prompt del sistema: el contrato con el modelo. */
-function systemPrompt(dashboard: AiDashboard, catalogo: string): string {
+function systemPrompt(dashboard: AiDashboard, catalogo: string, contexto?: string): string {
   return [
     'Eres el diseñador de tableros del WMS Ninja. Ayudas a un administrador a armar su panel a medida.',
     '',
+    'CÓMO TRABAJAS: esto es una CONVERSACIÓN, no una orden suelta. Antes de construir nada,',
+    'asegúrate de que lo que la persona quiere calza con los datos que existen. Si algo queda',
+    'ambiguo —de qué cliente, de qué período, qué métrica exactamente, qué forma visual— PREGUNTA',
+    'primero, con opciones concretas para que responda de un clic. Cuando ya lo tengas claro,',
+    'propón el plan y espera a que la persona apriete Construir: tú NO aplicas nada, propones.',
+    'No preguntes por preguntar: si el pedido es evidente y hay una sola lectura razonable,',
+    'propón el plan de una.',
+    '',
     'REGLA PRINCIPAL: nunca escribes HTML, CSS, JavaScript ni SQL. Respondes SOLO con un objeto JSON',
-    'con esta forma exacta:',
-    '{"mensaje": "<qué hiciste, en una o dos frases, en español>", "ops": [ ...operaciones... ]}',
+    'con esta forma exacta (los campos vacíos se omiten):',
+    '{',
+    '  "mensaje": "<lo que le dices a la persona, en español, breve y claro>",',
+    '  "preguntas": [ {"texto":"¿De qué cliente?","opciones":["Toda la operación","ACME","Globex"]} ],',
+    '  "plan": "<qué vas a construir, en una frase, si ya lo tienes claro>",',
+    '  "ops": [ ...operaciones... ]',
+    '}',
+    'Si preguntas, deja "ops" vacío. Si propones, llena "plan" y "ops".',
     '',
     'Operaciones disponibles:',
     '  {"op":"agregar","widget":{...}}                      agrega un widget',
@@ -83,8 +102,18 @@ function systemPrompt(dashboard: AiDashboard, catalogo: string): string {
     '  {"op":"renombrar","nombre":"<nuevo nombre>"}',
     '  {"op":"limpiar"}                                     vacía el tablero',
     '',
+    '  {"op":"tema","tema":"claro|torre"}                    cambia el aspecto del tablero',
+    '  {"op":"plantilla","plantilla":"torre|premium|galeria"}  REEMPLAZA el tablero por una plantilla lista',
+    '',
+    'TIPOS DE WIDGET y para qué sirve cada uno:',
+    WIDGET_TYPES.map((t) => `  ${t}: ${WIDGET_HELP[t]}`).join('\n'),
+    '',
+    'PLANTILLAS invocables (si la persona pide "la torre de control", "el panel premium" o',
+    '"muéstrame todos los widgets", usa la operación plantilla en vez de armar widget por widget):',
+    PLANTILLAS.map((p) => `  ${p.id} — ${p.nombre}: ${p.descripcion}`).join('\n'),
+    '',
     'Forma de un widget:',
-    '{ "tipo":"kpi|tabla|barras|lineas|lista|texto", "titulo":"...",',
+    '{ "tipo":"<uno de los de arriba>", "titulo":"...",',
     '  "x":0, "y":0, "ancho":1..12, "alto":2..24,',
     `  "source": { "tool":"<una herramienta del catálogo>", "args":{...}, "path":"ruta.dentro.de.la.respuesta" },`,
     '  "transform": { "groupBy":"campo", "field":"campo", "agg":"suma|promedio|conteo|maximo|minimo|primero",',
@@ -103,6 +132,8 @@ function systemPrompt(dashboard: AiDashboard, catalogo: string): string {
     'No inventes nombres de herramientas ni de campos. Si no estás seguro de un campo, usa una tabla sin',
     '"columnas" para que se muestren todos y la persona elija.',
     '',
+    contexto ? 'CONTEXTO DE ESTA OPERACIÓN (úsalo para preguntar con opciones reales):\n' + contexto : '',
+    '',
     'TABLERO ACTUAL:',
     JSON.stringify({ nombre: dashboard.nombre, widgets: dashboard.widgets }, null, 1).slice(0, 6000),
   ].join('\n');
@@ -117,7 +148,14 @@ function catalogoTexto(): string {
 }
 
 /** Extrae el primer objeto JSON de la respuesta del modelo, tolerando ```json ... ```. */
-export function parsearRespuesta(txt: string | null): { mensaje: string; ops: DashboardPatch[] } | null {
+export interface RespuestaModelo {
+  mensaje: string;
+  preguntas: Array<{ texto: string; opciones: string[] }>;
+  plan: string | null;
+  ops: DashboardPatch[];
+}
+
+export function parsearRespuesta(txt: string | null): RespuestaModelo | null {
   if (!txt) return null;
   let s = txt.trim();
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -126,7 +164,18 @@ export function parsearRespuesta(txt: string | null): { mensaje: string; ops: Da
   if (i < 0 || j <= i) return null;
   try {
     const o = JSON.parse(s.slice(i, j + 1));
-    return { mensaje: String(o.mensaje || o.message || ''), ops: Array.isArray(o.ops) ? o.ops : [] };
+    const preguntas = (Array.isArray(o.preguntas) ? o.preguntas : [])
+      .map((p: any) => ({
+        texto: String((p && p.texto) || p || '').slice(0, 300),
+        opciones: (Array.isArray(p && p.opciones) ? p.opciones : []).slice(0, 6).map((x: any) => String(x).slice(0, 80)),
+      }))
+      .filter((p: any) => p.texto);
+    return {
+      mensaje: String(o.mensaje || o.message || ''),
+      preguntas,
+      plan: o.plan ? String(o.plan).slice(0, 500) : null,
+      ops: Array.isArray(o.ops) ? o.ops : [],
+    };
   } catch { return null; }
 }
 
@@ -196,7 +245,9 @@ export class AiDashboardService {
       try {
         const bruto = await this.facade.runCopilotTool(w.source.tool, w.source.args || {}, operationId, alcance);
         if (bruto && bruto.error) { out[w.id] = { error: String(bruto.error), filas: [], valor: null }; return; }
-        out[w.id] = transformar(bruto, w);
+        const t = transformar(bruto, w);
+        // El sankey necesita el grafo completo (nodos y enlaces), no una lista de filas.
+        out[w.id] = w.tipo === 'sankey' ? { ...t, crudo: bruto } : t;
       } catch (e: any) {
         out[w.id] = { error: (e && e.message) || 'no se pudo consultar', filas: [], valor: null };
       }
@@ -204,34 +255,46 @@ export class AiDashboardService {
     return { id: d.id, version: d.version, generadoEn: this.now(), widgets: out };
   }
 
-  /** Conversación: el usuario pide, el modelo propone, el servidor valida y guarda. */
-  async chat(id: string, operationId: string, ownerId: string, prompt: string, cred: AiCredential | null, historial?: ChatTurn[]) {
+  /**
+   * Conversación. El modelo NO aplica nada: pregunta hasta entender y después propone
+   * un plan. Quien construye es la persona, apretando el botón (que llama al patch).
+   *
+   * Antes de devolver la propuesta se valida EN SECO: así, si el modelo pidió algo
+   * imposible, se dice en la conversación y no al momento de construir.
+   */
+  async chat(id: string, operationId: string, ownerId: string, prompt: string, cred: AiCredential | null, historial?: ChatTurn[], contexto?: string) {
     const actual = await this.get(id, operationId, ownerId);
     if (!cred) {
       return {
         ok: false as const,
         mensaje: 'No hay una IA conectada a esta operación. Conéctala en la sección Agente, o arma el tablero a mano con el botón "＋ Widget".',
-        dashboard: actual, aplicados: [], rechazados: [],
+        dashboard: actual, preguntas: [], plan: null, ops: [], rechazados: [],
       };
     }
-    const turns: ChatTurn[] = (historial || []).slice(-6).concat([{ role: 'user', content: prompt }]);
-    const res = await askCopilotChat(cred, systemPrompt(actual, catalogoTexto()), turns);
+    const turns: ChatTurn[] = (historial || []).slice(-10).concat([{ role: 'user', content: prompt }]);
+    const res = await askCopilotChat(cred, systemPrompt(actual, catalogoTexto(), contexto), turns);
     const parsed = parsearRespuesta(res.text);
     if (!parsed) {
       return {
         ok: false as const,
         mensaje: res.error
           ? `La IA no pudo responder: ${res.error}`
-          : 'La IA respondió algo que no pude interpretar como cambios del tablero. Intenta pedirlo de otra forma.',
-        dashboard: actual, aplicados: [], rechazados: [],
+          : 'La IA respondió algo que no pude interpretar. Intenta pedirlo de otra forma.',
+        dashboard: actual, preguntas: [], plan: null, ops: [], rechazados: [],
       };
     }
-    const r = aplicarPatch(actual, parsed.ops, herramientasDeLectura(), () => 'w-' + this.id(), this.now());
-    if (r.aplicados.length) await this.must().save(r.dashboard);
+    // Validación en seco sobre una copia: no se guarda nada.
+    const seco = aplicarPatch(actual, parsed.ops, herramientasDeLectura(), () => 'w-' + this.id(), this.now());
     return {
       ok: true as const,
-      mensaje: parsed.mensaje || (r.aplicados.length ? 'Listo.' : 'No hice cambios.'),
-      dashboard: r.dashboard, aplicados: r.aplicados, rechazados: r.rechazados,
+      mensaje: parsed.mensaje || '',
+      preguntas: parsed.preguntas,
+      plan: parsed.plan,
+      // Se devuelven solo las operaciones que SÍ pasaron la validación.
+      ops: parsed.ops,
+      cambios: seco.aplicados,
+      rechazados: seco.rechazados,
+      dashboard: actual,
     };
   }
 

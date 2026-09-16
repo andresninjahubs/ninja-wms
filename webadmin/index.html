@@ -118,12 +118,22 @@
   @media(max-width:860px){.side .spacer,.side .navgroup{display:none}.nav{width:auto}}
 
   /* ---- Sidebar colapsable (solo iconos) --------------------------------------- */
-  .sidetoggle{border:1px solid var(--line);background:var(--surface);color:var(--ink-3);border-radius:8px;
-    width:24px;height:24px;line-height:1;font-size:13px;cursor:pointer;flex:0 0 auto}
-  .sidetoggle:hover{color:var(--ink);background:var(--surface-2)}
-  .brand{position:relative}
-  .side .navout{margin-top:6px;color:var(--crit)}
-  .side .navout:hover{background:var(--crit-wash);color:var(--crit)}
+  /* Pestaña de colapsar: vive en el BORDE DERECHO del sidebar, a media altura,
+     que es donde la mano la busca (y no le quita espacio a la marca). */
+  .sidetoggle{position:absolute;top:50%;right:-11px;transform:translateY(-50%);z-index:5;
+    width:22px;height:46px;border:1px solid var(--line);border-radius:8px;background:var(--surface);
+    color:var(--ink-3);font-size:12px;line-height:1;cursor:pointer;box-shadow:var(--shadow);
+    display:flex;align-items:center;justify-content:center;padding:0}
+  .sidetoggle:hover{color:var(--ink);background:var(--surface-2);border-color:var(--line-2)}
+  .side{position:sticky}
+  /* "Salir" NO lleva la clase .nav: esa clase la filtra el menú por rol (busca su
+     data-pg) y dejaba el botón escondido para todos. */
+  .side .navout{display:flex;align-items:center;gap:11px;width:100%;text-align:left;border:0;background:transparent;
+    padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:600;color:var(--crit);cursor:pointer;margin-top:6px;font-family:inherit}
+  .side .navout .ic{width:18px;text-align:center}
+  .side .navout:hover{background:var(--crit-wash)}
+  @media(min-width:861px){ .layout.sidecollapsed .side .navout{font-size:0;justify-content:center;padding:10px 0;gap:0}
+    .layout.sidecollapsed .side .navout .ic{font-size:16px;width:auto} }
   @media(min-width:861px){
     .layout.sidecollapsed{grid-template-columns:70px 1fr}
     .layout.sidecollapsed .side{padding:16px 8px;align-items:stretch}
@@ -195,6 +205,80 @@
     .aid-w{grid-column:1/-1!important}
     .aid-w .wh{cursor:default} .aid-w .rz{display:none}
   }
+
+  /* ---- Dashboard AI · conversación, tema oscuro y widgets gráficos ------------- */
+  .aid-chat{border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:12px 14px;margin-bottom:10px;max-height:340px;overflow:auto}
+  .aid-b{display:flex;gap:10px;margin-bottom:10px;font-size:13px;line-height:1.5}
+  .aid-b:last-child{margin-bottom:0}
+  .aid-b .who{width:26px;height:26px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-size:12px;font-weight:800;color:#fff}
+  .aid-b.me{flex-direction:row-reverse}
+  .aid-b.me .tx{background:var(--surface-2)}
+  .aid-b .tx{background:transparent;border-radius:12px;padding:6px 10px;max-width:78%}
+  .aid-b .who.ai{background:linear-gradient(135deg,var(--primary),#6366F1)}
+  .aid-b .who.me{background:var(--ink-3)}
+  .aid-qs{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+  .aid-qs button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:12.5px;cursor:pointer;color:var(--ink-2)}
+  .aid-qs button:hover{border-color:var(--primary);color:var(--ink)}
+  .aid-plan{margin-top:9px;border:1px solid var(--line);border-left:3px solid var(--primary);border-radius:10px;padding:10px 12px;background:var(--surface-2)}
+  .aid-plan .l{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
+  .aid-plan .p{font-size:13px;margin:4px 0 9px}
+  .aid-plan ul{margin:0 0 9px 18px;font-size:12px;color:var(--ink-3)}
+  .aid-bad{color:var(--crit);font-size:12.5px;margin-top:6px}
+  .aid-think{display:inline-flex;gap:4px;align-items:center}
+  .aid-think i{width:5px;height:5px;border-radius:50%;background:var(--ink-3);animation:aid-t 1.2s infinite}
+  .aid-think i:nth-child(2){animation-delay:.15s} .aid-think i:nth-child(3){animation-delay:.3s}
+  @keyframes aid-t{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+  /* Tema torre de control: la sección entera se oscurece. */
+  .page.aid-torre{background:radial-gradient(900px 600px at 80% -10%,rgba(139,123,255,.16),transparent 60%),
+    radial-gradient(760px 520px at 2% 106%,rgba(18,227,155,.13),transparent 62%),#070B12;
+    margin:-18px -16px -46px;padding:18px 16px 46px;border-radius:0}
+  .page.aid-torre .aid-w{background:#0E1520;border-color:rgba(255,255,255,.09);color:#EAF0F7}
+  .page.aid-torre .aid-w .wh{border-bottom-color:rgba(255,255,255,.09)}
+  .page.aid-torre .aid-w .wt{color:#EAF0F7}
+  .page.aid-torre .aid-kpi .n{color:#EAF0F7}
+  .page.aid-torre .aid-kpi .u,.page.aid-torre .aid-empty,.page.aid-torre .aid-w .wfoot{color:#5E7189}
+  .page.aid-torre .aid-tbl th{background:transparent;color:#5E7189;border-bottom-color:rgba(255,255,255,.09)}
+  .page.aid-torre .aid-tbl td{border-bottom-color:rgba(255,255,255,.06);color:#C7D3E0}
+  .page.aid-torre .aid-row .k{color:#9FB0C6} .page.aid-torre .aid-row .b{background:rgba(255,255,255,.08)}
+  .page.aid-torre .aid-row .v{color:#EAF0F7}
+  .page.aid-torre .aid-chat,.page.aid-torre .aid-selbox,.page.aid-torre .aid-prompt input{
+    background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1);color:#EAF0F7}
+  .page.aid-torre .aid-b .tx{color:#C7D3E0} .page.aid-torre .aid-b.me .tx{background:rgba(255,255,255,.06)}
+  .page.aid-torre .aid-plan{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.1)}
+  .page.aid-torre .aid-blank{color:#5E7189;border-color:rgba(255,255,255,.12)}
+  .page.aid-torre .aid-blank b{color:#EAF0F7}
+  .page.aid-torre .aid-chips button{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12);color:#9FB0C6}
+  /* Widgets gráficos */
+  .aid-w .wb{position:relative}
+  .aid-w.chart .wb{overflow:hidden;padding:8px 10px}
+  .aid-ec{position:absolute;inset:8px 10px;min-height:60px}
+  .aid-iso{height:100%;display:flex;align-items:center;justify-content:center;perspective:900px;overflow:hidden}
+  .aid-fl{display:grid;gap:5px;transform:rotateX(58deg) rotateZ(-42deg)}
+  .aid-rk{border-radius:3px;box-shadow:0 0 0 1px rgba(0,0,0,.07) inset;position:relative}
+  .aid-rk span{position:absolute;inset:0;border-radius:3px;box-shadow:0 0 14px -3px currentColor}
+  .aid-bul{padding:2px 0}
+  .aid-bul .row{margin-bottom:10px}
+  .aid-bul .lb{display:flex;font-size:11.5px;color:var(--ink-2);margin-bottom:4px}
+  .aid-bul .lb b{margin-left:auto;font-variant-numeric:tabular-nums}
+  .aid-bul .tr{position:relative;height:9px;border-radius:99px;background:var(--surface-2)}
+  .aid-bul .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:99px}
+  .aid-bul .tr u{position:absolute;top:-3px;width:2px;height:15px;background:var(--ink);opacity:.45;border-radius:2px}
+  .page.aid-torre .aid-bul .lb{color:#9FB0C6} .page.aid-torre .aid-bul .tr{background:rgba(255,255,255,.08)}
+  .page.aid-torre .aid-bul .tr u{background:#EAF0F7}
+  .aid-lat div{display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .aid-lat div:last-child{border-bottom:0}
+  .aid-lat i{width:7px;height:7px;border-radius:50%;margin-top:5px;flex:0 0 auto}
+  .aid-lat span{flex:1;color:var(--ink-2)} .aid-lat b{color:var(--ink-3);font-weight:500;font-size:11px;white-space:nowrap}
+  .page.aid-torre .aid-lat div{border-bottom-color:rgba(255,255,255,.07)}
+  .page.aid-torre .aid-lat span{color:#C7D3E0} .page.aid-torre .aid-lat b{color:#5E7189}
+  /* Selector de plantillas */
+  .tplg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  .tpl{border:1px solid var(--line);border-radius:14px;padding:14px;cursor:pointer;background:var(--surface);text-align:left}
+  .tpl:hover{border-color:var(--primary);box-shadow:var(--shadow)}
+  .tpl .pv{height:92px;border-radius:10px;margin-bottom:10px;position:relative;overflow:hidden}
+  .tpl h4{font-size:13.5px;margin-bottom:3px} .tpl p{font-size:12px;color:var(--ink-3);line-height:1.45}
+  .tpl .meta{font-size:11px;color:var(--ink-3);margin-top:8px}
+  @media(max-width:860px){ .tplg{grid-template-columns:1fr} }
 
   /* ---- Panel de control consolidado ------------------------------------------- */
   .dashsplit{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
@@ -858,7 +942,8 @@
 
 <div class="layout">
   <aside class="side">
-    <div class="brand"><button class="sidetoggle" id="side-toggle" type="button" title="Colapsar el menú" aria-label="Colapsar el menú">«</button><div class="brandlogo" id="brandLogo" title="Ninja WMS"><svg class="brandlogo-svg" viewBox="0 0 208 46" role="img" aria-label="Ninja WMS" xmlns="http://www.w3.org/2000/svg"><text x="0" y="35" font-family="Sora, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.5"><tspan class="wm-a">Ninja</tspan><tspan class="wm-b" dx="8">WMS</tspan></text></svg></div></div>
+    <button class="sidetoggle" id="side-toggle" type="button" title="Colapsar el menú" aria-label="Colapsar el menú">«</button>
+    <div class="brand"><div class="brandlogo" id="brandLogo" title="Ninja WMS"><svg class="brandlogo-svg" viewBox="0 0 208 46" role="img" aria-label="Ninja WMS" xmlns="http://www.w3.org/2000/svg"><text x="0" y="35" font-family="Sora, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.5"><tspan class="wm-a">Ninja</tspan><tspan class="wm-b" dx="8">WMS</tspan></text></svg></div></div>
     <button class="nav on" data-pg="dashboard"><span class="ic">◧</span> Dashboard</button>
     <button class="nav" data-pg="copilot"><span class="ic">✨</span> Copiloto</button>
     <button class="nav" data-pg="aidash"><span class="ic">🧩</span> Dashboard AI</button>
@@ -910,7 +995,7 @@
     <div class="spacer"></div>
     <button class="navlearn" id="nt-navcenter" title="Tutoriales y videos de cada sección"><span class="ic">🎓</span> Centro de aprendizaje <span class="cnt"></span></button>
     <div class="muted" style="padding:8px 11px 6px;font-size:11px">Vista previa · datos de demostración</div>
-    <button class="nav navout" id="side-logout" title="Cerrar sesión"><span class="ic">⏻</span> Salir</button>
+    <button class="navout" id="side-logout" title="Cerrar sesión"><span class="ic">⏻</span> Salir</button>
     <div class="poweredby" id="poweredby">
       <span class="pb-label">Tecnología</span>
       <span class="pb-chip"><img src="brand/ninjahubs.png" alt="Ninja Hubs"></span>
@@ -1030,15 +1115,17 @@
           <button class="btn mini danger" id="aid-del">Eliminar</button>
           <div class="sp" style="flex:1"></div>
           <span class="aid-live" id="aid-live" title="Los datos se actualizan solos cada 30 segundos"><span class="dot"></span>en vivo · 30 s</span>
+          <button class="btn mini" id="aid-tpl">✦ Plantillas</button>
+          <button class="btn mini" id="aid-tema">◐ Tema</button>
           <button class="btn mini" id="aid-widget">＋ Widget</button>
           <button class="btn mini" id="aid-help">¿Qué puedo pedir?</button>
           <button class="btn mini" id="aid-refresh">Actualizar</button>
         </div>
+        <div id="aid-chat" class="aid-chat hidden"></div>
         <div class="aid-prompt">
-          <input id="aid-q" placeholder="Pídelo en tus palabras. Ej: agrega un KPI con las órdenes atrasadas y una tabla con los SKUs por quebrar stock" autocomplete="off">
-          <button class="btn pri" id="aid-send">Construir</button>
+          <input id="aid-q" placeholder="Cuéntame qué quieres ver. Ej: cómo vamos con los despachos de hoy" autocomplete="off">
+          <button class="btn pri" id="aid-send">Enviar</button>
         </div>
-        <div id="aid-msg" class="aid-msg hidden"></div>
         <div class="aid-canvas" id="aid-canvas"></div>
       </section>
 

@@ -747,8 +747,35 @@
   // El servidor guarda la ESPECIFICACIÓN de cada widget (qué preguntar y cómo
   // mostrarlo), no los datos. Acá se dibuja esa especificación y se piden los
   // datos aparte, cada 30 s: por eso el tablero siempre está en vivo.
-  var AID={ list:[], cur:null, data:{}, timer:null, hist:[], sel:null };
+  var AID={ list:[], cur:null, data:{}, timer:null, hist:[], sel:null, charts:{} };
   var AID_MS=30000;
+
+  /**
+   * ECharts se carga SOLO al entrar a la sección (1 MB no se le cobra a quien
+   * nunca abre el Dashboard AI). Se sirve desde el propio servidor, sin CDN.
+   */
+  var aidEchartsP=null;
+  function aidEcharts(){
+    if(window.echarts)return Promise.resolve(window.echarts);
+    if(aidEchartsP)return aidEchartsP;
+    aidEchartsP=new Promise(function(res,rej){
+      var sc=document.createElement('script');
+      sc.src='./vendor/echarts.min.js';
+      sc.onload=function(){res(window.echarts);};
+      sc.onerror=function(){rej(new Error('no se pudo cargar la librería de gráficos'));};
+      document.head.appendChild(sc);
+    });
+    return aidEchartsP;
+  }
+  /** Paleta del tablero según su tema. */
+  function aidTheme(){
+    var torre=AID.cur&&AID.cur.tema==='torre';
+    return torre
+      ? {torre:true, ink:'#EAF0F7', ink2:'#9FB0C6', ink3:'#5E7189', line:'rgba(255,255,255,.09)', surf:'#0E1520',
+         serie:['#12E39B','#22D3EE','#8B7BFF','#FFC24B','#FF6B6B','#5E7189']}
+      : {torre:false, ink:'#0E1A20', ink2:'#41525C', ink3:'#7C8D97', line:'#E3EAEC', surf:'#ffffff',
+         serie:['#12B886','#0EA5A5','#6366F1','#E5A13A','#E05A4B','#C9D6DB']};
+  }
 
   function aidApi(path,opts){ return api('/ai-dashboards'+path,opts); }
 
@@ -794,6 +821,12 @@
   ];
   function aidPaint(){
     var c=$("#aid-canvas"); if(!c)return;
+    // Cada repintado destruye los gráficos anteriores: si no, quedan canvas huérfanos
+    // consumiendo memoria en una pantalla que vive horas encendida.
+    Object.keys(AID.charts).forEach(function(k){ try{ if(AID.charts[k].__ro)AID.charts[k].__ro.disconnect(); AID.charts[k].dispose(); }catch(e){} });
+    AID.charts={};
+    var sec=document.querySelector('.page[data-pg="aidash"]');
+    if(sec)sec.classList.toggle('aid-torre', !!(AID.cur&&AID.cur.tema==='torre'));
     if(!AID.cur){
       c.innerHTML='<div class="aid-blank"><b>Arma tu primer tablero</b>'
         +'Pídelo en tus palabras y se construye solo, con datos en vivo de tu bodega.'
@@ -814,7 +847,8 @@
       return;
     }
     c.innerHTML=ws.map(function(w){
-      return '<div class="aid-w'+(AID.sel===w.id?' sel':'')+'" data-w="'+esc(w.id)+'" style="grid-column:'+(w.x+1)+' / span '+w.ancho+';grid-row:'+(w.y+1)+' / span '+w.alto+'">'
+      var esGrafico=['gauge','rosco','area','apiladas','radar','treemap','calendario','sankey'].indexOf(w.tipo)>=0;
+      return '<div class="aid-w'+(esGrafico?' chart':'')+(AID.sel===w.id?' sel':'')+'" data-w="'+esc(w.id)+'" style="grid-column:'+(w.x+1)+' / span '+w.ancho+';grid-row:'+(w.y+1)+' / span '+w.alto+'">'
         +'<div class="wh" data-drag="'+esc(w.id)+'"><span class="wt">'+esc(w.titulo)+'</span>'
         +'<span class="wa"><button data-wedit="'+esc(w.id)+'" title="Editar">✎</button>'
         +'<button data-wdup="'+esc(w.id)+'" title="Duplicar">⧉</button>'
@@ -875,6 +909,15 @@
         }).join('');
         return;
       }
+      // ---- Tipos gráficos (ECharts) y visuales propios -------------------------
+      if(['gauge','rosco','area','apiladas','radar','treemap','calendario','sankey'].indexOf(w.tipo)>=0){
+        host.innerHTML='<div class="aid-ec"></div>';
+        aidChart(w, host.firstChild, d);
+        return;
+      }
+      if(w.tipo==='mapa3d'){ host.innerHTML=aidMapa3d(filas); return; }
+      if(w.tipo==='bullet'){ host.innerHTML=aidBullet(filas,w); return; }
+      if(w.tipo==='latido'){ host.innerHTML=aidLatido(filas); return; }
       if(w.tipo==='lineas'){
         var vf2=(filas[0].valor!==undefined)?'valor':(Object.keys(filas[0]).filter(function(k){return typeof filas[0][k]==='number';})[0]);
         var vals=filas.map(function(f){return Number(f[vf2])||0;}), mx=Math.max.apply(null,[1].concat(vals));
@@ -885,6 +928,157 @@
       }
       host.innerHTML='<div class="aid-empty">Tipo de widget no soportado.</div>';
     });
+  }
+
+  /**
+   * Dibuja un widget gráfico con ECharts. Cada tipo traduce las filas del widget
+   * (clave/valor) a la opción que ECharts espera; el tema decide los colores.
+   */
+  function aidChart(w, el, d){
+    aidEcharts().then(function(ec){
+      var T=aidTheme(), filas=(d&&d.filas)||[], val=d&&d.valor;
+      // ECharts mide el contenedor al crearse: si lo hace antes de que el navegador
+      // termine de acomodar la grilla, el gráfico queda del tamaño equivocado y se
+      // sale de su tarjeta. Por eso se crea en el siguiente cuadro y se le avisa
+      // cada vez que el widget cambia de tamaño (arrastre, resize de ventana).
+      // OJO: no se le pasa width/height al crear. Si se los pasas, ECharts los toma
+      // como fijos y resize() deja de tener efecto: el gráfico se dibuja fuera de su
+      // tarjeta para siempre. Se crea sin medidas y se ajusta al contenedor.
+      var ch=ec.init(el, null, {renderer:'canvas'});
+      AID.charts[w.id]=ch;
+      try{ window.__aidCharts=AID.charts; }catch(e){}
+      requestAnimationFrame(function(){ try{ ch.resize({width:'auto',height:'auto'}); }catch(e){} });
+      if(window.ResizeObserver){
+        var ro=new ResizeObserver(function(){ try{ ch.resize({width:'auto',height:'auto'}); }catch(e){} });
+        ro.observe(el); ch.__ro=ro;
+      }
+      var G=ec.graphic, base={animation:true,animationDuration:700,textStyle:{fontFamily:'Inter'}};
+      var op=null;
+      var clave=function(f){return f.clave!=null?f.clave:(f.nombre||f.fecha||f.sku||f.courier||Object.values(f)[0]);};
+      var valor=function(f){return Number(f.valor!=null?f.valor:(f.unidades!=null?f.unidades:(f.ordenes!=null?f.ordenes:0)))||0;};
+
+      if(w.tipo==='gauge'){
+        // Acepta un número suelto o un objeto con {pct} / {usado, capacidad}.
+        var pct=val;
+        if(pct==null&&filas.length){ var f0=filas[0]; pct=(f0.pct!=null)?f0.pct:(f0.capacidad?Math.round(f0.usado/f0.capacidad*100):valor(f0)); }
+        pct=Math.max(0,Math.min(100,Math.round(Number(pct)||0)));
+        var sub=(filas[0]&&filas[0].usado!=null&&filas[0].capacidad!=null)
+          ? fmtInt(filas[0].usado)+' de '+fmtInt(filas[0].capacidad)+' '+(filas[0].unidad||'')
+          : ((w.display&&w.display.nota)||'');
+        op={series:[{type:'gauge',startAngle:210,endAngle:-30,min:0,max:100,radius:'94%',center:['50%','58%'],
+          progress:{show:true,width:14,roundCap:true,itemStyle:{color:new G.LinearGradient(0,0,1,0,[{offset:0,color:T.serie[0]},{offset:.6,color:T.serie[3]},{offset:1,color:T.serie[4]}])}},
+          axisLine:{lineStyle:{width:14,color:[[1,T.torre?'rgba(255,255,255,.08)':'#EDF2F3']]}},
+          pointer:{show:false},axisTick:{show:false},splitLine:{show:false},
+          axisLabel:{color:T.ink3,fontSize:9,distance:-22},
+          detail:{fontSize:30,fontFamily:'Sora',fontWeight:800,color:T.ink,offsetCenter:[0,'6%'],formatter:'{value}%'},
+          title:{show:!!sub,offsetCenter:[0,'44%'],color:T.ink3,fontSize:10.5},
+          data:[{value:pct,name:sub}]}]};
+      }
+      else if(w.tipo==='rosco'){
+        var total=filas.reduce(function(a,f){return a+valor(f);},0);
+        op={legend:{bottom:0,icon:'circle',itemWidth:7,itemHeight:7,textStyle:{color:T.ink2,fontSize:11}},
+          series:[{type:'pie',radius:['56%','80%'],center:['50%','44%'],
+            itemStyle:{borderColor:T.surf,borderWidth:3,borderRadius:5},labelLine:{show:false},
+            label:{show:true,position:'center',formatter:'{a|'+fmtInt(total)+'}',rich:{a:{fontFamily:'Sora',fontSize:26,fontWeight:800,color:T.ink}}},
+            data:filas.slice(0,8).map(function(f,i){return {name:String(clave(f)),value:valor(f),itemStyle:{color:T.serie[i%T.serie.length]}};})}]};
+      }
+      else if(w.tipo==='area'){
+        op={grid:{left:40,right:10,top:14,bottom:24},
+          xAxis:{type:'category',data:filas.map(function(f){return String(clave(f)).slice(5);}),
+            axisLine:{lineStyle:{color:T.line}},axisTick:{show:false},axisLabel:{color:T.ink3,fontSize:10}},
+          yAxis:{type:'value',splitLine:{lineStyle:{color:T.line}},axisLabel:{color:T.ink3,fontSize:10}},
+          series:[{type:'line',smooth:true,showSymbol:false,data:filas.map(valor),
+            lineStyle:{width:2.5,color:T.serie[0]},
+            areaStyle:{color:new G.LinearGradient(0,0,0,1,[{offset:0,color:T.serie[0]+'55'},{offset:1,color:T.serie[0]+'05'}])}}]};
+      }
+      else if(w.tipo==='apiladas'){
+        op={grid:{left:40,right:10,top:14,bottom:24},
+          xAxis:{type:'category',data:filas.map(function(f){return String(clave(f));}),
+            axisLine:{lineStyle:{color:T.line}},axisTick:{show:false},axisLabel:{color:T.ink3,fontSize:10,interval:0,rotate:filas.length>6?28:0}},
+          yAxis:{type:'value',splitLine:{lineStyle:{color:T.line}},axisLabel:{color:T.ink3,fontSize:10}},
+          series:[{type:'bar',barMaxWidth:26,data:filas.map(function(f,i){return {value:valor(f),itemStyle:{color:T.serie[i%T.serie.length],borderRadius:[4,4,0,0]}};})}]};
+      }
+      else if(w.tipo==='radar'){
+        var ind=filas.slice(0,8).map(function(f){return {name:String(clave(f)),max:Math.max.apply(null,filas.map(valor))||100};});
+        op={radar:{center:['50%','52%'],radius:'66%',indicator:ind,axisName:{color:T.ink2,fontSize:10},
+            splitLine:{lineStyle:{color:T.line}},splitArea:{show:false},axisLine:{lineStyle:{color:T.line}}},
+          series:[{type:'radar',symbolSize:4,data:[{value:filas.map(valor),itemStyle:{color:T.serie[0]},areaStyle:{color:T.serie[0]+'38'}}]}]};
+      }
+      else if(w.tipo==='treemap'){
+        op={series:[{type:'treemap',roam:false,nodeClick:false,breadcrumb:{show:false},top:2,bottom:2,left:2,right:2,
+          itemStyle:{borderColor:T.surf,borderWidth:2,gapWidth:2},
+          label:{fontSize:11,fontWeight:600,color:'#06121A'},
+          levels:[{itemStyle:{gapWidth:3}},{colorSaturation:[.35,.62]}],
+          data:filas.slice(0,12).map(function(f,i){
+            var n={name:String(clave(f)),value:valor(f),itemStyle:{color:T.serie[i%T.serie.length]}};
+            if(Array.isArray(f.hijos)&&f.hijos.length)n.children=f.hijos.map(function(h){return {name:String(h.clave||h.sku||''),value:Number(h.valor)||0};});
+            return n;})}]};
+      }
+      else if(w.tipo==='calendario'){
+        var ds=filas.map(function(f){return [String(f.fecha||clave(f)).slice(0,10), valor(f)];}).filter(function(x){return /^\d{4}-\d{2}-\d{2}$/.test(x[0]);});
+        if(!ds.length){ el.innerHTML='<div class="aid-empty">Sin serie de días.</div>'; return; }
+        var mx=Math.max.apply(null,ds.map(function(x){return x[1];}))||1;
+        op={visualMap:{show:false,min:0,max:mx,inRange:{color:T.torre?['#0C2430','#0E5C68','#12A88C','#3BE8A7']:['#E4F7EF','#5BD6B0','#12B886','#0C7A5E']}},
+          calendar:{top:24,left:34,right:12,bottom:8,cellSize:['auto',14],range:[ds[0][0],ds[ds.length-1][0]],
+            splitLine:{show:false},itemStyle:{color:'transparent',borderColor:T.surf,borderWidth:2},yearLabel:{show:false},
+            dayLabel:{color:T.ink3,fontSize:9,nameMap:['D','L','M','M','J','V','S']},
+            monthLabel:{color:T.ink2,fontSize:10,nameMap:['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']}},
+          series:[{type:'heatmap',coordinateSystem:'calendar',data:ds,itemStyle:{borderRadius:3}}]};
+      }
+      else if(w.tipo==='sankey'){
+        var raw=(d&&d.crudo)||null;
+        var nodos=(raw&&raw.nodos)||[], enlaces=(raw&&raw.enlaces)||[];
+        if(!nodos.length){ el.innerHTML='<div class="aid-empty">Esta fuente no entrega un flujo (nodos y enlaces).</div>'; return; }
+        op={series:[{type:'sankey',left:6,right:104,top:8,bottom:8,nodeWidth:12,nodeGap:12,
+          lineStyle:{color:'gradient',opacity:.3,curveness:.5},
+          label:{color:T.ink,fontSize:11,fontWeight:600},
+          data:nodos.map(function(n,i){return {name:n.nombre||n.name,itemStyle:{color:n.color||T.serie[i%T.serie.length]}};}),
+          links:enlaces.map(function(l){return {source:l.desde||l.source,target:l.hacia||l.target,value:Number(l.valor||l.value)||0};})}]};
+      }
+      if(op)ch.setOption(Object.assign({},base,op));
+    }).catch(function(e){ el.innerHTML='<div class="aid-empty"><span class="aid-err">'+esc(e.message)+'</span></div>'; });
+  }
+
+  /** La bodega vista de arriba: cada ubicación es un bloque con su ocupación. */
+  function aidMapa3d(filas){
+    if(!filas.length)return '<div class="aid-empty">Sin ubicaciones para dibujar.</div>';
+    var cols=Math.min(10,Math.max(4,Math.ceil(Math.sqrt(filas.length*1.6))));
+    var cel=filas.length>40?22:filas.length>24?28:34;
+    var html='<div class="aid-iso"><div class="aid-fl" style="grid-template-columns:repeat('+cols+','+cel+'px)">';
+    filas.slice(0,60).forEach(function(f){
+      var cap=Number(f.capacidad)||0, us=Number(f.ocupado!=null?f.ocupado:f.valor)||0;
+      var pct=cap>0?Math.min(100,Math.round(us/cap*100)):(us>0?55:0);
+      var c=pct>85?'#FF6B6B':pct>60?'#FFC24B':pct>0?'#12E39B':'#9FB0C6';
+      html+='<div class="aid-rk" style="height:'+cel+'px" title="'+esc((f.codigo||f.clave||'')+' · '+pct+'%')+'">'
+        +'<span style="transform:translateZ('+(4+pct/2.4)+'px);background:linear-gradient(145deg,'+c+'ee,'+c+'77);color:'+c+'"></span></div>';
+    });
+    return html+'</div></div>';
+  }
+  /** Valor contra su meta: la barra es el valor, la marca es el compromiso. */
+  function aidBullet(filas,w){
+    if(!filas.length)return '<div class="aid-empty">Sin datos.</div>';
+    var campo=(w.transform&&w.transform.field)||'valor';
+    var vals=filas.map(function(f){return Number(f[campo]!=null?f[campo]:f.valor)||0;});
+    var max=Math.max.apply(null,[1].concat(vals));
+    var meta=(w.display&&w.display.meta)||null;
+    return '<div class="aid-bul">'+filas.slice(0,10).map(function(f,i){
+      var v=vals[i], pc=v/max*100;
+      var col=pc>85?'var(--crit)':pc>60?'var(--warn)':'var(--primary)';
+      return '<div class="row"><div class="lb">'+esc(String(f.nombre||f.clave||f.sku||'—'))+'<b>'+fmtInt(v)+'</b></div>'
+        +'<div class="tr"><i style="width:'+Math.max(2,pc)+'%;background:'+col+'"></i>'+(meta?'<u style="left:'+meta+'%"></u>':'')+'</div></div>';
+    }).join('')+'</div>';
+  }
+  /** Lo que está pasando ahora, con su pulso de color. */
+  function aidLatido(filas){
+    if(!filas.length)return '<div class="aid-empty">Nada que reportar. 👍</div>';
+    var COL={crit:'var(--crit)',warn:'var(--warn)',info:'var(--primary)'};
+    return '<div class="aid-lat">'+filas.slice(0,12).map(function(f){
+      var txt=f.titulo||f.title||f.texto||f.clave||'—';
+      var cu=f.creada||f.at||f.desde||null;
+      var min=cu?Math.max(0,Math.round((Date.now()-Date.parse(cu))/60000)):null;
+      return '<div><i style="background:'+(COL[f.severidad||f.severity]||'var(--ink-3)')+'"></i>'
+        +'<span>'+esc(String(txt))+'</span><b>'+esc(min==null?'':hace(min))+'</b></div>';
+    }).join('')+'</div>';
   }
 
   // ---- Arrastrar, redimensionar y acciones por widget -------------------------
@@ -959,21 +1153,57 @@
     if(!AID.cur)return Promise.resolve();
     return aidApi('/'+AID.cur.id,{method:'PATCH',body:{operationId:op,ops:ops}}).then(function(r){
       AID.cur=r.dashboard;
-      if(r.rechazados&&r.rechazados.length)aidMensaje('',r.rechazados);
+      if(r.rechazados&&r.rechazados.length){ AIDC.push({rol:'ai',texto:'',rechazados:r.rechazados}); aidChatPaint(); }
       aidPaint(); return aidData();
     }).catch(function(e){ toast(e.message); if(!silencioso)renderAiDash(); });
   }
 
-  function aidMensaje(texto,rechazados){
-    var m=$("#aid-msg"); if(!m)return;
-    if(!texto&&!(rechazados||[]).length){ m.classList.add('hidden'); return; }
-    m.classList.remove('hidden');
-    m.innerHTML=(texto?esc(texto):'')
-      +((rechazados||[]).length?'<div class="bad" style="margin-top:6px">No pude hacer esto:</div><ul>'+rechazados.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>':'');
+  // ---- Conversación con el agente ---------------------------------------------
+  // El agente NO aplica cambios: pregunta hasta entender, propone un plan y la
+  // persona decide. Construir es un clic explícito.
+  var AIDC=[]; // hilo visible {rol, texto, preguntas, plan, ops, rechazados}
+  function aidChatPaint(){
+    var box=$("#aid-chat"); if(!box)return;
+    if(!AIDC.length){ box.classList.add('hidden'); box.innerHTML=''; return; }
+    box.classList.remove('hidden');
+    box.innerHTML=AIDC.map(function(m,idx){
+      if(m.rol==='me')return '<div class="aid-b me"><span class="who me">Tú</span><div class="tx">'+esc(m.texto)+'</div></div>';
+      if(m.rol==='pensando')return '<div class="aid-b"><span class="who ai">✦</span><div class="tx"><span class="aid-think"><i></i><i></i><i></i></span></div></div>';
+      var h='<div class="aid-b"><span class="who ai">✦</span><div class="tx">'+esc(m.texto||'');
+      (m.preguntas||[]).forEach(function(p){
+        h+='<div style="margin-top:8px;font-weight:600">'+esc(p.texto)+'</div>';
+        if((p.opciones||[]).length)h+='<div class="aid-qs">'+p.opciones.map(function(o){
+          return '<button data-resp="'+esc(o)+'">'+esc(o)+'</button>';}).join('')+'</div>';
+      });
+      if(m.plan){
+        h+='<div class="aid-plan"><div class="l">Propuesta</div><div class="p">'+esc(m.plan)+'</div>'
+          +((m.cambios||[]).length?'<ul>'+m.cambios.map(function(c){return '<li>'+esc(c)+'</li>';}).join('')+'</ul>':'')
+          +'<button class="btn pri mini" data-build="'+idx+'">Construir</button> '
+          +'<button class="btn mini" data-nobuild="'+idx+'">Mejor no</button></div>';
+      }
+      if((m.rechazados||[]).length)h+='<div class="aid-bad">No puedo hacer esto: '+esc(m.rechazados.join(' · '))+'</div>';
+      return h+'</div></div>';
+    }).join('');
+    box.scrollTop=box.scrollHeight;
+    $$("#aid-chat [data-resp]").forEach(function(b){b.addEventListener('click',function(){
+      $("#aid-q").value=b.getAttribute('data-resp'); aidEnviar();
+    });});
+    $$("#aid-chat [data-build]").forEach(function(b){b.addEventListener('click',function(){
+      var m=AIDC[Number(b.getAttribute('data-build'))]; if(!m||!m.ops)return;
+      b.disabled=true; b.textContent='Construyendo…';
+      aidPatch(m.ops).then(function(){
+        m.plan=null; m.texto=(m.texto?m.texto+' ':'')+'✅ Construido.';
+        aidChatPaint();
+      });
+    });});
+    $$("#aid-chat [data-nobuild]").forEach(function(b){b.addEventListener('click',function(){
+      var m=AIDC[Number(b.getAttribute('data-nobuild'))]; if(!m)return;
+      m.plan=null; m.ops=null; aidChatPaint();
+      $("#aid-q").focus();
+    });});
   }
 
   function aidCrearYEnviar(){
-    // Sin tablero todavía: se crea uno y recién ahí se le pide al modelo.
     aidApi('',{method:'POST',body:{operationId:op,nombre:'Mi tablero'}}).then(function(d){
       AID.cur=d; return renderAiDash();
     }).then(function(){ aidEnviar(); });
@@ -981,18 +1211,22 @@
   function aidEnviar(){
     var q=$("#aid-q").value.trim(); if(!q)return;
     if(!AID.cur)return aidCrearYEnviar();
-    var btn=$("#aid-send"); btn.disabled=true; btn.textContent='Construyendo…';
-    aidMensaje('Pensando…');
-    aidApi('/'+AID.cur.id+'/chat',{method:'POST',body:{operationId:op,sellerId:seller||undefined,prompt:q,historial:AID.hist.slice(-6)}})
+    var btn=$("#aid-send"); btn.disabled=true;
+    AIDC.push({rol:'me',texto:q});
+    AIDC.push({rol:'pensando'});
+    aidChatPaint();
+    $("#aid-q").value='';
+    var historial=AIDC.filter(function(m){return m.rol==='me'||m.rol==='ai';})
+      .slice(-10).map(function(m){return {role:m.rol==='me'?'user':'assistant',content:(m.texto||'')+(m.plan?(' · plan: '+m.plan):'')};});
+    aidApi('/'+AID.cur.id+'/chat',{method:'POST',body:{operationId:op,sellerId:seller||undefined,prompt:q,historial:historial}})
       .then(function(r){
-        AID.hist.push({role:'user',content:q}); AID.hist.push({role:'assistant',content:r.mensaje||''});
-        AID.cur=r.dashboard||AID.cur;
-        aidMensaje(r.mensaje,r.rechazados);
-        $("#aid-q").value='';
-        aidPaint(); return aidData();
+        AIDC.pop(); // saca el "pensando"
+        AIDC.push({rol:'ai',texto:r.mensaje,preguntas:r.preguntas||[],plan:r.plan||null,
+                   ops:(r.ops&&r.ops.length)?r.ops:null,cambios:r.cambios||[],rechazados:r.rechazados||[]});
+        aidChatPaint();
       })
-      .catch(function(e){ aidMensaje('', [e.message]); })
-      .then(function(){ btn.disabled=false; btn.textContent='Construir'; });
+      .catch(function(e){ AIDC.pop(); AIDC.push({rol:'ai',texto:'',rechazados:[e.message]}); aidChatPaint(); })
+      .then(function(){ btn.disabled=false; });
   }
 
   /** Editor manual de un widget (o uno nuevo): sin pasar por el modelo. */
@@ -1047,12 +1281,64 @@
     });
   }
 
+  /**
+   * Plantillas: tableros listos para invocar de una vez. La hoja en blanco es el
+   * peor punto de partida; con una plantilla se ve el tablero armado y desde ahí
+   * se edita. Reemplaza el contenido del tablero actual, así que se confirma.
+   */
+  var AID_TPL_PV={
+    torre:'<div style="position:absolute;inset:0;background:#070B12"></div>'
+      +'<div style="position:absolute;inset:8px;display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:14px;gap:5px">'
+      +'<i style="background:rgba(18,227,155,.55);border-radius:3px"></i><i style="background:rgba(34,211,238,.5);border-radius:3px"></i><i style="background:rgba(255,194,75,.5);border-radius:3px"></i><i style="background:rgba(139,123,255,.5);border-radius:3px"></i>'
+      +'<i style="grid-column:span 2;grid-row:span 3;background:rgba(255,255,255,.07);border-radius:5px"></i>'
+      +'<i style="grid-column:span 2;grid-row:span 2;background:rgba(18,227,155,.18);border-radius:5px"></i>'
+      +'<i style="grid-column:span 2;background:rgba(255,255,255,.07);border-radius:5px"></i></div>',
+    premium:'<div style="position:absolute;inset:0;background:#F5F8F9"></div>'
+      +'<div style="position:absolute;inset:8px;display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:14px;gap:5px">'
+      +'<i style="grid-column:span 3;grid-row:span 2;background:linear-gradient(135deg,rgba(18,184,134,.25),rgba(99,102,241,.18));border-radius:5px"></i>'
+      +'<i style="background:#fff;border:1px solid #E3EAEC;border-radius:5px"></i><i style="background:#fff;border:1px solid #E3EAEC;border-radius:5px"></i>'
+      +'<i style="background:#fff;border:1px solid #E3EAEC;border-radius:5px"></i><i style="grid-column:span 2;background:#fff;border:1px solid #E3EAEC;border-radius:5px"></i>'
+      +'<i style="background:rgba(18,184,134,.3);border-radius:5px"></i></div>',
+    galeria:'<div style="position:absolute;inset:0;background:#F5F8F9"></div>'
+      +'<div style="position:absolute;inset:8px;display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:20px;gap:5px">'
+      +'<i style="background:rgba(18,184,134,.35);border-radius:50%"></i><i style="background:rgba(14,165,165,.3);border-radius:5px"></i>'
+      +'<i style="background:rgba(99,102,241,.3);border-radius:50%"></i><i style="background:rgba(229,161,58,.3);border-radius:5px"></i>'
+      +'<i style="background:rgba(224,90,75,.25);border-radius:5px"></i><i style="background:rgba(18,184,134,.25);border-radius:5px"></i>'
+      +'<i style="background:rgba(14,165,165,.25);border-radius:50%"></i><i style="background:rgba(99,102,241,.2);border-radius:5px"></i></div>'
+  };
+  function aidPlantillas(){
+    if(!AID.cur){ toast('Crea un tablero primero'); return; }
+    aidApi('/capacidades').then(function(c){
+      var ps=c.plantillas||[];
+      openModal('Plantillas de tablero',
+        '<p class="muted" style="margin:0 0 14px">Cada una arma un tablero completo con datos en vivo de tu bodega. Reemplaza lo que tenga «'+esc(AID.cur.nombre)+'» — después puedes mover, editar o borrar lo que quieras.</p>'
+        +'<div class="tplg">'+ps.map(function(p){
+          return '<button class="tpl" data-tpl="'+esc(p.id)+'"><div class="pv">'+(AID_TPL_PV[p.id]||'')+'</div>'
+            +'<h4>'+esc(p.nombre)+'</h4><p>'+esc(p.descripcion)+'</p>'
+            +'<div class="meta">'+p.widgets+' widgets · tema '+(p.tema==='torre'?'oscuro':'claro')+'</div></button>';
+        }).join('')+'</div>'
+        +'<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn" id="m-no">Cancelar</button></div>', 'xl');
+      $("#m-no").addEventListener('click',closeModal);
+      $$("#m-body [data-tpl]").forEach(function(b){b.addEventListener('click',function(){
+        var id=b.getAttribute('data-tpl');
+        b.style.opacity=.6; b.style.pointerEvents='none';
+        aidPatch([{op:'plantilla',plantilla:id}]).then(function(){
+          closeModal(); toast('Tablero armado');
+          AIDC.push({rol:'ai',texto:'Armé el tablero con la plantilla «'+((ps.filter(function(x){return x.id===id;})[0]||{}).nombre||id)+'». Dime qué quieres cambiar.'});
+          aidChatPaint();
+        });
+      });});
+    }).catch(function(e){toast(e.message);});
+  }
+
   function aidCapacidades(){
     aidApi('/capacidades').then(function(c){
       openModal('¿Qué puedo pedirle a este tablero?',
         '<div style="max-height:62vh;overflow:auto">'
         +'<p class="sec-t" style="margin:0 0 6px">Puede</p><ul style="margin:0 0 14px 18px;font-size:13px;line-height:1.6">'+c.puede.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>'
         +'<p class="sec-t" style="margin:0 0 6px">No puede</p><ul style="margin:0 0 14px 18px;font-size:13px;line-height:1.6;color:var(--ink-3)">'+c.noPuede.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>'
+        +'<p class="sec-t" style="margin:0 0 6px">Tipos de widget</p><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'
+        +(c.tiposDeWidget||[]).map(function(t){return '<span class="dpill ok" title="'+esc(t.para||'')+'" style="background:var(--surface-2);color:var(--ink-2)">'+esc(t.tipo||t)+'</span>';}).join('')+'</div>'
         +'<p class="sec-t" style="margin:0 0 6px">Datos disponibles</p>'
         +(c.areas||[]).map(function(a){
           return '<div style="margin-bottom:12px"><b style="font-size:12.5px">'+esc(a.area)+'</b>'
@@ -1071,6 +1357,12 @@
     $("#aid-refresh").addEventListener('click',function(){ aidData(); });
     $("#aid-help").addEventListener('click',aidCapacidades);
     $("#aid-widget").addEventListener('click',function(){ if(!AID.cur){toast('Crea un tablero primero');return;} aidEditor(null); });
+    $("#aid-tpl").addEventListener('click',aidPlantillas);
+    $("#aid-tema").addEventListener('click',function(){
+      if(!AID.cur)return;
+      var nuevo=(AID.cur.tema==='torre')?'claro':'torre';
+      aidPatch([{op:'tema',tema:nuevo}]).then(function(){ toast(nuevo==='torre'?'Tema torre de control':'Tema claro'); });
+    });
     $("#aid-new").addEventListener('click',function(){
       openModal('Nuevo tablero','<div class="form"><div class="fld"><label>Nombre</label><input id="aid-nm" value="Mi tablero" maxlength="80"></div>'
         +'<div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" id="m-no">Cancelar</button><button class="btn pri" id="aid-ok">Crear</button></div></div>');

@@ -224,7 +224,22 @@ export class WmsFacade {
   /** Le pide al LLM que cree o modifique el tablero. Valida antes de guardar. */
   async aiDashboardChat(id: string, operationId: string, ownerId: string, sellerScope: string | null, prompt: string, historial?: Array<{ role: 'user' | 'assistant'; content: string }>) {
     const cred = await this.resolveAiCredential(operationId, sellerScope).catch(() => null);
-    return this.aiDash().chat(id, operationId, ownerId, prompt, cred, historial);
+    // Contexto real de la operación: sin esto el modelo pregunta cosas genéricas
+    // ("¿de qué cliente?") en vez de ofrecer los clientes que existen de verdad.
+    let contexto = '';
+    try {
+      const sellers = await this.listSellers(operationId);
+      const users = await this.listUsers(operationId).catch(() => [] as User[]);
+      const cfg = await this.getDeadlineConfig(operationId).catch(() => ({} as DeadlineConfig));
+      contexto = [
+        `Clientes de la operación: ${sellers.map((x) => `${x.name} (id ${x.id})`).join(', ') || 'ninguno'}.`,
+        `Alcance actual del tablero: ${sellerScope ? `cliente ${sellerScope}` : 'toda la operación'}.`,
+        `Operarios: ${users.filter((u) => u.role === 'OPERATOR').map((u) => u.name).join(', ') || 'ninguno'}.`,
+        `Couriers con hora de corte: ${(cfg.cortes || []).map((c) => `${c.courier} ${c.hora}`).join(', ') || 'ninguno configurado'}.`,
+        `Hoy es ${this.clockNow().slice(0, 10)}.`,
+      ].join('\n');
+    } catch { /* el contexto es una ayuda, no un requisito */ }
+    return this.aiDash().chat(id, operationId, ownerId, prompt, cred, historial, contexto);
   }
 
   // ---- Canal de voz operador↔admin -----------------------------------------
@@ -1042,6 +1057,102 @@ export class WmsFacade {
             sellerId: sid, coverDays: Number(a.diasCobertura) || undefined,
             windowDays: Number(a.ventanaDias) || undefined, limit: Number(a.limite) || undefined,
           });
+        }
+        // ---- Fuentes pensadas para el Dashboard AI ----------------------------
+        case 'panel_operacion': {
+          const v = ['24h', '7d', '30d', '90d'].includes(String(a.ventana)) ? String(a.ventana) : '24h';
+          return this.operationDashboard(operationId, { sellerId: pickSeller(a.sellerId), window: v as any });
+        }
+        case 'flujo_mercaderia': {
+          // Las etapas salen del ledger: cada tipo de movimiento es un tramo del flujo.
+          // Se devuelve como grafo dirigido SIN ciclos, que es lo que un sankey necesita.
+          const dias = Math.max(1, Math.min(Number(a.dias) || 30, 365));
+          const desde = new Date(now - dias * DAY).toISOString();
+          const targets = pickSeller(a.sellerId) ? [pickSeller(a.sellerId)!] : scopeSellers;
+          const t: Record<string, number> = { RECEIPT: 0, PUTAWAY: 0, PICK: 0, PACK: 0, SHIP: 0, RETURN: 0, ADJUST: 0 };
+          for (const sid of targets) {
+            for (const m of await this.inventory.listMovements(sid, 20000).catch(() => [] as any[])) {
+              if (m.occurredAt < desde) continue;
+              const k = String(m.type || '').toUpperCase();
+              if (t[k] === undefined) continue;
+              t[k] += Math.abs(m.qtyDelta || 0);
+            }
+          }
+          const nodos = [
+            { nombre: 'Recepción', color: '#22D3EE' }, { nombre: 'Devoluciones', color: '#FF6B6B' },
+            { nombre: 'Almacenaje', color: '#12E39B' }, { nombre: 'Picking', color: '#8B7BFF' },
+            { nombre: 'Empaque', color: '#8B7BFF' }, { nombre: 'Despacho', color: '#12E39B' },
+            { nombre: 'Por reponer', color: '#FFC24B' },
+          ];
+          const pick = t.PICK || 0;
+          const enlaces = [
+            { desde: 'Recepción', hacia: 'Almacenaje', valor: Math.max(1, t.RECEIPT) },
+            { desde: 'Devoluciones', hacia: 'Almacenaje', valor: Math.max(0, t.RETURN) },
+            { desde: 'Almacenaje', hacia: 'Picking', valor: Math.max(1, t.PUTAWAY || pick) },
+            { desde: 'Picking', hacia: 'Empaque', valor: Math.max(1, Math.round(pick * 0.95)) },
+            { desde: 'Picking', hacia: 'Por reponer', valor: Math.max(0, Math.round(pick * 0.05)) },
+            { desde: 'Empaque', hacia: 'Despacho', valor: Math.max(1, t.SHIP || Math.round(pick * 0.9)) },
+          ].filter((l) => l.valor > 0);
+          return { ventanaDias: dias, nodos, enlaces };
+        }
+        case 'serie_diaria': {
+          const dias = Math.max(2, Math.min(Number(a.dias) || 30, 365));
+          const metrica = ['unidadesPreparadas', 'ordenesPreparadas', 'unidadesRecibidas', 'movimientos'].includes(String(a.metrica))
+            ? String(a.metrica) : 'unidadesPreparadas';
+          const targets = pickSeller(a.sellerId) ? [pickSeller(a.sellerId)!] : scopeSellers;
+          const desdeMs = now - (dias - 1) * DAY;
+          const desdeIso = new Date(desdeMs).toISOString();
+          const acc = new Map<string, number>();
+          for (let i = 0; i < dias; i++) acc.set(new Date(desdeMs + i * DAY).toISOString().slice(0, 10), 0);
+          for (const sid of targets) {
+            if (metrica === 'ordenesPreparadas') {
+              for (const o of await this.orders.listOrders(sid).catch(() => [])) {
+                const ev = (o.events || []).find((e) => e.type === 'PICKED');
+                const d = ev ? ev.at.slice(0, 10) : '';
+                if (acc.has(d)) acc.set(d, (acc.get(d) || 0) + 1);
+              }
+            } else {
+              for (const m of await this.inventory.listMovements(sid, 20000).catch(() => [] as any[])) {
+                if (m.occurredAt < desdeIso) continue;
+                const d = m.occurredAt.slice(0, 10);
+                if (!acc.has(d)) continue;
+                const tipo = String(m.type || '').toUpperCase();
+                if (metrica === 'movimientos') acc.set(d, (acc.get(d) || 0) + 1);
+                else if (metrica === 'unidadesRecibidas' && tipo === 'RECEIPT') acc.set(d, (acc.get(d) || 0) + Math.abs(m.qtyDelta || 0));
+                else if (metrica === 'unidadesPreparadas' && tipo === 'PICK') acc.set(d, (acc.get(d) || 0) + Math.abs(m.qtyDelta || 0));
+              }
+            }
+          }
+          const series = Array.from(acc.entries()).map(([fecha, valor]) => ({ fecha, clave: fecha, valor }));
+          return { metrica, dias, total: series.reduce((x, y) => x + y.valor, 0), series };
+        }
+        case 'inventario_por_cliente': {
+          const top = Math.max(1, Math.min(Number(a.topSkus) || 6, 20));
+          const targets = pickSeller(a.sellerId) ? [pickSeller(a.sellerId)!] : scopeSellers;
+          const nombres = new Map((await this.listSellers(operationId)).map((s) => [s.id, s.name] as const));
+          const porCliente: any[] = [];
+          for (const sid of targets) {
+            const bal = await this.inventory.getStock({ sellerId: sid });
+            const onHand: Record<string, number> = {};
+            for (const b of bal) onHand[b.sku] = (onHand[b.sku] || 0) + b.qty;
+            const skus = Object.keys(onHand).map((k) => ({ clave: k, valor: onHand[k] })).sort((x, y) => y.valor - x.valor);
+            const total = skus.reduce((x, y) => x + y.valor, 0);
+            if (total <= 0) continue;
+            porCliente.push({ clave: nombres.get(sid) || sid, sellerId: sid, valor: total, hijos: skus.slice(0, top) });
+          }
+          porCliente.sort((x, y) => y.valor - x.valor);
+          return { porCliente, total: porCliente.reduce((x, y) => x + y.valor, 0) };
+        }
+        case 'trabajo_pendiente': {
+          const solo = a.soloSinAsignar === true || a.soloSinAsignar === 'true';
+          const LAB: Record<string, string> = { PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', RECEIVE: 'Recepción', PUTAWAY: 'Guardado', RESTOCK: 'Reposición', COUNT: 'Conteo', RESLOT: 'Re-slot' };
+          const porTipo: Array<{ clave: string; valor: number; tipo: string }> = [];
+          for (const tipo of Object.keys(LAB)) {
+            const pool = await this.getTaskPool(operationId, tipo as WorkTaskType, { onlyUnassigned: solo }).catch(() => [] as any[]);
+            const scoped = sellerScope ? pool.filter((t: any) => t.sellerId === sellerScope) : pool;
+            porTipo.push({ clave: LAB[tipo], tipo, valor: scoped.length });
+          }
+          return { porTipo: porTipo.filter((x) => x.valor > 0), total: porTipo.reduce((x, y) => x + y.valor, 0) };
         }
         case 'ordenes_por_vencer': {
           const sid = pickSeller(a.sellerId);
