@@ -6787,34 +6787,59 @@
    * datos reales sin tocar a los clientes de verdad.
    */
   function openDemoSandbox(){
-    confirmBox('Sandbox de demostración del agente',
-      '<p style="margin:0 0 10px">Se creará un <b>cliente nuevo</b> llamado «Demo sandbox» con:</p>'
-      +'<ul style="margin:0 0 10px 18px;padding:0"><li>5 productos y 10 ubicaciones propias (todo con prefijo DEMO-)</li>'
-      +'<li>20 órdenes repartidas en todos los estados, con deadlines vencidos, críticos, en riesgo, holgados y sin compromiso</li>'
-      +'<li>tareas pendientes de picking, empaque, despacho, recepción, guardado, reposición y conteo</li>'
-      +'<li>tres operarios de demostración: uno cargado, uno ocioso y uno inactivo con tareas abiertas</li>'
-      +'<li>un lote por vencer y una orden sin stock suficiente</li></ul>'
-      +'<p class="muted" style="margin:0">No toca a tus clientes reales: todo vive en el cliente nuevo. Puedes desactivarlo después desde este mismo mantenedor.</p>',
-      'Crear sandbox', function(){
-        toast('Sembrando datos de demostración…');
-        api('/operations/'+op+'/demo-sandbox',{method:'POST',body:{}}).then(function(r){
-          return loadOp().then(function(){return r;});
-        }).then(function(r){
-          var t=r.tareasPendientes||{}, d=r.deadlines||{};
-          openModal('Sandbox listo · '+esc(r.sellerName||''),
-            '<p class="muted" style="margin:0 0 12px">Ya puedes cambiar al cliente <b>'+esc(r.sellerName||'')+'</b> en el selector de arriba y mirar el agente, la cola de preparación y las alertas.</p>'
-            +'<div class="kv"><span>Productos</span><b>'+r.productos+'</b></div>'
-            +'<div class="kv"><span>Ubicaciones</span><b>'+r.ubicaciones+'</b></div>'
-            +'<div class="kv"><span>Órdenes</span><b>'+r.ordenes+' · '+esc(Object.keys(r.porEstado||{}).map(function(k){return (STN[k]||k)+' '+r.porEstado[k];}).join(' · '))+'</b></div>'
-            +'<div class="kv"><span>Deadlines</span><b>'+d.vencidas+' vencidas · '+d.criticas+' críticas · '+d.enRiesgo+' en riesgo · '+d.holgadas+' holgadas · '+d.sinDeadline+' sin compromiso</b></div>'
-            +'<div class="kv"><span>Tareas pendientes</span><b>'+esc(Object.keys(t).filter(function(k){return t[k];}).map(function(k){return (ASG_TYPE_LABEL[k]||k)+' '+t[k];}).join(' · ')||'—')+'</b></div>'
-            +'<div class="kv"><span>Operarios</span><b>'+esc((r.operarios||[]).join(' · '))+'</b></div>'
-            +((r.avisos||[]).length?'<p class="muted" style="margin:12px 0 0;font-size:12.5px">'+esc(r.avisos.join(' · '))+'</p>':'')
-            +'<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn pri" id="m-ok">Cerrar</button></div>');
-          $("#m-ok").addEventListener('click',closeModal);
-        }).catch(function(e){ toast(e.message); });
-      });
+    // El administrador decide el tamaño. Los mínimos del servidor están para que
+    // la semilla siempre alcance a cubrir los escenarios que le dan trabajo al
+    // agente; si pide menos, el servidor lo sube y lo informa.
+    openModal('Sandbox de demostración del agente',
+      '<p style="margin:0 0 12px">Se creará un <b>cliente nuevo</b> con datos de demostración. Elige el tamaño:</p>'
+      +'<div class="form"><div class="row2">'
+      +'<div class="fld"><label>Órdenes</label><input id="sbx-ord" type="number" min="6" max="400" value="20"><span class="hint">mínimo 6 · máximo 400</span></div>'
+      +'<div class="fld"><label>Productos (SKUs)</label><input id="sbx-prod" type="number" min="2" max="60" value="5"><span class="hint">mínimo 2 · máximo 60</span></div>'
+      +'</div><div class="row2">'
+      +'<div class="fld"><label>Ubicaciones</label><input id="sbx-ubic" type="number" min="3" max="200" value="10"><span class="hint">incluye el dock de recepción · mínimo 3</span></div>'
+      +'<div class="fld"><label>Insumos de embalaje</label><input value="5" disabled><span class="hint">siempre 5, con distintos niveles de stock</span></div>'
+      +'</div></div>'
+      +'<p class="muted" style="margin:12px 0 0;font-size:12.5px">Además trae tareas pendientes de los siete tipos, tres operarios (uno cargado, uno ocioso y uno inactivo con tareas abiertas), un lote por vencer y una orden sin stock suficiente. '
+      +'No toca a tus clientes reales y puedes montar otro ciclo cuando quieras: cada corrida crea su propio cliente y sus propias ubicaciones.</p>'
+      +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="btn" id="sbx-no">Cancelar</button><button class="btn pri" id="sbx-go">Crear sandbox</button></div>');
+    $("#sbx-no").addEventListener('click',closeModal);
+    $("#sbx-go").addEventListener('click',function(){
+      var body={
+        ordenes:parseInt($("#sbx-ord").value,10)||undefined,
+        productos:parseInt($("#sbx-prod").value,10)||undefined,
+        ubicaciones:parseInt($("#sbx-ubic").value,10)||undefined,
+      };
+      this.disabled=true; this.textContent='Sembrando…';
+      toast('Sembrando datos de demostración…');
+      api('/operations/'+op+'/demo-sandbox',{method:'POST',body:body}).then(function(r){
+        return loadOp().then(function(){return r;});
+      }).then(function(r){
+        var t=r.tareasPendientes||{}, d=r.deadlines||{}, g=r.garantias||[];
+        var cubiertos=g.filter(function(x){return x.cubierto;});
+        openModal('Sandbox listo · '+esc(r.sellerName||''),
+          '<p class="muted" style="margin:0 0 12px">Ya puedes cambiar al cliente <b>'+esc(r.sellerName||'')+'</b> en el selector de arriba y mirar el agente, la cola de preparación y las alertas.</p>'
+          +'<div class="kv"><span>Productos</span><b>'+r.productos+'</b></div>'
+          +'<div class="kv"><span>Ubicaciones</span><b>'+r.ubicaciones+'</b></div>'
+          +'<div class="kv"><span>Insumos de embalaje</span><b>'+(r.embalajes||5)+'</b></div>'
+          +'<div class="kv"><span>Órdenes</span><b>'+r.ordenes+' · '+esc(Object.keys(r.porEstado||{}).map(function(k){return (STN[k]||k)+' '+r.porEstado[k];}).join(' · '))+'</b></div>'
+          +'<div class="kv"><span>Deadlines</span><b>'+d.vencidas+' vencidas · '+d.criticas+' críticas · '+d.enRiesgo+' en riesgo · '+d.holgadas+' holgadas · '+d.sinDeadline+' sin compromiso</b></div>'
+          +'<div class="kv"><span>Tareas pendientes</span><b>'+esc(Object.keys(t).filter(function(k){return t[k];}).map(function(k){return (ASG_TYPE_LABEL[k]||k)+' '+t[k];}).join(' · ')||'—')+'</b></div>'
+          +'<div class="kv"><span>Operarios</span><b>'+esc((r.operarios||[]).join(' · '))+'</b></div>'
+          +(g.length?'<div style="margin-top:14px"><div style="font-weight:800;font-size:12.5px;margin-bottom:6px">Qué puede hacer el agente con esto ('+cubiertos.length+' de '+g.length+' escenarios)</div>'
+            +'<table class="agj-t m-skip"><thead><tr><th>Escenario</th><th>Órdenes</th><th>Acción del agente</th></tr></thead><tbody>'
+            +g.map(function(x){ return '<tr style="'+(x.cubierto?'':'opacity:.5')+'">'
+              +'<td data-label="Escenario"><b>'+esc(String(x.escenario).replace(/_/g,' '))+'</b></td>'
+              +'<td data-label="Órdenes">'+(x.cubierto?x.cantidad:'—')+'</td>'
+              +'<td data-label="Acción">'+esc(x.accionDelAgente)+'</td></tr>'; }).join('')
+            +'</tbody></table></div>':'')
+          +((r.ajustes||[]).length?'<p class="muted" style="margin:12px 0 0;font-size:12.5px"><b>Ajustes:</b> '+esc(r.ajustes.join(' · '))+'</p>':'')
+          +((r.avisos||[]).length?'<p class="muted" style="margin:8px 0 0;font-size:12.5px">'+esc(r.avisos.join(' · '))+'</p>':'')
+          +'<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn pri" id="m-ok">Cerrar</button></div>');
+        $("#m-ok").addEventListener('click',closeModal);
+      }).catch(function(e){ toast(e.message); closeModal(); });
+    });
   }
+
   if($("#wh-new"))$("#wh-new").addEventListener("click",function(){openWebhookForm(null);});
   $("#ord-new").addEventListener("click",function(){openOrderForm(null);});
   if($("#ord-import"))$("#ord-import").addEventListener("click",openBulkImport);

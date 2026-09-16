@@ -2799,16 +2799,21 @@ export class WmsFacade {
     return this.orders.backdateForDemo(sellerId, orderId, horas);
   }
 
+  /** Sube una orden a prioridad ALTA (el agente, cuando su compromiso está en riesgo). */
+  async escalateOrderPriority(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
+    return this.orders.escalatePriority(sellerId, orderId, actor);
+  }
+
   /**
    * Siembra un sandbox de demostración del agente dentro de esta operación:
    * un cliente de juguete con productos, ubicaciones, stock, 20 órdenes en todos
    * los estados con deadlines variados y tareas pendientes de todos los tipos.
    * Lo dispara el administrador de la operación desde el panel. Ver `demo-seed.ts`.
    */
-  async seedAgentSandbox(operationId: string, actor: string) {
+  async seedAgentSandbox(operationId: string, actor: string, opts?: { productos?: number; ubicaciones?: number; ordenes?: number }) {
     await this.operationsService.mustGet(operationId);
     const { seedAgentSandbox } = await import('./demo-seed');
-    return seedAgentSandbox(this, operationId, actor);
+    return seedAgentSandbox(this, operationId, actor, opts || {});
   }
 
   /** Fija o quita el deadline de una orden ya creada. */
@@ -4135,6 +4140,71 @@ export class WmsFacade {
     if (tool === 'balancear_carga') {
       const r = await this.autoBalance(operationId, { type: 'PICK', execute: true, by: actor });
       return `${r.asignadas} tarea(s) de picking repartida(s)`;
+    }
+    if (tool === 'atender_deadline_riesgo') {
+      // Escalada en dos pasos para los compromisos que se van a incumplir.
+      //   Paso 1 — la mejor salida: que la tome alguien que está SIN trabajo. Se
+      //            hace ya, sin quitarle nada a nadie.
+      //   Paso 2 — si no queda nadie libre: se asigna igual, al operario menos
+      //            cargado, y la orden sube a prioridad ALTA para que quede
+      //            primera en su bandeja en vez de hacer la fila completa.
+      const cfgDl = await this.getDeadlineConfig(operationId).catch(() => ({} as DeadlineConfig));
+      const enRiesgo = await this.getOrdersDueSoon(operationId, { withinHours: cfgDl.riesgoHoras ?? 4, limit: 100 });
+      if (!enRiesgo.items.length) return 'no hay compromisos en riesgo: no había nada que atender';
+
+      const roster = await this.operatorRoster(operationId);
+      if (!roster.length) return 'no hay operarios activos a quienes asignar; los compromisos en riesgo quedan sin dueño';
+
+      // Carga abierta por operario: define quién está libre y quién menos cargado.
+      const abiertas = this.assignments ? await this.assignments.listOpen(operationId) : [];
+      const carga = new Map<string, number>(roster.map((r) => [r.id, 0] as [string, number]));
+      const yaAsignada = new Set<string>();
+      for (const a of abiertas) {
+        if (carga.has(a.operator)) carga.set(a.operator, carga.get(a.operator)! + 1);
+        yaAsignada.add(`${a.type}:${a.entityId}`);
+      }
+      // La etapa que corresponde a cada estado: no se asigna un picking a una
+      // orden ya empacada, ni un despacho a una que todavía no se pickea.
+      const etapa = (estado: string): WorkTaskType | null =>
+        estado === 'ALLOCATED' || estado === 'PICKING' ? 'PICK'
+          : estado === 'PICKED' ? 'PACK'
+            : estado === 'PACKED' ? 'SHIP' : null;
+
+      const paso1: string[] = [], paso2: string[] = [], sinEtapa: string[] = [];
+      // Más urgente primero: `items` ya viene ordenado por holgura.
+      for (const it of enRiesgo.items) {
+        const tipo = etapa(it.estado);
+        if (!tipo) { sinEtapa.push(it.orden); continue; }   // RECEIVED: falta reservar, no asignar
+        if (yaAsignada.has(`${tipo}:${it.orderId}`)) continue;
+        const libres = roster.filter((r) => (carga.get(r.id) || 0) === 0);
+        const destino = libres.length
+          ? libres[0]
+          : roster.slice().sort((a, b) => (carga.get(a.id) || 0) - (carga.get(b.id) || 0))[0];
+        try {
+          await this.assignTask(operationId, {
+            type: tipo, entityId: it.orderId, entityRef: it.orden, sellerId: it.sellerId,
+            operator: destino.id, unitsEstimate: it.unidades, by: actor, skipOperatorCheck: true,
+            note: libres.length ? 'deadline en riesgo: operario sin tareas' : 'deadline en riesgo: prioridad máxima',
+          });
+          carga.set(destino.id, (carga.get(destino.id) || 0) + 1);
+          yaAsignada.add(`${tipo}:${it.orderId}`);
+          if (libres.length) paso1.push(`${it.orden}→${destino.name}`);
+          else {
+            // Paso 2: además de asignarla, se escala para que vaya primera.
+            await this.escalateOrderPriority(it.sellerId, it.orderId, actor).catch(() => null);
+            paso2.push(`${it.orden}→${destino.name}`);
+          }
+        } catch { /* si una no se puede asignar, se sigue con las demás */ }
+      }
+      // El orden de las bandejas se recalcula ahora: si no, la escalada del paso 2
+      // no se vería hasta el próximo ciclo.
+      await this.recomputeAssignmentPriorities(operationId).catch(() => null);
+
+      const partes: string[] = [];
+      if (paso1.length) partes.push(`paso 1: ${paso1.length} a operarios sin tareas (${paso1.slice(0, 4).join(', ')})`);
+      if (paso2.length) partes.push(`paso 2: ${paso2.length} con prioridad máxima (${paso2.slice(0, 4).join(', ')})`);
+      if (sinEtapa.length) partes.push(`${sinEtapa.length} sin reservar todavía: no se pueden asignar hasta que tengan stock`);
+      return partes.length ? partes.join(' · ') : 'los compromisos en riesgo ya estaban asignados: no hubo nada que mover';
     }
     if (tool === 'asignar_a_ociosos') {
       // Reparte TODO lo pendiente, de todos los tipos de tarea: el ocioso puede

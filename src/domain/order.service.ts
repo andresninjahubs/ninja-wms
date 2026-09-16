@@ -205,6 +205,24 @@ export class OrderService {
     return updated;
   }
 
+  /**
+   * Sube una orden a prioridad ALTA. Lo usa el agente cuando un compromiso está
+   * en riesgo y no queda ningún operario libre: si la orden tiene que esperar en
+   * la bandeja de alguien, al menos que espere primera. El recálculo de
+   * prioridades ya premia a las órdenes 'alta', así que la escalada sobrevive.
+   */
+  async escalatePriority(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
+    const order = await this.mustGet(sellerId, orderId);
+    if (order.priority === 'alta') return order;
+    const updated: SalesOrder = {
+      ...order,
+      priority: 'alta',
+      events: [...(order.events || []), { type: 'PRIORIDAD', at: this.clock.now(), actor: actor || 'agente', detail: 'Prioridad ALTA por deadline en riesgo' } as any],
+    };
+    await this.orders.save(updated);
+    return updated;
+  }
+
   /** Libera TODAS las reservas pendientes de una orden (lo ya recolectado no vuelve). */
   private async releaseAllocations(order: SalesOrder, sellerId: string, reference: string): Promise<void> {
     for (const line of order.lines) {

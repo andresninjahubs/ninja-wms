@@ -7,7 +7,7 @@
 import { AgentRuleSeverity } from './types';
 
 /** Herramientas que una regla puede ejecutar automáticamente (Fase 3). Reversibles y auditadas. */
-export type AgentActionTool = 'liberar_inactivos' | 'balancear_carga' | 'asignar_a_ociosos';
+export type AgentActionTool = 'liberar_inactivos' | 'balancear_carga' | 'asignar_a_ociosos' | 'atender_deadline_riesgo';
 
 export interface AgentRuleDef {
   key: string;
@@ -42,7 +42,9 @@ export const AGENT_RULES: AgentRuleDef[] = [
     name: 'Deadline de preparación en riesgo',
     description: 'Órdenes abiertas cuyo compromiso de salida (corte del courier o SLA del cliente) vence dentro de N horas o ya venció.',
     unit: 'horas', defaultThreshold: 2, defaultSeverity: 'crit', defaultCooldownMin: 45, link: 'pickqueue',
-    autoAction: { tool: 'balancear_carga', label: 'Balancear el trabajo entre operarios activos' },
+    // Escalada en dos pasos: primero un operario libre la toma ya; si no queda
+    // ninguno, se asigna igual pero con prioridad máxima en la bandeja.
+    autoAction: { tool: 'atender_deadline_riesgo', label: 'Paso 1: asignar a operario activo sin tareas · Paso 2: asignar con prioridad máxima a operario activo' },
   },
   {
     key: 'quiebre_stock',

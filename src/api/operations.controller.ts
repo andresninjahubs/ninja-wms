@@ -92,8 +92,14 @@ export class OperationsController {
    */
   @Post(':operationId/demo-sandbox')
   @RequirePermission('master:manage')
-  seedDemoSandbox(@Param('operationId') operationId: string, @CurrentUser() user: User | null) {
-    return this.wms.seedAgentSandbox(operationId, actorOf(user));
+  seedDemoSandbox(
+    @Param('operationId') operationId: string,
+    @CurrentUser() user: User | null,
+    @Body() body?: { productos?: number; ubicaciones?: number; ordenes?: number },
+  ) {
+    return this.wms.seedAgentSandbox(operationId, actorOf(user), {
+      productos: body?.productos, ubicaciones: body?.ubicaciones, ordenes: body?.ordenes,
+    });
   }
 
   /**
