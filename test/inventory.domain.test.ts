@@ -20,6 +20,7 @@ import { parseCopilotIntent, buildInsights } from '../src/domain/copilot';
 import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS } from '../src/domain/copilot-tools';
 import { deadlineBoost, deadlineState, nextCutoff, resolveDueAt } from '../src/domain/deadline';
 import { PLANTILLAS, aplicarPatch, opsDePlantilla, primerHueco, transformar, validarWidget } from '../src/domain/ai-dashboard';
+import { SCHEDULE_DEFAULT, estadoVentana, localEn, normalizarSchedule, resumenSchedule } from '../src/domain/agent-schedule';
 import { InMemoryOpsChannelRepository } from '../src/infra/memory/in-memory.repositories';
 import { MetricsService } from '../src/domain/metrics.service';
 import { RollupService } from '../src/domain/rollup.service';
@@ -4632,6 +4633,164 @@ async function run() {
     assert.equal(d.tiempos.muestrasB2B, 1);
     assert.equal(d.tiempos.b2cMin, 30, 'promedio de 20 y 40 minutos');
     assert.equal(d.tiempos.b2bMin, 180);
+  });
+
+  // ---- Ventanas horarias del agente (v106) -----------------------------------
+
+  await test('agenda del agente: la hora es local de la operación, no UTC', () => {
+    // 12:00 UTC de un martes de enero son las 09:00 en Santiago (verano, UTC−3).
+    const a = localEn('2026-01-13T12:00:00.000Z', 'America/Santiago');
+    assert.deepEqual([a.dia, a.min], [2, 9 * 60], 'martes 09:00 en Santiago');
+    const b = localEn('2026-01-13T12:00:00.000Z', 'UTC');
+    assert.deepEqual([b.dia, b.min], [2, 12 * 60]);
+    // Y en pleno invierno austral el desfase es de 3 horas: el horario de verano
+    // no se hardcodea, lo resuelve la zona.
+    const c = localEn('2026-07-14T12:00:00.000Z', 'America/Santiago');
+    assert.equal(c.min, 8 * 60, 'en julio son las 08:00: UTC−4, el horario de verano lo resuelve la zona');
+  });
+
+  await test('agenda del agente: dentro, fuera y próxima apertura', () => {
+    const s = normalizarSchedule({ activo: true, tz: 'UTC', alcance: 'llm', ventanas: [{ dias: [1, 2, 3, 4, 5], desde: '08:00', hasta: '20:00' }] });
+    // Miércoles 10:00 UTC: dentro.
+    const dentro = estadoVentana(s, '2026-09-16T10:00:00.000Z');
+    assert.equal(dentro.dentro, true);
+    assert.equal(dentro.proximaAperturaIso, null);
+    // Miércoles 21:00: fuera, y abre el jueves a las 08:00.
+    const fuera = estadoVentana(s, '2026-09-16T21:00:00.000Z');
+    assert.equal(fuera.dentro, false);
+    assert.equal((fuera.proximaAperturaIso || '').slice(0, 16), '2026-09-17T08:00');
+    // Sábado: fuera todo el día; la próxima apertura es el lunes.
+    const finde = estadoVentana(s, '2026-09-19T12:00:00.000Z');
+    assert.equal(finde.dentro, false);
+    assert.equal((finde.proximaAperturaIso || '').slice(0, 16), '2026-09-21T08:00', 'debe saltar el domingo y dar la hora exacta');
+  });
+
+  await test('agenda del agente: una ventana puede cruzar la medianoche', () => {
+    // Turno de noche: viernes 22:00 → 06:00 del sábado.
+    const s = normalizarSchedule({ activo: true, tz: 'UTC', ventanas: [{ dias: [5], desde: '22:00', hasta: '06:00' }] });
+    assert.equal(estadoVentana(s, '2026-09-18T23:30:00.000Z').dentro, true, 'viernes 23:30');
+    assert.equal(estadoVentana(s, '2026-09-19T03:00:00.000Z').dentro, true, 'sábado 03:00 sigue siendo el turno del viernes');
+    assert.equal(estadoVentana(s, '2026-09-19T07:00:00.000Z').dentro, false, 'sábado 07:00 ya cerró');
+    assert.equal(estadoVentana(s, '2026-09-18T21:00:00.000Z').dentro, false, 'viernes 21:00 todavía no abre');
+  });
+
+  await test('agenda del agente: varias ventanas en el mismo día', () => {
+    const s = normalizarSchedule({ activo: true, tz: 'UTC', ventanas: [
+      { dias: [1, 2, 3, 4, 5], desde: '09:00', hasta: '13:00' },
+      { dias: [1, 2, 3, 4, 5], desde: '15:00', hasta: '19:00' },
+    ] });
+    assert.equal(estadoVentana(s, '2026-09-16T10:00:00.000Z').dentro, true);
+    assert.equal(estadoVentana(s, '2026-09-16T14:00:00.000Z').dentro, false, 'la hora de colación queda afuera');
+    assert.equal(estadoVentana(s, '2026-09-16T16:00:00.000Z').dentro, true);
+    const almuerzo = estadoVentana(s, '2026-09-16T14:00:00.000Z');
+    assert.equal((almuerzo.proximaAperturaIso || '').slice(11, 16), '15:00', 'la hora exacta, no el primer paso del barrido');
+  });
+
+  await test('agenda del agente: valida lo que se guarda y no inventa defaults peligrosos', () => {
+    assert.equal(estadoVentana(SCHEDULE_DEFAULT, '2026-09-16T03:00:00.000Z').dentro, true, 'agenda apagada = sin restricción');
+    // Activa y vacía no significa "siempre": se rechaza al guardar.
+    assert.throws(() => normalizarSchedule({ activo: true, ventanas: [] }), /no correría nunca/);
+    assert.throws(() => normalizarSchedule({ activo: true, ventanas: [{ dias: [1], desde: '25:00', hasta: '20:00' }] }), /Hora inválida/);
+    assert.throws(() => normalizarSchedule({ activo: true, ventanas: [{ dias: [], desde: '08:00', hasta: '20:00' }] }), /días/);
+    assert.throws(() => normalizarSchedule({ activo: true, ventanas: [{ dias: [1], desde: '08:00', hasta: '08:00' }] }), /misma hora/);
+    assert.throws(() => normalizarSchedule({ tz: 'Marte/Olympus' }), /Zona horaria desconocida/);
+    // Días repetidos o fuera de rango se limpian en vez de reventar.
+    const s = normalizarSchedule({ activo: true, tz: 'UTC', ventanas: [{ dias: [3, 1, 1, 9, -2], desde: '08:00', hasta: '20:00' }] });
+    assert.deepEqual(s.ventanas[0].dias, [1, 3]);
+    assert.equal(s.alcance, 'llm', 'por defecto solo se pausa el LLM, no el agente entero');
+    assert.match(resumenSchedule(s), /Lun, Mié 08:00–20:00/);
+  });
+
+  /**
+   * Lo que de verdad importa: que el CICLO respete la ventana. La prueba de
+   * dominio dice si estamos dentro; esta dice si el agente hace caso.
+   */
+  await test('agenda del agente: el ciclo consulta al LLM solo dentro de la ventana', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.updateAgentSettings('op1', {
+      llmPlanning: true, paused: false,
+      agenda: { activo: true, tz: 'UTC', alcance: 'llm', ventanas: [{ dias: [1, 2, 3, 4, 5], desde: '08:00', hasta: '20:00' }] },
+    } as any, 'ana');
+
+    // Domingo a las 03:00 UTC: fuera de toda ventana.
+    f.clock.set('2026-09-20T03:00:00.000Z');
+    const est0: any = await f.facade.agentStatus('op1');
+    assert.equal(est0.ventana.dentro, false);
+    assert.equal(est0.ventana.proximaAperturaIso.slice(0, 16), '2026-09-21T08:00', 'abre el lunes a las 08:00');
+    const fuera: any = await f.facade.runAgentCycle('op1', { by: 'scheduler' });
+    assert.equal(fuera.llm.ran, false, 'no debe consultar al LLM fuera de hora');
+    assert.equal(fuera.llm.error, 'fuera de la ventana horaria');
+    assert.ok(fuera.barrido, 'el barrido de reglas SÍ sigue corriendo: es gratis y cuida la operación');
+
+    // Miércoles a las 10:00 UTC: dentro. Ahora sí intenta (falla por falta de
+    // credencial, que es otra cosa, pero llegó a intentarlo).
+    f.clock.set('2026-09-16T10:00:00.000Z');
+    const est1: any = await f.facade.agentStatus('op1');
+    assert.equal(est1.ventana.dentro, true);
+    const dentro: any = await f.facade.runAgentCycle('op1', { by: 'scheduler' });
+    assert.notEqual(dentro.llm.error, 'fuera de la ventana horaria', 'dentro de ventana no debe bloquearse por horario');
+
+    // "Evaluar ahora" lo pide una persona: el horario no le aplica.
+    f.clock.set('2026-09-20T03:00:00.000Z');
+    const aMano: any = await f.facade.runAgentCycle('op1', { force: true, by: 'ana' });
+    assert.notEqual(aMano.llm.error, 'fuera de la ventana horaria', 'el botón manual salta la agenda');
+  });
+
+  await test('agenda del agente: con alcance "todo" el ciclo completo no arranca fuera de hora', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.updateAgentSettings('op1', {
+      llmPlanning: false,
+      agenda: { activo: true, tz: 'UTC', alcance: 'todo', ventanas: [{ dias: [1], desde: '08:00', hasta: '09:00' }] },
+    } as any, 'ana');
+    f.clock.set('2026-09-20T03:00:00.000Z'); // domingo
+    const r: any = await f.facade.runAgentCycle('op1', { by: 'scheduler' });
+    assert.equal(r.skipped, 'fuera de la ventana horaria');
+    assert.equal(r.barrido, undefined, 'con alcance "todo" ni siquiera barre reglas');
+
+    // Y la agenda sobrevive a guardar otros ajustes sin tocarla.
+    const s2: any = await f.facade.updateAgentSettings('op1', { maxLlmCallsPerDay: 42 } as any, 'ana');
+    assert.equal(s2.agenda.ventanas.length, 1, 'guardar otro campo no borra la agenda');
+    assert.equal(s2.agenda.alcance, 'todo');
+  });
+
+  /**
+   * El diario del panel arma una TABLA de acciones por ciclo. Eso solo funciona
+   * si cada entrada trae la carga estructurada `accion`; si alguien vuelve a
+   * escribir solo la frase en prosa, la tabla se vacía sin que nada falle.
+   */
+  await test('diario del agente: cada acción queda tabulable, no solo narrada', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.seedAgentSandbox('op1', 'ana');
+    await f.facade.updateAgentSettings('op1', { autonomyLevel: 3, shadowMode: false, paused: false } as any, 'ana');
+    await f.facade.updateAgentRule('op1', 'operario_inactivo', { enabled: true, actionType: 'execute', actionMode: 'directo', cooldownMin: 0 }, 'ana');
+
+    f.clock.set('2026-09-17T12:05:00.000Z');
+    const ciclo: any = await f.facade.runAgentCycle('op1', { force: true, by: 'ana' });
+    assert.ok(ciclo.barrido.ejecutadas > 0, 'el ciclo no ejecutó nada: la prueba no prueba nada');
+
+    const diario: any[] = await f.facade.agentJournalList('op1', { kind: null, limit: 60 });
+    const conAccion = diario.filter((e) => e.data && (e.data as any).accion);
+    assert.ok(conAccion.length > 0, 'ninguna entrada trae la carga estructurada `accion`');
+    const a = (conAccion[0].data as any).accion;
+    for (const campo of ['estado', 'etiqueta', 'regla', 'herramienta', 'resultado']) {
+      assert.ok(a[campo] != null && a[campo] !== '', `la acción no trae "${campo}"; la columna quedaría vacía`);
+    }
+    assert.ok(['ejecutada', 'propuesta', 'sombra', 'error'].includes(a.estado), `estado desconocido: ${a.estado}`);
+    assert.equal(a.estado, 'ejecutada');
+
+    // Y en modo sombra la misma acción queda marcada como sombra, no como hecha.
+    await f.facade.updateAgentSettings('op1', { shadowMode: true } as any, 'ana');
+    await f.facade.seedAgentSandbox('op1', 'ana'); // material nuevo: el dedupe tapa la alerta anterior
+    f.clock.set('2026-09-17T12:10:00.000Z');
+    await f.facade.runAgentCycle('op1', { force: true, by: 'ana' });
+    const d2: any[] = await f.facade.agentJournalList('op1', { kind: null, limit: 60 });
+    const sombra = d2.map((e) => e.data && (e.data as any).accion).filter(Boolean).find((x: any) => x.estado === 'sombra');
+    assert.ok(sombra, 'el modo sombra no dejó una acción marcada como sombra');
+    assert.equal(sombra.herramienta, 'liberar_inactivos');
   });
 
   // ---- Dashboard AI (v101) ---------------------------------------------------

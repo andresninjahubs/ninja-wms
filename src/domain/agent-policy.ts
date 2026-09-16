@@ -1,3 +1,4 @@
+import { SCHEDULE_DEFAULT } from './agent-schedule';
 /**
  * Política de autonomía del agente (Fase 1 del agente autónomo).
  *
@@ -79,6 +80,7 @@ export function effectiveAgentSettings(s: CopilotSettings | null, operationId: s
     llmPlanning: s?.llmPlanning ?? AGENT_DEFAULTS.llmPlanning,
     llmEveryMin: s?.llmEveryMin ?? AGENT_DEFAULTS.llmEveryMin,
     maxLlmCallsPerDay: s?.maxLlmCallsPerDay ?? AGENT_DEFAULTS.maxLlmCallsPerDay,
+    agenda: s?.agenda ?? SCHEDULE_DEFAULT,
   };
 }
 

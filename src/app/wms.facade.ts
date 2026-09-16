@@ -101,6 +101,7 @@ import {
   ZoneType,
 } from '../domain/types';
 import { AiConfigRepository, AiCredential, AuthTokenRepository, Clock, CopilotSettingsRepository, CountAuditRepository, EmailSender, EventRepository, IdGenerator, LotRepository, PlanConfigRepository, AiAuditRepository, WorkAssignmentRepository, WorkTaskRepository, AgentRuleConfigRepository, AgentAlertRepository, AgentJournalRepository, AgentJournalEntry, CopilotSettings, AiDashboardRepository } from '../domain/ports';
+import { AgentSchedule, EstadoVentana, SCHEDULE_DEFAULT, estadoVentana, normalizarSchedule, resumenSchedule } from '../domain/agent-schedule';
 import { ACTION_POLICIES, decidePolicy, describePolicy, effectiveAgentSettings } from '../domain/agent-policy';
 import { AGENT_RULES, AgentRuleDef, agentRuleDef } from '../domain/agent-rules';
 import { ROLE_PERMISSIONS, UserRole } from '../domain/types';
@@ -1313,6 +1314,12 @@ export class WmsFacade {
     return ROLE_PERMISSIONS[role as UserRole]?.includes('order:fulfill') ?? false;
   }
   /** Ajustes efectivos del agente (política de autonomía, sombra, límites, notificaciones). */
+  /** Valida y normaliza la agenda del agente; el error va derecho al formulario. */
+  private validarAgenda(raw: unknown): AgentSchedule {
+    try { return normalizarSchedule(raw); }
+    catch (e) { throw new ValidationError((e as Error).message); }
+  }
+
   async agentSettings(operationId: string): Promise<Required<CopilotSettings>> {
     const s = this.copilotSettings ? await this.copilotSettings.get(operationId).catch(() => null) : null;
     return effectiveAgentSettings(s, operationId);
@@ -1334,6 +1341,8 @@ export class WmsFacade {
       llmPlanning: patch.llmPlanning != null ? !!patch.llmPlanning : cur.llmPlanning,
       llmEveryMin: patch.llmEveryMin != null && patch.llmEveryMin >= 1 ? Math.round(patch.llmEveryMin) : cur.llmEveryMin,
       maxLlmCallsPerDay: patch.maxLlmCallsPerDay != null && patch.maxLlmCallsPerDay >= 0 ? Math.round(patch.maxLlmCallsPerDay) : cur.maxLlmCallsPerDay,
+      // La agenda se normaliza y valida acá: lo que llega del formulario no se guarda crudo.
+      agenda: patch.agenda !== undefined ? this.validarAgenda(patch.agenda) : cur.agenda,
     };
     await this.copilotSettings.save(next);
     await this.journal(operationId, 'note', actor || 'admin', `Ajustes del agente actualizados: nivel ${next.autonomyLevel}, sombra ${next.shadowMode ? 'ON' : 'OFF'}, pausa ${next.paused ? 'ON' : 'OFF'}, modo ${next.actionMode}.`, null);
@@ -3827,12 +3836,16 @@ export class WmsFacade {
                 const result = await this.runAgentTool(operationId, actionTool, 'agente');
                 ruleActionDone = { status: 'done', result }; usage.cycle++; ejecutadas++;
                 await this.recordAgentAction({ operationId, sellerId: cand.sellerId, agent: 'agent-rule', decision: `${def.key} → ${actionTool}`, actor: 'agente', orderRef: cand.entityRef, result: `ok: ${result}`, recommendationId: null });
-                await this.journal(operationId, 'decision', 'agente', `${def.name}: ejecuté "${actionLabel}" → ${result}`, { rule: def.key, tool: actionTool });
+                // `accion` es la carga estructurada que el panel usa para armar la
+                // tabla de acciones del ciclo. El texto queda para leerlo; esto, para tabularlo.
+                await this.journal(operationId, 'decision', 'agente', `${def.name}: ejecuté "${actionLabel}" → ${result}`,
+                  { rule: def.key, tool: actionTool, accion: { estado: 'ejecutada', etiqueta: actionLabel, regla: def.name, reglaKey: def.key, herramienta: actionTool, entidad: cand.entityRef, cliente: cand.sellerId || null, resultado: result } });
               } catch (e: any) {
                 const msg = (e && e.message) || 'no se pudo ejecutar';
                 ruleActionDone = { status: 'error', result: msg };
                 await this.recordAgentAction({ operationId, sellerId: cand.sellerId, agent: 'agent-rule', decision: `${def.key} → ${actionTool}`, actor: 'agente', orderRef: cand.entityRef, result: `error: ${msg}`, recommendationId: null });
-                await this.journal(operationId, 'outcome', 'agente', `${def.name}: falló "${actionLabel}" (${msg}); escalado a excepción.`, { rule: def.key, tool: actionTool });
+                await this.journal(operationId, 'outcome', 'agente', `${def.name}: falló "${actionLabel}" (${msg}); escalado a excepción.`,
+                  { rule: def.key, tool: actionTool, accion: { estado: 'error', etiqueta: actionLabel, regla: def.name, reglaKey: def.key, herramienta: actionTool, entidad: cand.entityRef, cliente: cand.sellerId || null, resultado: msg } });
               }
             } else {
               const why = cfg.actionMode !== 'directo' ? 'la regla pide confirmación' : pol.reason;
@@ -3840,8 +3853,13 @@ export class WmsFacade {
               if (settings.shadowMode && cfg.actionMode === 'directo') {
                 sombra++;
                 await this.recordAgentAction({ operationId, sellerId: cand.sellerId, agent: 'agent-shadow', decision: `${def.key} → ${actionTool}`, actor: 'agente', orderRef: cand.entityRef, result: `shadow: habría ejecutado "${actionLabel}"`, recommendationId: null });
-                await this.journal(operationId, 'decision', 'agente', `[sombra] ${def.name}: habría ejecutado "${actionLabel}" (${pol.reason}).`, { rule: def.key, tool: actionTool, shadow: true });
-              } else propuestas++;
+                await this.journal(operationId, 'decision', 'agente', `[sombra] ${def.name}: habría ejecutado "${actionLabel}" (${pol.reason}).`,
+                  { rule: def.key, tool: actionTool, shadow: true, accion: { estado: 'sombra', etiqueta: actionLabel, regla: def.name, reglaKey: def.key, herramienta: actionTool, entidad: cand.entityRef, cliente: cand.sellerId || null, resultado: pol.reason } });
+              } else {
+                propuestas++;
+                await this.journal(operationId, 'decision', 'agente', `[propuesta] ${def.name}: "${actionLabel}" queda para confirmar (${why}).`,
+                  { rule: def.key, tool: actionTool, accion: { estado: 'propuesta', etiqueta: actionLabel, regla: def.name, reglaKey: def.key, herramienta: actionTool, entidad: cand.entityRef, cliente: cand.sellerId || null, resultado: why } });
+              }
             }
           }
           actionStatus = ruleActionDone.status; actionResult = ruleActionDone.result;
@@ -3890,10 +3908,13 @@ export class WmsFacade {
   private agentLastLlm = new Map<string, number>();
 
   /** Estado del agente para el panel: ajustes, último ciclo, lock, presupuesto. */
-  async agentStatus(operationId: string): Promise<{ settings: Required<CopilotSettings>; running: boolean; lastCycle: { at: string; summary: Record<string, unknown> } | null; scheduler: { enabled: boolean; intervalSec: number }; llmCallsToday: number }> {
+  async agentStatus(operationId: string): Promise<{ settings: Required<CopilotSettings>; running: boolean; lastCycle: { at: string; summary: Record<string, unknown> } | null; scheduler: { enabled: boolean; intervalSec: number }; llmCallsToday: number; ventana: EstadoVentana & { resumen: string } }> {
     const settings = await this.agentSettings(operationId);
+    const agenda = settings.agenda || SCHEDULE_DEFAULT;
+    const ventana = { ...estadoVentana(agenda, this.clockNow()), resumen: resumenSchedule(agenda) };
     return {
       settings,
+      ventana,
       running: this.agentRunning.has(operationId),
       lastCycle: this.agentLastCycle.get(operationId) ?? null,
       scheduler: { enabled: process.env.AGENT_SCHEDULER !== 'false', intervalSec: Math.max(30, Number(process.env.AGENT_INTERVAL_SEC || 120)) },
@@ -3914,6 +3935,12 @@ export class WmsFacade {
     if (this.agentRunning.has(operationId)) return { skipped: 'ciclo en curso' };
     const settings = await this.agentSettings(operationId);
     if (settings.paused && !opts?.force) return { skipped: 'agente en pausa' };
+    // Ventana horaria. "Evaluar ahora" (force) la salta: si una persona lo pide
+    // expresamente, el horario no es quien manda.
+    const ventana = estadoVentana(settings.agenda || SCHEDULE_DEFAULT, this.clockNow());
+    if (!ventana.dentro && !opts?.force && (settings.agenda?.alcance || 'llm') === 'todo') {
+      return { skipped: 'fuera de la ventana horaria' };
+    }
     this.agentRunning.add(operationId);
     const startedAt = this.clockNow();
     try {
@@ -3921,7 +3948,9 @@ export class WmsFacade {
       // Orden de ejecución de las bandejas de los operarios (courier, SLA, instrucciones, tipo).
       try { this.prioritiesAt.set(operationId, Date.now()); await this.recomputeAssignmentPriorities(operationId); } catch { /* best-effort */ }
       let llm: { ran: boolean; text?: string | null; actions?: number; error?: string | null } = { ran: false };
-      if (settings.llmPlanning) llm = await this.agentLlmPlanning(operationId, settings);
+      // El LLM solo se consulta dentro de la ventana: es el gasto que se quiere acotar.
+      if (settings.llmPlanning && (ventana.dentro || opts?.force)) llm = await this.agentLlmPlanning(operationId, settings);
+      else if (settings.llmPlanning) llm = { ran: false, error: 'fuera de la ventana horaria' };
       const notificadas = await this.notifyAgentAlerts(operationId, settings, startedAt);
       const summary = { ...barrido, llm: llm.ran, llmActions: llm.actions ?? 0, notificadas, by: opts?.by || 'scheduler' };
       this.agentLastCycle.set(operationId, { at: this.clockNow(), summary });
@@ -3970,7 +3999,8 @@ export class WmsFacade {
     };
     const res = await askCopilotAgent(cred, sys, [{ role: 'user', content: 'Ejecuta el ciclo de planificación de la bodega ahora.' }], [...COPILOT_TOOLS, ...COPILOT_ACTION_TOOLS], exec);
     await this.journal(operationId, 'cycle', 'agente', `Planificación LLM: ${res.text ? res.text.slice(0, 400) : 'sin respuesta'}${res.error ? ' (error: ' + res.error + ')' : ''}`, { llm: true, actions, proposed: pendingActions.length, toolsUsed: res.toolsUsed });
-    for (const p of pendingActions) await this.journal(operationId, 'decision', 'agente', `[propuesta] ${p.resumen || (p.accion + ' ' + p.orden)}`, { pending: p });
+    for (const p of pendingActions) await this.journal(operationId, 'decision', 'agente', `[propuesta] ${p.resumen || (p.accion + ' ' + p.orden)}`,
+      { pending: p, accion: { estado: 'propuesta', etiqueta: p.resumen || String(p.accion), regla: 'Planificación con IA', reglaKey: 'llm', herramienta: String(p.accion || ''), entidad: p.orden ? String(p.orden) : null, cliente: (p as any).sellerId || null, resultado: 'esperando confirmación' } });
     return { ran: true, text: res.text, actions, error: res.error ?? null };
   }
 

@@ -722,6 +722,7 @@ export class PrismaCopilotSettingsRepository implements CopilotSettingsRepositor
       maxActionsPerCycle: r.maxActionsPerCycle ?? 20, maxActionsPerHour: r.maxActionsPerHour ?? 100,
       notifyEmail: r.notifyEmail ?? null, notifyWebhookUrl: r.notifyWebhookUrl ?? null,
       llmPlanning: r.llmPlanning ?? false, llmEveryMin: r.llmEveryMin ?? 15, maxLlmCallsPerDay: r.maxLlmCallsPerDay ?? 100,
+      agenda: (r.agenda as any) ?? null,
     } : null;
   }
   async save(s: CopilotSettings): Promise<void> {
@@ -736,6 +737,7 @@ export class PrismaCopilotSettingsRepository implements CopilotSettingsRepositor
     if (s.llmPlanning != null) data.llmPlanning = s.llmPlanning;
     if (s.llmEveryMin != null) data.llmEveryMin = s.llmEveryMin;
     if (s.maxLlmCallsPerDay != null) data.maxLlmCallsPerDay = s.maxLlmCallsPerDay;
+    if (s.agenda !== undefined) data.agenda = s.agenda as any;
     await this.db.copilotSetting.upsert({ where: { operationId: s.operationId }, create: { operationId: s.operationId, ...data }, update: data });
   }
 }

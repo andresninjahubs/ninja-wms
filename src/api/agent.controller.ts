@@ -67,7 +67,7 @@ export class AgentController {
   }
   @Patch('settings')
   @RequirePermission('master:manage')
-  updateSettings(@CurrentUser() user: User | null, @Body() body: { operationId?: string; actionMode?: 'confirm' | 'direct'; autonomyLevel?: number; shadowMode?: boolean; paused?: boolean; maxActionsPerCycle?: number; maxActionsPerHour?: number; notifyEmail?: string | null; notifyWebhookUrl?: string | null; llmPlanning?: boolean; llmEveryMin?: number; maxLlmCallsPerDay?: number }) {
+  updateSettings(@CurrentUser() user: User | null, @Body() body: { operationId?: string; actionMode?: 'confirm' | 'direct'; autonomyLevel?: number; shadowMode?: boolean; paused?: boolean; maxActionsPerCycle?: number; maxActionsPerHour?: number; notifyEmail?: string | null; notifyWebhookUrl?: string | null; llmPlanning?: boolean; llmEveryMin?: number; maxLlmCallsPerDay?: number; agenda?: unknown }) {
     const { operationId, ...patch } = body || {};
     return this.wms.updateAgentSettings(actorOperation(user, operationId), patch as any, actorOf(user));
   }

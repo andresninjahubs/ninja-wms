@@ -1,8 +1,9 @@
 /* Panel de administración del WMS — CONECTADO a la API (mismo origen). */
 (function(){
   "use strict";
-  var $=function(s){return document.querySelector(s);};
-  var $$=function(s){return Array.prototype.slice.call(document.querySelectorAll(s));};
+  // Con raíz opcional: buscar dentro de un elemento, no solo en todo el documento.
+  var $=function(s,raiz){return (raiz||document).querySelector(s);};
+  var $$=function(s,raiz){return Array.prototype.slice.call((raiz||document).querySelectorAll(s));};
   var API=location.origin;
 
   var token=null, me=null, role=null, op=null, seller=null;
@@ -6532,7 +6533,7 @@
     if(!op)return;
     var ev=$('#agt-eval');
     if(ev)ev.onclick=function(){ev.disabled=true;api('/agent/sweep',{method:'POST',body:{operationId:op}}).then(function(r){ev.disabled=false;var b=r&&r.barrido;toast(r&&r.skipped?('Ciclo omitido: '+r.skipped):(b?('Ciclo: '+b.nuevas+' alerta(s) nueva(s), '+b.ejecutadas+' ejecutada(s), '+b.propuestas+' propuesta(s), '+b.sombra+' en sombra'):'Ciclo ejecutado'));renderAgente();}).catch(function(e){ev.disabled=false;toast(e.message);});};
-    api('/agent/status?operationId='+encodeURIComponent(op)).then(paintAgentStatus).catch(function(){});
+    api('/agent/status?operationId='+encodeURIComponent(op)).then(function(st){ paintAgentStatus(st); paintAgentAgenda(st); }).catch(function(){});
     api('/agent/rules?'+agtScope()).then(paintAgentRules).catch(function(){});
     api('/agent/alerts?'+agtScope()).then(paintAgentAlerts).catch(function(){});
     api('/agent/instructions?operationId='+encodeURIComponent(op)).then(paintAgentInstructions).catch(function(){});
@@ -6561,6 +6562,99 @@
       api('/agent/settings',{method:'PATCH',body:body}).then(function(){toast('Ajustes del agente guardados');renderAgente();}).catch(function(e){toast(e.message);});
     });
   }
+
+  // ---- Ventanas horarias del agente ----------------------------------------
+  // El agente barre reglas cada pocos minutos: eso es determinista y gratis. Lo
+  // que cuesta es consultar al LLM, y no siempre se quiere corriendo de
+  // madrugada o un domingo. Acá se define cuándo puede.
+  var AGW_DIAS=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  var AGW_TZ=['America/Santiago','America/Lima','America/Bogota','America/Mexico_City','America/Argentina/Buenos_Aires','America/Sao_Paulo','Europe/Madrid','UTC'];
+  var AGW=null; // borrador en edición
+
+  function agwFila(v,i,canEdit){
+    return '<div class="agw" data-i="'+i+'">'
+      +'<div class="fld" style="min-width:210px"><label>Días</label><div class="agw-dias">'
+      + AGW_DIAS.map(function(n,d){ return '<button type="button" class="agw-dia'+(v.dias.indexOf(d)>=0?' on':'')+'" data-dia="'+d+'"'+(canEdit?'':' disabled')+'>'+n+'</button>'; }).join('')
+      +'</div></div>'
+      +'<div class="fld"><label>Desde</label><input type="time" class="agw-desde" value="'+esc(v.desde)+'"'+(canEdit?'':' disabled')+' style="width:120px"></div>'
+      +'<div class="fld"><label>Hasta</label><input type="time" class="agw-hasta" value="'+esc(v.hasta)+'"'+(canEdit?'':' disabled')+' style="width:120px"></div>'
+      +'<span class="hint" style="align-self:center">'+(agwCruza(v)?'cruza la medianoche':'')+'</span>'
+      +(canEdit?'<button class="mini agw-del" data-del="'+i+'">Quitar</button>':'')
+      +'</div>';
+  }
+  function agwCruza(v){ return String(v.hasta||'') <= String(v.desde||''); }
+
+  /**
+   * La próxima apertura se muestra en la hora de la OPERACIÓN, no en la del
+   * navegador: si configuraste 08:00 en Santiago, tiene que decir 08:00 aunque
+   * estés mirando el panel desde Madrid.
+   */
+  function agwHoraLocal(iso,tz){
+    try{
+      return new Date(iso).toLocaleString('es-CL',{timeZone:tz,weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})+' ('+tz+')';
+    }catch(e){ return fmtDate(iso); }
+  }
+
+  function paintAgentAgenda(st){
+    var box=$('#agt-agenda'); if(!box||!st)return;
+    var canEdit=can('master');
+    AGW=JSON.parse(JSON.stringify((st.settings&&st.settings.agenda)||{activo:false,tz:'America/Santiago',alcance:'llm',ventanas:[]}));
+    if(!AGW.ventanas)AGW.ventanas=[];
+    var v=st.ventana||{};
+    var estado=AGW.activo
+      ? '<div class="agw-estado '+(v.dentro?'on':'off')+'">'+(v.dentro?'Dentro de ventana — el agente puede consultar al LLM':'Fuera de ventana'+(v.proximaAperturaIso?' — abre '+esc(agwHoraLocal(v.proximaAperturaIso,AGW.tz)):''))+'</div>'
+      : '<div class="agw-estado on">Sin restricción horaria — el agente puede consultar al LLM a cualquier hora</div>';
+
+    box.innerHTML=estado
+      +'<div class="form" style="gap:10px">'
+      +'<label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="agw-on" '+(AGW.activo?'checked':'')+(canEdit?'':' disabled')+' style="width:auto"> <b>Restringir el agente a ventanas horarias</b></label>'
+      +'<div id="agw-cfg"'+(AGW.activo?'':' hidden')+'>'
+      +'<div class="row2"><div class="fld"><label>Zona horaria de la operación</label><select id="agw-tz"'+(canEdit?'':' disabled')+'>'
+      + AGW_TZ.concat(AGW_TZ.indexOf(AGW.tz)<0?[AGW.tz]:[]).map(function(z){return '<option value="'+esc(z)+'"'+(z===AGW.tz?' selected':'')+'>'+esc(z)+'</option>';}).join('')
+      +'</select><span class="hint">Las horas de abajo son de acá, no UTC. El horario de verano se ajusta solo.</span></div>'
+      +'<div class="fld"><label>Fuera de la ventana</label><select id="agw-alcance"'+(canEdit?'':' disabled')+'>'
+      +'<option value="llm"'+(AGW.alcance!=='todo'?' selected':'')+'>Pausar solo las consultas al LLM (recomendado)</option>'
+      +'<option value="todo"'+(AGW.alcance==='todo'?' selected':'')+'>Pausar el agente completo</option>'
+      +'</select><span class="hint">Con la primera opción el barrido de reglas y las alertas siguen corriendo siempre: son gratis y cuidan la operación.</span></div></div>'
+      +'<div id="agw-list" style="margin-top:12px">'+(AGW.ventanas.length?AGW.ventanas.map(function(w,i){return agwFila(w,i,canEdit);}).join(''):'<div class="muted" style="padding:8px 2px">Sin ventanas. Agrega al menos una: con la restricción activa y ninguna ventana, el agente no consultaría nunca.</div>')+'</div>'
+      +(canEdit?'<button class="btn" id="agw-add" style="margin-top:4px">＋ Agregar ventana</button>':'')
+      +'</div>'
+      +(canEdit?'<div class="acts"><span class="hint">«Ejecutar ciclo ahora» ignora el horario: si lo pides tú, corre.</span><button class="btn pri" id="agw-save">Guardar ventanas</button></div>':'')
+      +'</div>';
+
+    function leer(){
+      AGW.activo=$('#agw-on').checked;
+      if($('#agw-tz'))AGW.tz=$('#agw-tz').value;
+      if($('#agw-alcance'))AGW.alcance=$('#agw-alcance').value;
+      AGW.ventanas=$$('#agw-list .agw').map(function(el){
+        return {
+          dias:$$('.agw-dia.on',el).map(function(b){return parseInt(b.getAttribute('data-dia'),10);}),
+          desde:$('.agw-desde',el).value, hasta:$('.agw-hasta',el).value,
+        };
+      });
+    }
+    function repintar(){ leer(); paintAgentAgenda({settings:{agenda:AGW},ventana:st.ventana}); }
+
+    if($('#agw-on'))$('#agw-on').addEventListener('change',function(){
+      leer();
+      if(AGW.activo&&!AGW.ventanas.length)AGW.ventanas=[{dias:[1,2,3,4,5],desde:'08:00',hasta:'20:00'}];
+      paintAgentAgenda({settings:{agenda:AGW},ventana:st.ventana});
+    });
+    if($('#agw-add'))$('#agw-add').addEventListener('click',function(){ leer(); AGW.ventanas.push({dias:[1,2,3,4,5],desde:'08:00',hasta:'20:00'}); paintAgentAgenda({settings:{agenda:AGW},ventana:st.ventana}); });
+    $$('#agw-list [data-del]').forEach(function(b){ b.addEventListener('click',function(){ leer(); AGW.ventanas.splice(parseInt(b.getAttribute('data-del'),10),1); paintAgentAgenda({settings:{agenda:AGW},ventana:st.ventana}); }); });
+    $$('#agw-list .agw-dia').forEach(function(b){ b.addEventListener('click',function(){ b.classList.toggle('on'); leer(); }); });
+    $$('#agw-list .agw-desde, #agw-list .agw-hasta').forEach(function(x){ x.addEventListener('change',repintar); });
+    if($('#agw-tz'))$('#agw-tz').addEventListener('change',leer);
+    if($('#agw-alcance'))$('#agw-alcance').addEventListener('change',leer);
+
+    if($('#agw-save'))$('#agw-save').addEventListener('click',function(){
+      leer();
+      api('/agent/settings',{method:'PATCH',body:{operationId:op,agenda:AGW}})
+        .then(function(){ toast('Ventanas horarias guardadas'); renderAgente(); })
+        .catch(function(e){ toast(e.message); });
+    });
+  }
+
   function paintAgentInstructions(list){
     var box=$('#agt-instr'); if(!box)return; list=list||[];
     var canEdit=can('master');
@@ -6570,10 +6664,78 @@
     $$('#agt-instr [data-agtretire]').forEach(function(b){b.addEventListener('click',function(){api('/agent/instructions/'+encodeURIComponent(b.getAttribute('data-agtretire'))+'/retire',{method:'POST',body:{operationId:op}}).then(function(){toast('Instrucción retirada');renderAgente();}).catch(function(e){toast(e.message);});});});
   }
   var AGT_KIND={cycle:'Ciclo',decision:'Decisión',instruction:'Instrucción',outcome:'Resultado',tools:'Consulta',note:'Nota'};
+  var AGJ_EST={
+    ejecutada:{t:'Ejecutada',c:'#0E9F6E'},
+    propuesta:{t:'Propuesta',c:'#B45309'},
+    sombra:{t:'Sombra',c:'#6366F1'},
+    error:{t:'Falló',c:'#DC2626'},
+  };
+
+  /**
+   * Diario del agente, agrupado por ciclo. Cada ciclo es una "respuesta" del
+   * agente y lleva su tabla de acciones: qué hizo, sobre qué, y si lo ejecutó,
+   * lo dejó propuesto, lo simuló en sombra o falló. Antes esto era una lista
+   * plana de frases donde no se distinguía una cosa de la otra.
+   *
+   * En móvil la tabla se convierte en tarjetas por CSS (cada celda lleva su
+   * etiqueta): no depende de JavaScript ni del transformador global de tablas.
+   */
   function paintAgentJournal(list){
-    var box=$('#agt-journal'); if(!box)return; list=(list||[]).filter(function(e){return e.kind!=='tools';});
+    var box=$('#agt-journal'); if(!box)return;
+    list=(list||[]).filter(function(e){return e.kind!=='tools';});
     if(!list.length){box.innerHTML='<div class="muted" style="padding:6px 2px">El diario se llena con cada ciclo del agente: qué evaluó, qué decidió y qué habría hecho en modo sombra.</div>';return;}
-    box.innerHTML='<table class="m-skip" style="font-size:12.5px"><thead><tr><th>Cuándo</th><th>Tipo</th><th>Qué pasó</th></tr></thead><tbody>'+list.map(function(e){return '<tr><td class="muted" style="white-space:nowrap">'+esc(fmtDate(e.at))+'</td><td><span class="chip st-'+(e.kind==='decision'?'RESERVED':e.kind==='outcome'?'QUARANTINE':'AVAILABLE')+'"><span class="dot"></span>'+esc(AGT_KIND[e.kind]||e.kind)+'</span></td><td>'+esc(e.text)+'</td></tr>';}).join('')+'</tbody></table>';
+
+    // La lista viene de más nueva a más vieja. Las acciones se anotan ANTES del
+    // resumen del ciclo, así que caen justo después de él en este orden.
+    var bloques=[], actual=null;
+    list.forEach(function(e){
+      if(e.kind==='cycle'){ actual={ciclo:e,acciones:[],notas:[]}; bloques.push(actual); return; }
+      if(!actual){ actual={ciclo:null,acciones:[],notas:[]}; bloques.push(actual); }
+      var a=e.data&&e.data.accion;
+      if(a)actual.acciones.push({at:e.at,a:a});
+      else actual.notas.push(e);
+    });
+
+    box.innerHTML=bloques.map(function(b){
+      var c=b.ciclo, sum=(c&&c.data)||{};
+      var chips=[];
+      if(c){
+        if(sum.nuevas)chips.push(['alerta(s) nueva(s)',sum.nuevas]);
+        if(sum.ejecutadas)chips.push(['ejecutada(s)',sum.ejecutadas]);
+        if(sum.propuestas)chips.push(['propuesta(s)',sum.propuestas]);
+        if(sum.sombra)chips.push(['en sombra',sum.sombra]);
+        if(sum.notificadas)chips.push(['notificada(s)',sum.notificadas]);
+      }
+      var cab='<div class="agj-h">'
+        +'<span class="agj-when">'+esc(c?fmtDate(c.at):'ciclo en curso')+'</span>'
+        +'<span class="agj-tag'+(c?'':' pend')+'">'+(c?'Ciclo':'En curso')+'</span>'
+        +(c&&sum.llm?'<span class="agj-tag llm">IA</span>':'')
+        +(c?'<span class="agj-by">'+(String(sum.by||'')==='scheduler'?'automático':'a mano')+'</span>':'')
+        +'</div>'
+        +(c?'<div class="agj-txt">'+esc(c.text)+'</div>':'')
+        +(chips.length?'<div class="agj-kpis">'+chips.map(function(k){return '<span><b>'+k[1]+'</b> '+esc(k[0])+'</span>';}).join('')+'</div>':'');
+
+      var tabla;
+      if(b.acciones.length){
+        tabla='<table class="agj-t m-skip"><thead><tr><th>Acción</th><th>Regla</th><th>Sobre</th><th>Estado</th><th>Resultado</th></tr></thead><tbody>'
+          +b.acciones.map(function(x){
+            var e=AGJ_EST[x.a.estado]||{t:x.a.estado||'—',c:'var(--ink-3)'};
+            return '<tr>'
+              +'<td data-label="Acción"><b>'+esc(x.a.etiqueta||x.a.herramienta||'—')+'</b></td>'
+              +'<td data-label="Regla">'+esc(x.a.regla||'—')+'</td>'
+              +'<td data-label="Sobre">'+esc(x.a.entidad||'—')+'</td>'
+              +'<td data-label="Estado"><span class="agj-est" style="color:'+e.c+'">'+esc(e.t)+'</span></td>'
+              +'<td data-label="Resultado" class="agj-res">'+esc(x.a.resultado||'—')+'</td>'
+              +'</tr>';
+          }).join('')+'</tbody></table>';
+      } else {
+        tabla='<div class="agj-vacio">Sin acciones ejecutadas ni propuestas en este ciclo.</div>';
+      }
+      var notas=b.notas.length?'<div class="agj-notas">'+b.notas.map(function(n){
+        return '<div><span class="agj-nk">'+esc(AGT_KIND[n.kind]||n.kind)+'</span> '+esc(n.text)+'</div>';
+      }).join('')+'</div>':'';
+      return '<div class="agj">'+cab+tabla+notas+'</div>';
+    }).join('');
   }
   function paintAgentAlerts(d){
     var box=$('#agt-alerts');var al=(d&&d.abiertas)||[];
@@ -6619,13 +6781,13 @@
       } else {
         actSel='<label style="font-size:11px;color:var(--ink-2)">Acción<br><span class="muted" style="display:inline-block;margin-top:8px;font-size:11.5px">Solo avisar</span></label>';
       }
-      return '<div style="display:flex;gap:14px;align-items:flex-start;padding:12px 2px;border-bottom:1px solid var(--line)">'
+      return '<div class="agr" style="display:flex;gap:14px;align-items:flex-start;padding:12px 2px;border-bottom:1px solid var(--line)">'
         +'<input type="checkbox" data-agten="'+esc(r.ruleKey)+'"'+(r.enabled?' checked':'')+' style="width:20px;height:20px;flex:none;margin-top:2px;accent-color:var(--primary)">'
         +'<div style="flex:1;min-width:0">'
         +'<div style="font-weight:600;font-size:13.5px">'+esc(r.name)+' <span class="rolechip" style="background:var(--surface-3);color:'+sv.c+';font-size:10px">'+sv.t+'</span></div>'
         +'<div class="muted" style="font-size:12px">'+esc(r.description)+(r.autoAction?' · <b style="color:var(--ink-2)">Acción:</b> '+esc(r.autoAction.label):'')+'</div>'
         +'</div>'
-        +'<div style="flex:none;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;justify-content:flex-end">'
+        +'<div class="agr-ctl" style="flex:none;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;justify-content:flex-end">'
         +'<label style="font-size:11px;color:var(--ink-2)">Umbral<br><span style="display:inline-flex;align-items:center;gap:5px;margin-top:3px"><input type="number" min="0" value="'+r.threshold+'" data-agtth="'+esc(r.ruleKey)+'" style="width:66px;padding:5px 7px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2);color:var(--ink)"><span class="muted" style="font-size:11px">'+esc(r.unit)+'</span></span></label>'
         +'<label style="font-size:11px;color:var(--ink-2)">Enfriamiento<br><span style="display:inline-flex;align-items:center;gap:5px;margin-top:3px"><input type="number" min="0" value="'+r.cooldownMin+'" data-agtcd="'+esc(r.ruleKey)+'" style="width:66px;padding:5px 7px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2);color:var(--ink)"><span class="muted" style="font-size:11px">min</span></span></label>'
         +actSel

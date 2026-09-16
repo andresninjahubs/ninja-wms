@@ -2,6 +2,7 @@
  * Puertos (interfaces) que el dominio necesita del mundo exterior.
  * Las implementaciones concretas (Prisma, en-memoria) viven en /infra.
  */
+import type { AgentSchedule } from './agent-schedule';
 import { AiDashboard } from './ai-dashboard';
 import {
   Announcement,
@@ -317,6 +318,8 @@ export interface CopilotSettings {
   llmPlanning?: boolean; // ciclo de planificación con LLM (def false)
   llmEveryMin?: number; // frecuencia mínima del ciclo LLM (def 15)
   maxLlmCallsPerDay?: number; // presupuesto (def 100)
+  /** Ventanas horarias en las que el agente puede consultar al LLM (ver agent-schedule.ts). */
+  agenda?: AgentSchedule | null;
 }
 export interface CopilotSettingsRepository {
   get(operationId: string): Promise<CopilotSettings | null>;

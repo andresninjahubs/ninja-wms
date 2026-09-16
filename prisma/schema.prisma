@@ -871,6 +871,8 @@ model CopilotSetting {
   llmPlanning       Boolean  @default(false)
   llmEveryMin       Int      @default(15)
   maxLlmCallsPerDay Int      @default(100)
+  /// Ventanas horarias del agente (JSON: { activo, tz, alcance, ventanas[] }).
+  agenda            Json?
 }
 
 /// Diario del agente: memoria persistente (ciclos, decisiones, instrucciones, resultados).
