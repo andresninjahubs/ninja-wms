@@ -87,8 +87,8 @@
     }).join("");
   }
   var NAV_BY_ROLE={
-    PLATFORM_ADMIN:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","reports","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
-    ADMIN:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","reports","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","branding","clients","users"],
+    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","reports","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
+    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","reports","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","branding","clients","users"],
     // Sin "billing": la facturación es del administrador de la operación, no del supervisor.
     SUPERVISOR:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","reports","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan"],
     OPERATOR:["dashboard","copilot","inventory","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","voicechannel"],
@@ -741,6 +741,362 @@
       return '<div class="mtile"><div class="ml">'+x.l+'</div><div class="mv">'+fmtInt(mv.current)+'</div>'
         +'<div class="mdelta">'+deltaChip(mv)+'<span class="prev">ant.: '+fmtInt(mv.previous)+'</span></div></div>';
     }).join("");
+  }
+
+  // ===== Dashboard AI: tableros a medida armados con el LLM =====================
+  // El servidor guarda la ESPECIFICACIÓN de cada widget (qué preguntar y cómo
+  // mostrarlo), no los datos. Acá se dibuja esa especificación y se piden los
+  // datos aparte, cada 30 s: por eso el tablero siempre está en vivo.
+  var AID={ list:[], cur:null, data:{}, timer:null, hist:[], sel:null };
+  var AID_MS=30000;
+
+  function aidApi(path,opts){ return api('/ai-dashboards'+path,opts); }
+
+  function renderAiDash(){
+    if(!$("#aid-canvas"))return;
+    aidApi('?operationId='+encodeURIComponent(op)).then(function(list){
+      AID.list=list||[];
+      var sel=$("#aid-sel");
+      sel.innerHTML=AID.list.map(function(d){return '<option value="'+esc(d.id)+'">'+esc(d.nombre)+'</option>';}).join('')
+        ||'<option value="">(sin tableros)</option>';
+      if(AID.list.length){
+        var id=(AID.cur&&AID.list.some(function(d){return d.id===AID.cur.id;}))?AID.cur.id:AID.list[0].id;
+        sel.value=id;
+        aidLoad(id);
+      } else {
+        AID.cur=null; aidPaint();
+      }
+    }).catch(function(e){ toast(e.message); });
+  }
+  function aidLoad(id){
+    return aidApi('/'+id+'?operationId='+encodeURIComponent(op)).then(function(d){
+      AID.cur=d; aidPaint(); return aidData();
+    }).catch(function(e){ toast(e.message); });
+  }
+  function aidData(){
+    if(!AID.cur)return Promise.resolve();
+    return aidApi('/'+AID.cur.id+'/data?operationId='+encodeURIComponent(op)+(seller?('&sellerId='+encodeURIComponent(seller)):''))
+      .then(function(r){ AID.data=r.widgets||{}; aidPaintData(); })
+      .catch(function(){});
+  }
+  function aidTick(){
+    clearTimeout(AID.timer);
+    if(!document.querySelector('.page[data-pg="aidash"].on'))return; // solo mientras se ve
+    AID.timer=setTimeout(function(){ aidData().then(aidTick); }, AID_MS);
+  }
+
+  var AID_EJEMPLOS=[
+    'Muéstrame las órdenes atrasadas y quién las tiene asignadas',
+    'Un KPI con las unidades en stock y otro con las órdenes en riesgo',
+    'Tabla de los SKUs por quebrar stock, los 10 peores',
+    'Barras con la carga de trabajo por operario',
+    'Cuánto llevo facturado este mes por cliente'
+  ];
+  function aidPaint(){
+    var c=$("#aid-canvas"); if(!c)return;
+    if(!AID.cur){
+      c.innerHTML='<div class="aid-blank"><b>Arma tu primer tablero</b>'
+        +'Pídelo en tus palabras y se construye solo, con datos en vivo de tu bodega.'
+        +'<div class="aid-chips">'+AID_EJEMPLOS.map(function(x){return '<button data-ej="'+esc(x)+'">'+esc(x)+'</button>';}).join('')+'</div></div>';
+      $$("#aid-canvas [data-ej]").forEach(function(b){b.addEventListener('click',function(){
+        $("#aid-q").value=b.getAttribute('data-ej'); aidCrearYEnviar();
+      });});
+      return;
+    }
+    var ws=AID.cur.widgets||[];
+    if(!ws.length){
+      c.innerHTML='<div class="aid-blank"><b>«'+esc(AID.cur.nombre)+'» está vacío</b>'
+        +'Escribe arriba lo que quieres ver, o usa ＋ Widget para armarlo a mano.'
+        +'<div class="aid-chips">'+AID_EJEMPLOS.map(function(x){return '<button data-ej="'+esc(x)+'">'+esc(x)+'</button>';}).join('')+'</div></div>';
+      $$("#aid-canvas [data-ej]").forEach(function(b){b.addEventListener('click',function(){
+        $("#aid-q").value=b.getAttribute('data-ej'); aidEnviar();
+      });});
+      return;
+    }
+    c.innerHTML=ws.map(function(w){
+      return '<div class="aid-w'+(AID.sel===w.id?' sel':'')+'" data-w="'+esc(w.id)+'" style="grid-column:'+(w.x+1)+' / span '+w.ancho+';grid-row:'+(w.y+1)+' / span '+w.alto+'">'
+        +'<div class="wh" data-drag="'+esc(w.id)+'"><span class="wt">'+esc(w.titulo)+'</span>'
+        +'<span class="wa"><button data-wedit="'+esc(w.id)+'" title="Editar">✎</button>'
+        +'<button data-wdup="'+esc(w.id)+'" title="Duplicar">⧉</button>'
+        +'<button data-winfo="'+esc(w.id)+'" title="¿De dónde sale este dato?">ⓘ</button>'
+        +'<button data-wdel="'+esc(w.id)+'" title="Eliminar">✕</button></span></div>'
+        +'<div class="wb" id="aidb-'+esc(w.id)+'"><div class="aid-empty">Cargando…</div></div>'
+        +(w.display&&w.display.nota?'<div class="wfoot">'+esc(w.display.nota)+'</div>':'')
+        +'<div class="rz" data-rz="'+esc(w.id)+'"></div></div>';
+    }).join('');
+    aidWire();
+    aidPaintData();
+  }
+
+  function aidFmt(v,fmt,unidad){
+    if(v==null||v==='')return '—';
+    if(fmt==='dinero')return money(Number(v)||0,'CLP');
+    if(fmt==='porcentaje')return (Math.round(Number(v)*10)/10)+'%';
+    if(fmt==='fecha')return fmtDate(v);
+    if(fmt==='numero'||typeof v==='number')return fmtInt(Math.round(Number(v)*100)/100)+(unidad?(' '+unidad):'');
+    return String(v);
+  }
+  function aidPaintData(){
+    (AID.cur&&AID.cur.widgets||[]).forEach(function(w){
+      var host=$("#aidb-"+w.id); if(!host)return;
+      var d=AID.data[w.id];
+      if(w.tipo==='texto'){ host.innerHTML='<div style="font-size:13px;line-height:1.5">'+esc((w.display&&w.display.texto)||'')+'</div>'; return; }
+      if(!d){ host.innerHTML='<div class="aid-empty">Cargando…</div>'; return; }
+      if(d.error){ host.innerHTML='<div class="aid-empty"><span class="aid-err">No se pudo consultar: '+esc(d.error)+'</span></div>'; return; }
+      var filas=d.filas||[];
+      if(w.tipo==='kpi'){
+        host.innerHTML='<div class="aid-kpi"><div class="n">'+esc(aidFmt(d.valor,(w.display&&w.display.formato)||'numero'))+'</div>'
+          +((w.display&&w.display.unidad)?'<div class="u">'+esc(w.display.unidad)+'</div>':'')+'</div>';
+        return;
+      }
+      if(!filas.length){ host.innerHTML='<div class="aid-empty">Sin datos para mostrar todavía.</div>'; return; }
+      if(w.tipo==='tabla'){
+        var cols=(w.display&&w.display.columnas&&w.display.columnas.length)
+          ? w.display.columnas
+          : Object.keys(filas[0]).slice(0,6).map(function(k){return {campo:k,titulo:k};});
+        host.innerHTML='<table class="aid-tbl"><thead><tr>'+cols.map(function(c){return '<th>'+esc(c.titulo||c.campo)+'</th>';}).join('')+'</tr></thead><tbody>'
+          +filas.slice(0,200).map(function(f){
+            return '<tr>'+cols.map(function(c){
+              var v=f[c.campo]; var num=typeof v==='number';
+              return '<td'+(num?' class="num"':'')+'>'+esc(aidFmt(v,c.formato))+'</td>';
+            }).join('')+'</tr>';
+          }).join('')+'</tbody></table>';
+        return;
+      }
+      if(w.tipo==='barras'||w.tipo==='lista'){
+        var kf=(w.transform&&w.transform.groupBy)?'clave':(Object.keys(filas[0])[0]);
+        var vf=(filas[0].valor!==undefined)?'valor':(Object.keys(filas[0]).filter(function(k){return typeof filas[0][k]==='number';})[0]);
+        var max=Math.max.apply(null,[1].concat(filas.map(function(f){return Number(f[vf])||0;})));
+        host.innerHTML=filas.slice(0,40).map(function(f){
+          var v=Number(f[vf])||0;
+          return '<div class="aid-row"><span class="k">'+esc(String(f[kf]!=null?f[kf]:'—'))+'</span>'
+            +(w.tipo==='barras'?'<span class="b"><i style="width:'+Math.max(2,v/max*100)+'%'+((w.display&&w.display.color)?';background:'+esc(w.display.color):'')+'"></i></span>':'')
+            +'<span class="v">'+esc(aidFmt(v,(w.display&&w.display.formato)||'numero'))+'</span></div>';
+        }).join('');
+        return;
+      }
+      if(w.tipo==='lineas'){
+        var vf2=(filas[0].valor!==undefined)?'valor':(Object.keys(filas[0]).filter(function(k){return typeof filas[0][k]==='number';})[0]);
+        var vals=filas.map(function(f){return Number(f[vf2])||0;}), mx=Math.max.apply(null,[1].concat(vals));
+        host.innerHTML='<div class="aid-spark">'+vals.slice(-60).map(function(v){
+          return '<i style="height:'+Math.max(3,v/mx*100)+'%"></i>';
+        }).join('')+'</div>';
+        return;
+      }
+      host.innerHTML='<div class="aid-empty">Tipo de widget no soportado.</div>';
+    });
+  }
+
+  // ---- Arrastrar, redimensionar y acciones por widget -------------------------
+  function aidWire(){
+    $$("#aid-canvas [data-wdel]").forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();
+      aidPatch([{op:'eliminar',id:b.getAttribute('data-wdel')}]);
+    });});
+    $$("#aid-canvas [data-wdup]").forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();
+      var w=aidW(b.getAttribute('data-wdup')); if(!w)return;
+      var copia=JSON.parse(JSON.stringify(w)); delete copia.id; copia.titulo=w.titulo+' (copia)'; copia.y=null;
+      aidPatch([{op:'agregar',widget:copia}]);
+    });});
+    $$("#aid-canvas [data-wedit]").forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();
+      aidEditor(aidW(b.getAttribute('data-wedit')));
+    });});
+    $$("#aid-canvas [data-winfo]").forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();
+      var w=aidW(b.getAttribute('data-winfo')); if(!w)return;
+      openModal('De dónde sale «'+esc(w.titulo)+'»',
+        '<p class="muted" style="margin:0 0 10px">Este widget consulta una fuente de <b>solo lectura</b> del WMS, con tus permisos y tu operación. No guarda datos: los vuelve a pedir cada 30 segundos.</p>'
+        +'<div class="kv"><span>Fuente</span><b>'+esc(w.source?w.source.tool:'—')+'</b></div>'
+        +(w.source&&w.source.path?'<div class="kv"><span>Campo</span><b>'+esc(w.source.path)+'</b></div>':'')
+        +(w.source&&w.source.args&&Object.keys(w.source.args).length?'<div class="kv"><span>Parámetros</span><b>'+esc(JSON.stringify(w.source.args))+'</b></div>':'')
+        +(w.transform?'<div class="kv"><span>Transformación</span><b>'+esc(JSON.stringify(w.transform))+'</b></div>':'')
+        +'<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn pri" id="m-ok">Cerrar</button></div>');
+      $("#m-ok").addEventListener('click',closeModal);
+    });});
+    $$("#aid-canvas [data-drag]").forEach(function(h){ aidDrag(h,'move'); });
+    $$("#aid-canvas [data-rz]").forEach(function(h){ aidDrag(h,'resize'); });
+  }
+  function aidW(id){ return (AID.cur&&AID.cur.widgets||[]).filter(function(w){return w.id===id;})[0]; }
+
+  /**
+   * Arrastre y redimensión sobre la grilla de 12 columnas. Se calcula en celdas,
+   * no en píxeles: así el resultado es el mismo en cualquier pantalla y lo que se
+   * guarda son coordenadas de grilla, no posiciones absolutas.
+   */
+  function aidDrag(handle,modo){
+    handle.addEventListener('mousedown',function(ev){
+      if(ev.button!==0)return;
+      if(window.innerWidth<=860)return; // en el teléfono todo va apilado
+      ev.preventDefault();
+      var id=handle.getAttribute('data-drag')||handle.getAttribute('data-rz');
+      var w=aidW(id); if(!w)return;
+      var canvas=$("#aid-canvas"), rect=canvas.getBoundingClientRect();
+      var colW=(rect.width-11*12)/12+12, rowH=52; // 40 px + 12 de gap
+      var x0=ev.clientX, y0=ev.clientY, ox=w.x, oy=w.y, ow=w.ancho, oh=w.alto;
+      var el=handle.closest('.aid-w');
+      canvas.classList.add('drag'); AID.sel=id; el.classList.add('sel');
+      function mover(e){
+        var dx=Math.round((e.clientX-x0)/colW), dy=Math.round((e.clientY-y0)/rowH);
+        if(modo==='move'){
+          w.x=Math.max(0,Math.min(12-ow,ox+dx)); w.y=Math.max(0,oy+dy);
+        } else {
+          w.ancho=Math.max(1,Math.min(12-w.x,ow+dx)); w.alto=Math.max(2,Math.min(24,oh+dy));
+        }
+        el.style.gridColumn=(w.x+1)+' / span '+w.ancho;
+        el.style.gridRow=(w.y+1)+' / span '+w.alto;
+      }
+      function soltar(){
+        document.removeEventListener('mousemove',mover); document.removeEventListener('mouseup',soltar);
+        canvas.classList.remove('drag');
+        if(w.x!==ox||w.y!==oy||w.ancho!==ow||w.alto!==oh){
+          aidPatch([{op:'mover',id:id,x:w.x,y:w.y,ancho:w.ancho,alto:w.alto}],true);
+        }
+      }
+      document.addEventListener('mousemove',mover); document.addEventListener('mouseup',soltar);
+    });
+  }
+
+  /** Guarda cambios hechos a mano; el servidor valida igual que al LLM. */
+  function aidPatch(ops,silencioso){
+    if(!AID.cur)return Promise.resolve();
+    return aidApi('/'+AID.cur.id,{method:'PATCH',body:{operationId:op,ops:ops}}).then(function(r){
+      AID.cur=r.dashboard;
+      if(r.rechazados&&r.rechazados.length)aidMensaje('',r.rechazados);
+      aidPaint(); return aidData();
+    }).catch(function(e){ toast(e.message); if(!silencioso)renderAiDash(); });
+  }
+
+  function aidMensaje(texto,rechazados){
+    var m=$("#aid-msg"); if(!m)return;
+    if(!texto&&!(rechazados||[]).length){ m.classList.add('hidden'); return; }
+    m.classList.remove('hidden');
+    m.innerHTML=(texto?esc(texto):'')
+      +((rechazados||[]).length?'<div class="bad" style="margin-top:6px">No pude hacer esto:</div><ul>'+rechazados.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>':'');
+  }
+
+  function aidCrearYEnviar(){
+    // Sin tablero todavía: se crea uno y recién ahí se le pide al modelo.
+    aidApi('',{method:'POST',body:{operationId:op,nombre:'Mi tablero'}}).then(function(d){
+      AID.cur=d; return renderAiDash();
+    }).then(function(){ aidEnviar(); });
+  }
+  function aidEnviar(){
+    var q=$("#aid-q").value.trim(); if(!q)return;
+    if(!AID.cur)return aidCrearYEnviar();
+    var btn=$("#aid-send"); btn.disabled=true; btn.textContent='Construyendo…';
+    aidMensaje('Pensando…');
+    aidApi('/'+AID.cur.id+'/chat',{method:'POST',body:{operationId:op,sellerId:seller||undefined,prompt:q,historial:AID.hist.slice(-6)}})
+      .then(function(r){
+        AID.hist.push({role:'user',content:q}); AID.hist.push({role:'assistant',content:r.mensaje||''});
+        AID.cur=r.dashboard||AID.cur;
+        aidMensaje(r.mensaje,r.rechazados);
+        $("#aid-q").value='';
+        aidPaint(); return aidData();
+      })
+      .catch(function(e){ aidMensaje('', [e.message]); })
+      .then(function(){ btn.disabled=false; btn.textContent='Construir'; });
+  }
+
+  /** Editor manual de un widget (o uno nuevo): sin pasar por el modelo. */
+  function aidEditor(w){
+    var nuevo=!w;
+    w=w||{tipo:'kpi',titulo:'',ancho:3,alto:3,source:{tool:'',args:{},path:''},transform:{},display:{}};
+    var tipos=['kpi','tabla','barras','lineas','lista','texto'];
+    aidApi('/capacidades').then(function(cap){
+      var fuentes=[]; (cap.areas||[]).forEach(function(a){ a.fuentes.forEach(function(f){ fuentes.push({area:a.area,tool:f.tool,desc:f.descripcion}); }); });
+      var opts=fuentes.map(function(f){return '<option value="'+esc(f.tool)+'"'+((w.source&&w.source.tool===f.tool)?' selected':'')+'>'+esc(f.area+' · '+f.tool)+'</option>';}).join('');
+      openModal(nuevo?'Nuevo widget':'Editar widget',
+        '<div class="form">'
+        +'<div class="row2"><div class="fld"><label>Título</label><input id="aw-t" value="'+esc(w.titulo||'')+'"></div>'
+        +'<div class="fld"><label>Tipo</label><select id="aw-tipo">'+tipos.map(function(t){return '<option value="'+t+'"'+(w.tipo===t?' selected':'')+'>'+t+'</option>';}).join('')+'</select></div></div>'
+        +'<div class="fld" id="aw-fuente-wrap"><label>Fuente de datos (solo lectura)</label><select id="aw-tool"><option value="">—</option>'+opts+'</select>'
+        +'<div class="hint" id="aw-desc"></div></div>'
+        +'<div class="row2"><div class="fld"><label>Campo dentro de la respuesta (opcional)</label><input id="aw-path" value="'+esc((w.source&&w.source.path)||'')+'" placeholder="Ej: items"></div>'
+        +'<div class="fld"><label>Agrupar por (opcional)</label><input id="aw-group" value="'+esc((w.transform&&w.transform.groupBy)||'')+'" placeholder="Ej: estado"></div></div>'
+        +'<div class="row2"><div class="fld"><label>Campo a sumar (opcional)</label><input id="aw-field" value="'+esc((w.transform&&w.transform.field)||'')+'" placeholder="Ej: unidades"></div>'
+        +'<div class="fld"><label>Operación</label><select id="aw-agg">'+['suma','conteo','promedio','maximo','minimo','primero'].map(function(a){return '<option value="'+a+'"'+((w.transform&&w.transform.agg)===a?' selected':'')+'>'+a+'</option>';}).join('')+'</select></div></div>'
+        +'<div class="row2"><div class="fld"><label>Ancho (1–12)</label><input id="aw-w" type="number" min="1" max="12" value="'+(w.ancho||3)+'"></div>'
+        +'<div class="fld"><label>Alto (2–24)</label><input id="aw-h" type="number" min="2" max="24" value="'+(w.alto||3)+'"></div></div>'
+        +'<div class="fld" id="aw-texto-wrap" style="display:none"><label>Texto</label><textarea id="aw-texto" rows="3" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);font-family:inherit">'+esc((w.display&&w.display.texto)||'')+'</textarea></div>'
+        +'<div class="fld"><label>Nota al pie (opcional)</label><input id="aw-nota" value="'+esc((w.display&&w.display.nota)||'')+'"></div>'
+        +'<div id="aw-err" style="color:var(--crit);font-size:12.5px;min-height:16px"></div>'
+        +'<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px"><button class="btn" id="m-no">Cancelar</button><button class="btn pri" id="aw-save">Guardar</button></div></div>', true);
+      function sync(){
+        var esTexto=$("#aw-tipo").value==='texto';
+        $("#aw-fuente-wrap").style.display=esTexto?'none':'';
+        $("#aw-texto-wrap").style.display=esTexto?'':'none';
+        var f=fuentes.filter(function(x){return x.tool===$("#aw-tool").value;})[0];
+        $("#aw-desc").textContent=f?f.desc:'';
+      }
+      $("#aw-tipo").addEventListener('change',sync); $("#aw-tool").addEventListener('change',sync); sync();
+      $("#m-no").addEventListener('click',closeModal);
+      $("#aw-save").addEventListener('click',function(){
+        var nw={
+          id: nuevo?undefined:w.id,
+          tipo:$("#aw-tipo").value, titulo:$("#aw-t").value.trim()||'Sin título',
+          ancho:Number($("#aw-w").value)||3, alto:Number($("#aw-h").value)||3,
+          x: nuevo?0:w.x, y: nuevo?null:w.y,
+          source: $("#aw-tipo").value==='texto'?null:{tool:$("#aw-tool").value,args:(w.source&&w.source.args)||{},path:$("#aw-path").value.trim()},
+          transform:{groupBy:$("#aw-group").value.trim()||undefined,field:$("#aw-field").value.trim()||undefined,agg:$("#aw-agg").value},
+          display:{texto:$("#aw-texto")?$("#aw-texto").value:undefined,nota:$("#aw-nota").value.trim()||undefined}
+        };
+        aidApi('/'+AID.cur.id,{method:'PATCH',body:{operationId:op,ops:[nuevo?{op:'agregar',widget:nw}:{op:'modificar',id:w.id,widget:nw}]}})
+          .then(function(r){
+            if(r.rechazados&&r.rechazados.length){ $("#aw-err").textContent=r.rechazados.join(' · '); return; }
+            AID.cur=r.dashboard; closeModal(); aidPaint(); aidData();
+          }).catch(function(e){ $("#aw-err").textContent=e.message; });
+      });
+    });
+  }
+
+  function aidCapacidades(){
+    aidApi('/capacidades').then(function(c){
+      openModal('¿Qué puedo pedirle a este tablero?',
+        '<div style="max-height:62vh;overflow:auto">'
+        +'<p class="sec-t" style="margin:0 0 6px">Puede</p><ul style="margin:0 0 14px 18px;font-size:13px;line-height:1.6">'+c.puede.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>'
+        +'<p class="sec-t" style="margin:0 0 6px">No puede</p><ul style="margin:0 0 14px 18px;font-size:13px;line-height:1.6;color:var(--ink-3)">'+c.noPuede.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>'
+        +'<p class="sec-t" style="margin:0 0 6px">Datos disponibles</p>'
+        +(c.areas||[]).map(function(a){
+          return '<div style="margin-bottom:12px"><b style="font-size:12.5px">'+esc(a.area)+'</b>'
+            +a.fuentes.map(function(f){var d=String(f.descripcion||f.desc||'');return '<div class="muted" style="font-size:12px;margin-top:3px"><b style="font-family:\'IBM Plex Mono\',monospace">'+esc(f.tool)+'</b> — '+esc(d.split('.')[0])+'.</div>';}).join('')+'</div>';
+        }).join('')
+        +'</div><div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn pri" id="m-ok">Cerrar</button></div>', 'xl');
+      $("#m-ok").addEventListener('click',closeModal);
+    }).catch(function(e){toast(e.message);});
+  }
+
+  // ---- Barra superior de la sección ------------------------------------------
+  if($("#aid-send")){
+    $("#aid-send").addEventListener('click',aidEnviar);
+    $("#aid-q").addEventListener('keydown',function(e){ if(e.key==='Enter')aidEnviar(); });
+    $("#aid-sel").addEventListener('change',function(){ aidLoad(this.value); });
+    $("#aid-refresh").addEventListener('click',function(){ aidData(); });
+    $("#aid-help").addEventListener('click',aidCapacidades);
+    $("#aid-widget").addEventListener('click',function(){ if(!AID.cur){toast('Crea un tablero primero');return;} aidEditor(null); });
+    $("#aid-new").addEventListener('click',function(){
+      openModal('Nuevo tablero','<div class="form"><div class="fld"><label>Nombre</label><input id="aid-nm" value="Mi tablero" maxlength="80"></div>'
+        +'<div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" id="m-no">Cancelar</button><button class="btn pri" id="aid-ok">Crear</button></div></div>');
+      $("#m-no").addEventListener('click',closeModal);
+      $("#aid-ok").addEventListener('click',function(){
+        aidApi('',{method:'POST',body:{operationId:op,nombre:$("#aid-nm").value.trim()||'Mi tablero'}})
+          .then(function(d){ AID.cur=d; closeModal(); renderAiDash(); }).catch(function(e){toast(e.message);});
+      });
+    });
+    $("#aid-rename").addEventListener('click',function(){
+      if(!AID.cur)return;
+      openModal('Renombrar tablero','<div class="form"><div class="fld"><label>Nombre</label><input id="aid-nm" value="'+esc(AID.cur.nombre)+'" maxlength="80"></div>'
+        +'<div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" id="m-no">Cancelar</button><button class="btn pri" id="aid-ok">Guardar</button></div></div>');
+      $("#m-no").addEventListener('click',closeModal);
+      $("#aid-ok").addEventListener('click',function(){
+        aidPatch([{op:'renombrar',nombre:$("#aid-nm").value.trim()}]).then(function(){ closeModal(); renderAiDash(); });
+      });
+    });
+    $("#aid-del").addEventListener('click',function(){
+      if(!AID.cur)return;
+      openConfirm('Eliminar tablero','Se eliminará «'+AID.cur.nombre+'» con todos sus widgets. Esto no se puede deshacer.',function(){
+        aidApi('/'+AID.cur.id+'?operationId='+encodeURIComponent(op),{method:'DELETE'}).then(function(){
+          AID.cur=null; renderAiDash(); toast('Tablero eliminado');
+        }).catch(function(e){toast(e.message);});
+      });
+    });
   }
 
   // ===== Panel de uso de la plataforma (solo PLATFORM_ADMIN; 7/30/90 días) =====
@@ -5937,10 +6293,11 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],reports:["Reportes","KPIs del cliente"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],reports:["Reportes","KPIs del cliente"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
-    if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="dashboard"){loadDash().then(dashTick);}else{clearTimeout(dashTimer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
+    if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="dashboard"){loadDash().then(dashTick);}else{clearTimeout(dashTimer);}
+    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});

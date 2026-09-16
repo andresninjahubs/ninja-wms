@@ -1465,3 +1465,33 @@ export class DeadlineConfigDto {
   @Type(() => CourierCutoffDto)
   cortes?: CourierCutoffDto[];
 }
+
+
+// ---- Dashboard AI ------------------------------------------------------------
+
+export class CreateAiDashboardDto {
+  @IsOptional() @IsString() @MaxLength(64) operationId?: string;
+
+  @IsString() @MinLength(1) @MaxLength(80) nombre!: string;
+
+  @IsOptional() @IsString() @MaxLength(64) sellerId?: string;
+}
+
+export class AiDashboardPatchDto {
+  @IsOptional() @IsString() @MaxLength(64) operationId?: string;
+
+  /** Lista de operaciones sobre el tablero; el dominio valida cada una. */
+  @IsArray()
+  ops!: any[];
+}
+
+export class AiDashboardChatDto {
+  @IsOptional() @IsString() @MaxLength(64) operationId?: string;
+
+  @IsOptional() @IsString() @MaxLength(64) sellerId?: string;
+
+  @IsString() @MinLength(1) @MaxLength(2000) prompt!: string;
+
+  /** Últimos turnos, para que el modelo entienda "ahora ponlo en verde". */
+  @IsOptional() @IsArray() historial?: Array<{ role: 'user' | 'assistant'; content: string }>;
+}

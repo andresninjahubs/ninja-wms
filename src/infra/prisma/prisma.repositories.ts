@@ -5,6 +5,7 @@
 // El cliente real se genera con `prisma generate`. Se tipa laxo (any) para que el
 // build no dependa de la generación en entornos sin acceso a los binarios de Prisma.
 type PrismaClient = any;
+import { AiDashboard } from '../../domain/ai-dashboard';
 import {
   LocationRepository,
   LoginEventRepository,
@@ -13,6 +14,7 @@ import {
   PackagingRepository,
   BrandingRepository,
   OpsChannelRepository,
+  AiDashboardRepository,
   AiConfigRepository,
   AiCredential,
   CopilotSettingsRepository,
@@ -1813,5 +1815,40 @@ export class PrismaWebhookRepository implements WebhookRepository {
       error: r.error ?? null, payloadSummary: r.payloadSummary,
       at: r.at instanceof Date ? r.at.toISOString() : r.at,
     }));
+  }
+}
+
+/** Tableros del Dashboard AI (Prisma). */
+export class PrismaAiDashboardRepository implements AiDashboardRepository {
+  constructor(private readonly db: PrismaClient) {}
+  private toDomain(d: any): AiDashboard {
+    return {
+      id: d.id, operationId: d.operationId, ownerId: d.ownerId,
+      nombre: d.nombre, descripcion: d.descripcion ?? null, sellerId: d.sellerId ?? null,
+      widgets: Array.isArray(d.widgets) ? d.widgets : [],
+      version: d.version ?? 1,
+      createdAt: (d.createdAt as Date).toISOString(),
+      updatedAt: (d.updatedAt as Date).toISOString(),
+    };
+  }
+  async get(id: string): Promise<AiDashboard | null> {
+    const d = await this.db.aiDashboard.findUnique({ where: { id } });
+    return d ? this.toDomain(d) : null;
+  }
+  async list(operationId: string, ownerId: string): Promise<AiDashboard[]> {
+    const rows = await this.db.aiDashboard.findMany({ where: { operationId, ownerId }, orderBy: { updatedAt: 'desc' } });
+    return rows.map((d: any) => this.toDomain(d));
+  }
+  async save(d: AiDashboard): Promise<void> {
+    const data = {
+      operationId: d.operationId, ownerId: d.ownerId, nombre: d.nombre,
+      descripcion: d.descripcion ?? null, sellerId: d.sellerId ?? null,
+      widgets: d.widgets as unknown as object, version: d.version,
+      createdAt: new Date(d.createdAt), updatedAt: new Date(d.updatedAt),
+    };
+    await this.db.aiDashboard.upsert({ where: { id: d.id }, create: { id: d.id, ...data }, update: data });
+  }
+  async delete(id: string): Promise<void> {
+    await this.db.aiDashboard.delete({ where: { id } }).catch(() => undefined);
   }
 }

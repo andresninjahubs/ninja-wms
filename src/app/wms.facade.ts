@@ -23,6 +23,7 @@ import { AnnouncementInput, AnnouncementPatch, AnnouncementService } from '../do
 import { CreateWebhookInput, UpdateWebhookInput, WebhookService } from '../domain/webhook.service';
 import { WebhookEventType } from '../domain/types';
 import { DeadlineConfig, DeadlineState, deadlineBoost, deadlineState, enRiesgo, resolveDueAt } from '../domain/deadline';
+import { AiDashboardService, capacidades as aiDashCapacidades } from './ai-dashboard.service';
 import { ChatSender, ChatService } from '../domain/chat.service';
 import { PutawayAdvisor } from '../domain/putaway.advisor';
 import { CycleCountService } from '../domain/cyclecount.service';
@@ -99,7 +100,7 @@ import {
   User,
   ZoneType,
 } from '../domain/types';
-import { AiConfigRepository, AiCredential, AuthTokenRepository, Clock, CopilotSettingsRepository, CountAuditRepository, EmailSender, EventRepository, IdGenerator, LotRepository, PlanConfigRepository, AiAuditRepository, WorkAssignmentRepository, WorkTaskRepository, AgentRuleConfigRepository, AgentAlertRepository, AgentJournalRepository, AgentJournalEntry, CopilotSettings } from '../domain/ports';
+import { AiConfigRepository, AiCredential, AuthTokenRepository, Clock, CopilotSettingsRepository, CountAuditRepository, EmailSender, EventRepository, IdGenerator, LotRepository, PlanConfigRepository, AiAuditRepository, WorkAssignmentRepository, WorkTaskRepository, AgentRuleConfigRepository, AgentAlertRepository, AgentJournalRepository, AgentJournalEntry, CopilotSettings, AiDashboardRepository } from '../domain/ports';
 import { ACTION_POLICIES, decidePolicy, describePolicy, effectiveAgentSettings } from '../domain/agent-policy';
 import { AGENT_RULES, AgentRuleDef, agentRuleDef } from '../domain/agent-rules';
 import { ROLE_PERMISSIONS, UserRole } from '../domain/types';
@@ -186,10 +187,45 @@ export class WmsFacade {
     private readonly agentRuleConfig?: AgentRuleConfigRepository,
     private readonly agentAlertRepo?: AgentAlertRepository,
     private readonly agentJournal?: AgentJournalRepository,
+    /** Tableros del Dashboard AI (opcional: si falta, la sección no está disponible). */
+    private readonly aiDashboards?: AiDashboardRepository,
   ) {}
 
   /** Ahora en ISO — usa el reloj inyectado (tests deterministas) o la hora real. */
   private clockNow(): string { return this.clock ? this.clock.now() : new Date().toISOString(); }
+
+  // ---- Dashboard AI ---------------------------------------------------------
+  /**
+   * Tableros a medida que el usuario arma conversando con el LLM. El servicio vive
+   * aparte (`ai-dashboard.service.ts`); acá solo se expone con el tenant resuelto.
+   */
+  private aiDash(): AiDashboardService {
+    if (!this.aiDashboards) throw new ValidationError('El Dashboard AI no está disponible en esta instalación');
+    if (!this._aiDash) this._aiDash = new AiDashboardService(this);
+    return this._aiDash;
+  }
+  private _aiDash?: AiDashboardService;
+
+  /** ¿Con qué puede armar tableros? Sale del catálogo real de herramientas. */
+  aiDashboardCapacidades() { return aiDashCapacidades(); }
+
+  listAiDashboards(operationId: string, ownerId: string) { return this.aiDash().list(operationId, ownerId); }
+  createAiDashboard(operationId: string, ownerId: string, nombre: string, sellerId?: string | null) {
+    return this.aiDash().create(operationId, ownerId, nombre, sellerId);
+  }
+  getAiDashboard(id: string, operationId: string, ownerId: string) { return this.aiDash().get(id, operationId, ownerId); }
+  deleteAiDashboard(id: string, operationId: string, ownerId: string) { return this.aiDash().remove(id, operationId, ownerId); }
+  patchAiDashboard(id: string, operationId: string, ownerId: string, ops: any[]) {
+    return this.aiDash().savePatch(id, operationId, ownerId, ops);
+  }
+  aiDashboardData(id: string, operationId: string, ownerId: string, sellerScope: string | null) {
+    return this.aiDash().data(id, operationId, ownerId, sellerScope);
+  }
+  /** Le pide al LLM que cree o modifique el tablero. Valida antes de guardar. */
+  async aiDashboardChat(id: string, operationId: string, ownerId: string, sellerScope: string | null, prompt: string, historial?: Array<{ role: 'user' | 'assistant'; content: string }>) {
+    const cred = await this.resolveAiCredential(operationId, sellerScope).catch(() => null);
+    return this.aiDash().chat(id, operationId, ownerId, prompt, cred, historial);
+  }
 
   // ---- Canal de voz operador↔admin -----------------------------------------
   /** Operador o admin envía un mensaje (voz o texto) a un hilo de la operación. */

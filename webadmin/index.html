@@ -141,6 +141,61 @@
   }
   @media(max-width:860px){ .sidetoggle{display:none} }
 
+  /* ---- Dashboard AI ------------------------------------------------------------ */
+  .aid-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .aid-selbox{padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font-size:13.5px;font-weight:600;min-width:190px}
+  .aid-live{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-3);font-weight:600}
+  .aid-live .dot{width:7px;height:7px;border-radius:50%;background:var(--good);animation:aid-pulse 2s ease-in-out infinite}
+  @keyframes aid-pulse{50%{opacity:.25}}
+  .aid-prompt{display:flex;gap:8px;margin-bottom:10px}
+  .aid-prompt input{flex:1;padding:12px 14px;border:1px solid var(--line);border-radius:22px;background:var(--surface-2);color:var(--ink);font-size:14px}
+  .aid-msg{border:1px solid var(--line);background:var(--surface);border-radius:11px;padding:11px 14px;font-size:13px;margin-bottom:12px}
+  .aid-msg .bad{color:var(--crit)}
+  .aid-msg ul{margin:6px 0 0 18px;padding:0;font-size:12.5px;color:var(--ink-3)}
+  /* La grilla: 12 columnas, filas de 40 px. */
+  .aid-canvas{position:relative;display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:40px;gap:12px;min-height:320px}
+  .aid-canvas.drag{background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:100% 52px,8.33% 100%;border-radius:12px}
+  .aid-w{background:var(--surface);border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;position:relative}
+  .aid-w.sel{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 30%,transparent)}
+  .aid-w .wh{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);cursor:grab;user-select:none}
+  .aid-w .wh:active{cursor:grabbing}
+  .aid-w .wt{font-size:12.5px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .aid-w .wa{opacity:0;display:flex;gap:4px;transition:opacity .15s}
+  .aid-w:hover .wa{opacity:1}
+  .aid-w .wa button{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-size:13px;padding:2px 4px;border-radius:6px}
+  .aid-w .wa button:hover{background:var(--surface-2);color:var(--ink)}
+  .aid-w .wb{flex:1;overflow:auto;padding:10px 12px}
+  .aid-w .wfoot{font-size:11px;color:var(--ink-3);padding:0 12px 8px}
+  .aid-w .rz{position:absolute;right:2px;bottom:2px;width:16px;height:16px;cursor:nwse-resize;opacity:.4}
+  .aid-w .rz:hover{opacity:.9}
+  .aid-w .rz::after{content:"";position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3)}
+  .aid-kpi{display:flex;flex-direction:column;justify-content:center;height:100%}
+  .aid-kpi .n{font-family:"Sora",system-ui,sans-serif;font-size:32px;font-weight:800;letter-spacing:-.02em;line-height:1}
+  .aid-kpi .u{font-size:12px;color:var(--ink-3);margin-top:4px}
+  .aid-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .aid-tbl th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);padding:4px 8px 6px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface)}
+  .aid-tbl td{padding:5px 8px;border-bottom:1px solid var(--line)}
+  .aid-tbl td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .aid-row{display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12.5px}
+  .aid-row .k{flex:0 0 38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+  .aid-row .b{flex:1;height:8px;border-radius:99px;background:var(--surface-2);overflow:hidden}
+  .aid-row .b i{display:block;height:100%;background:var(--primary);border-radius:99px}
+  .aid-row .v{font-weight:700;font-variant-numeric:tabular-nums;min-width:52px;text-align:right}
+  .aid-spark{display:flex;align-items:flex-end;gap:3px;height:100%;min-height:60px}
+  .aid-spark i{flex:1;background:var(--primary);border-radius:3px 3px 0 0;min-height:2px;opacity:.85}
+  .aid-empty{color:var(--ink-3);font-size:12.5px;display:flex;align-items:center;justify-content:center;height:100%;text-align:center;padding:8px}
+  .aid-err{color:var(--crit);font-size:12px}
+  .aid-blank{grid-column:1/-1;border:1px dashed var(--line-2);border-radius:14px;padding:38px 20px;text-align:center;color:var(--ink-3)}
+  .aid-blank b{display:block;color:var(--ink);font-size:15px;margin-bottom:6px}
+  .aid-chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin-top:14px}
+  .aid-chips button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 13px;font-size:12.5px;cursor:pointer;color:var(--ink-2)}
+  .aid-chips button:hover{border-color:var(--primary);color:var(--ink)}
+  @media(max-width:860px){
+    .aid-canvas{grid-template-columns:1fr}
+    .aid-w{grid-column:1/-1!important}
+    .aid-w .wh{cursor:default} .aid-w .rz{display:none}
+  }
+
   /* ---- Panel de control consolidado ------------------------------------------- */
   .dashsplit{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
   .dashgrid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px}
@@ -806,6 +861,7 @@
     <div class="brand"><button class="sidetoggle" id="side-toggle" type="button" title="Colapsar el menú" aria-label="Colapsar el menú">«</button><div class="brandlogo" id="brandLogo" title="Ninja WMS"><svg class="brandlogo-svg" viewBox="0 0 208 46" role="img" aria-label="Ninja WMS" xmlns="http://www.w3.org/2000/svg"><text x="0" y="35" font-family="Sora, sans-serif" font-weight="800" font-size="40" letter-spacing="-1.5"><tspan class="wm-a">Ninja</tspan><tspan class="wm-b" dx="8">WMS</tspan></text></svg></div></div>
     <button class="nav on" data-pg="dashboard"><span class="ic">◧</span> Dashboard</button>
     <button class="nav" data-pg="copilot"><span class="ic">✨</span> Copiloto</button>
+    <button class="nav" data-pg="aidash"><span class="ic">🧩</span> Dashboard AI</button>
     <button class="nav" data-pg="voz"><span class="ic">🎧</span> Copiloto de voz</button>
 
     <div class="navcat" data-cat="workflows">
@@ -963,6 +1019,27 @@
           <div class="h"><h3>Actividad reciente</h3><div class="sp"></div><span class="muted">Ledger inmutable</span></div>
           <div class="tablewrap"><table><thead><tr><th>Movimiento</th><th>SKU</th><th>Ubicación</th><th>Usuario</th><th style="text-align:right">Cantidad</th></tr></thead><tbody id="activity"></tbody></table></div>
         </div>
+      </section>
+
+      <!-- Dashboard AI: tableros a medida armados con el LLM -->
+      <section class="page" data-pg="aidash">
+        <div class="aid-bar">
+          <select id="aid-sel" class="aid-selbox"></select>
+          <button class="btn mini" id="aid-new">＋ Tablero</button>
+          <button class="btn mini" id="aid-rename">Renombrar</button>
+          <button class="btn mini danger" id="aid-del">Eliminar</button>
+          <div class="sp" style="flex:1"></div>
+          <span class="aid-live" id="aid-live" title="Los datos se actualizan solos cada 30 segundos"><span class="dot"></span>en vivo · 30 s</span>
+          <button class="btn mini" id="aid-widget">＋ Widget</button>
+          <button class="btn mini" id="aid-help">¿Qué puedo pedir?</button>
+          <button class="btn mini" id="aid-refresh">Actualizar</button>
+        </div>
+        <div class="aid-prompt">
+          <input id="aid-q" placeholder="Pídelo en tus palabras. Ej: agrega un KPI con las órdenes atrasadas y una tabla con los SKUs por quebrar stock" autocomplete="off">
+          <button class="btn pri" id="aid-send">Construir</button>
+        </div>
+        <div id="aid-msg" class="aid-msg hidden"></div>
+        <div class="aid-canvas" id="aid-canvas"></div>
       </section>
 
       <!-- Copiloto del WMS -->

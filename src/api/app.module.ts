@@ -6,6 +6,7 @@ import { BrandingController } from './branding.controller';
 import { HealthController } from './health.controller';
 import { InventoryController } from './inventory.controller';
 import { LocationsController } from './locations.controller';
+import { AiDashboardController } from './ai-dashboard.controller';
 import { OperationsController } from './operations.controller';
 import { PlatformController } from './platform.controller';
 import { BillingController } from './billing.controller';
@@ -44,6 +45,7 @@ import type { WmsContext } from '../infra/context';
     BrandingController,
     AuthController,
     OperationsController,
+    AiDashboardController,
     PlatformController,
     UsersController,
     SellersController,

@@ -904,3 +904,22 @@ model CostRateCard {
   updatedAt                DateTime
   updatedBy                String?
 }
+
+/// Tablero del Dashboard AI: lo arma el usuario conversando con el LLM y queda
+/// guardado por persona dentro de su operación. Se guarda la ESPECIFICACIÓN de
+/// los widgets (qué preguntar y cómo mostrarlo), nunca los datos: así el tablero
+/// se redibuja siempre con datos frescos.
+model AiDashboard {
+  id          String   @id
+  operationId String
+  ownerId     String // usuario dueño del tablero
+  nombre      String
+  descripcion String?
+  sellerId    String? // cliente al que se acota el tablero (null = toda la operación)
+  widgets     Json     @default("[]")
+  version     Int      @default(1)
+  createdAt   DateTime
+  updatedAt   DateTime
+
+  @@index([operationId, ownerId])
+}

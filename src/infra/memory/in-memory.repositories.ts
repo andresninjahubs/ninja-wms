@@ -5,7 +5,9 @@
  */
 import { PlanConfig } from '../../domain/plans';
 import { toDomainEvents } from '../../domain/domain-events';
+import { AiDashboard } from '../../domain/ai-dashboard';
 import {
+  AiDashboardRepository,
   AuthTokenRepository,
   CountAuditRepository,
   EventRepository,
@@ -286,6 +288,27 @@ export class InMemoryCopilotSettingsRepository implements CopilotSettingsReposit
   }
   async save(settings: CopilotSettings): Promise<void> {
     this.store.set(settings.operationId, { ...settings });
+  }
+}
+
+/** Tableros del Dashboard AI en memoria (demo y pruebas). */
+export class InMemoryAiDashboardRepository implements AiDashboardRepository {
+  private readonly store = new Map<string, AiDashboard>();
+  async get(id: string): Promise<AiDashboard | null> {
+    const d = this.store.get(id);
+    return d ? JSON.parse(JSON.stringify(d)) : null;
+  }
+  async list(operationId: string, ownerId: string): Promise<AiDashboard[]> {
+    return Array.from(this.store.values())
+      .filter((d) => d.operationId === operationId && d.ownerId === ownerId)
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      .map((d) => JSON.parse(JSON.stringify(d)));
+  }
+  async save(dashboard: AiDashboard): Promise<void> {
+    this.store.set(dashboard.id, JSON.parse(JSON.stringify(dashboard)));
+  }
+  async delete(id: string): Promise<void> {
+    this.store.delete(id);
   }
 }
 

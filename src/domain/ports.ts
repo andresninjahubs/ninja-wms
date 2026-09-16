@@ -2,6 +2,7 @@
  * Puertos (interfaces) que el dominio necesita del mundo exterior.
  * Las implementaciones concretas (Prisma, en-memoria) viven en /infra.
  */
+import { AiDashboard } from './ai-dashboard';
 import {
   Announcement,
   AnnouncementClick,
@@ -320,6 +321,17 @@ export interface CopilotSettings {
 export interface CopilotSettingsRepository {
   get(operationId: string): Promise<CopilotSettings | null>;
   save(settings: CopilotSettings): Promise<void>;
+}
+
+/**
+ * Tableros del Dashboard AI. Cada tablero pertenece a una persona dentro de una
+ * operación: se listan los propios, y nadie ve los de otra operación.
+ */
+export interface AiDashboardRepository {
+  get(id: string): Promise<AiDashboard | null>;
+  list(operationId: string, ownerId: string): Promise<AiDashboard[]>;
+  save(dashboard: AiDashboard): Promise<void>;
+  delete(id: string): Promise<void>;
 }
 
 /**

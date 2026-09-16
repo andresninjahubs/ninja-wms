@@ -19,6 +19,7 @@ import { OpsChannelService, classifyHeuristic, insightsHeuristic } from '../src/
 import { parseCopilotIntent, buildInsights } from '../src/domain/copilot';
 import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS } from '../src/domain/copilot-tools';
 import { deadlineBoost, deadlineState, nextCutoff, resolveDueAt } from '../src/domain/deadline';
+import { aplicarPatch, primerHueco, transformar, validarWidget } from '../src/domain/ai-dashboard';
 import { InMemoryOpsChannelRepository } from '../src/infra/memory/in-memory.repositories';
 import { MetricsService } from '../src/domain/metrics.service';
 import { RollupService } from '../src/domain/rollup.service';
@@ -4403,6 +4404,108 @@ async function run() {
     assert.equal(solo.alcance.consolidado, false);
     assert.equal(solo.despacho.atrasadas, 0);
     assert.equal(solo.cargaPorCliente.length, 1);
+  });
+
+  // ---- Dashboard AI (v101) ---------------------------------------------------
+
+  await test('dashboard AI: valida lo que propone el modelo y rechaza lo inventado', () => {
+    const tools = ['listar_ordenes', 'riesgo_quiebre'];
+    const id = (() => { let n = 0; return () => `w${++n}`; })();
+
+    // Una herramienta que no existe no entra, por más que el modelo insista.
+    const falso = validarWidget({ tipo: 'kpi', titulo: 'X', source: { tool: 'tabla_magica' } }, tools, id);
+    assert.equal(falso.ok, false);
+    assert.match((falso as any).error, /no existe o no es de lectura/);
+
+    // Un tipo de widget inventado tampoco.
+    assert.equal(validarWidget({ tipo: 'holograma', titulo: 'X' }, tools, id).ok, false);
+
+    // Un widget válido se normaliza: tamaños dentro de rango y campos limpios.
+    const bueno = validarWidget({
+      tipo: 'tabla', titulo: 'Órdenes', ancho: 99, alto: 1,
+      source: { tool: 'listar_ordenes', path: 'items' },
+      transform: { agg: 'inventada', limit: 9999, filter: { field: 'estado', op: '=', value: 'PACKED' } },
+      display: { columnas: [{ campo: 'orden' }, { campo: '' }], color: 'javascript:alert(1)' },
+    }, tools, id);
+    assert.equal(bueno.ok, true);
+    const w = (bueno as any).widget;
+    assert.equal(w.ancho, 12, 'el ancho se recorta a la grilla');
+    assert.equal(w.alto, 2, 'el alto tiene mínimo');
+    assert.equal(w.transform.agg, undefined, 'una agregación inventada se descarta');
+    assert.equal(w.transform.limit, 500, 'el límite se acota');
+    assert.equal(w.display.columnas.length, 1, 'las columnas sin campo se caen');
+    assert.equal(w.display.color, undefined, 'un color que no es color no pasa');
+
+    // Un widget de texto sin texto no sirve de nada.
+    assert.equal(validarWidget({ tipo: 'texto', titulo: 'Nota' }, tools, id).ok, false);
+  });
+
+  await test('dashboard AI: el patch aplica lo bueno, explica lo malo y acomoda solo', () => {
+    const tools = ['listar_ordenes', 'riesgo_quiebre'];
+    const id = (() => { let n = 0; return () => `w${++n}`; })();
+    const base = {
+      id: 'd1', operationId: 'op1', ownerId: 'ana', nombre: 'Mi tablero',
+      widgets: [], version: 1, createdAt: '2026-09-17T12:00:00.000Z', updatedAt: '2026-09-17T12:00:00.000Z',
+    };
+    const r1 = aplicarPatch(base as any, [
+      { op: 'agregar', widget: { tipo: 'kpi', titulo: 'Órdenes', ancho: 3, alto: 3, source: { tool: 'listar_ordenes' } } },
+      { op: 'agregar', widget: { tipo: 'tabla', titulo: 'Quiebres', ancho: 9, alto: 7, source: { tool: 'riesgo_quiebre' } } },
+      { op: 'agregar', widget: { tipo: 'kpi', titulo: 'Humo', source: { tool: 'no_existe' } } },
+    ], tools, id, '2026-09-17T13:00:00.000Z');
+    assert.equal(r1.aplicados.length, 2);
+    assert.equal(r1.rechazados.length, 1);
+    assert.equal(r1.dashboard.version, 2, 'la versión sube una vez, no una por operación');
+    // Se acomodan lado a lado, no apilados: 3 + 9 = 12 columnas.
+    assert.deepEqual(r1.dashboard.widgets.map((w) => [w.x, w.y, w.ancho]), [[0, 0, 3], [3, 0, 9]]);
+
+    // Modificar respeta el id y vuelve a validar.
+    const wid = r1.dashboard.widgets[0].id;
+    const r2 = aplicarPatch(r1.dashboard, [{ op: 'modificar', id: wid, widget: { titulo: 'Órdenes del día' } }], tools, id, '2026-09-17T14:00:00.000Z');
+    assert.equal(r2.dashboard.widgets[0].titulo, 'Órdenes del día');
+    assert.equal(r2.dashboard.widgets[0].id, wid);
+
+    // Mover y eliminar; y una operación sobre algo que no existe se explica.
+    const r3 = aplicarPatch(r2.dashboard, [
+      { op: 'mover', id: wid, x: 6, y: 2, ancho: 6, alto: 4 },
+      { op: 'eliminar', id: 'fantasma' },
+    ], tools, id, '2026-09-17T15:00:00.000Z');
+    assert.deepEqual([r3.dashboard.widgets[0].x, r3.dashboard.widgets[0].y], [6, 2]);
+    assert.match(r3.rechazados[0], /no existe el widget/);
+
+    // Sin nada aplicado, la versión NO sube (no hay cambio que versionar).
+    const r4 = aplicarPatch(r3.dashboard, [{ op: 'eliminar', id: 'fantasma' }], tools, id, '2026-09-17T16:00:00.000Z');
+    assert.equal(r4.dashboard.version, r3.dashboard.version);
+  });
+
+  await test('dashboard AI: hueco libre y transformación de los datos de la herramienta', () => {
+    // El primer hueco se busca de arriba a abajo y de izquierda a derecha.
+    const ws: any[] = [{ id: 'a', x: 0, y: 0, ancho: 6, alto: 4 }];
+    assert.deepEqual(primerHueco(ws as any, 6, 4), { x: 6, y: 0 }, 'al lado si cabe');
+    assert.deepEqual(primerHueco(ws as any, 12, 3), { x: 0, y: 4 }, 'abajo si no cabe al lado');
+
+    const w: any = { tipo: 'barras', source: { path: 'items' }, transform: { groupBy: 'cliente', field: 'unidades', agg: 'suma', sortBy: 'valor', sortDir: 'desc' } };
+    const bruto = { items: [
+      { cliente: 'ACME', unidades: 10 }, { cliente: 'Globex', unidades: 4 }, { cliente: 'ACME', unidades: 5 },
+    ] };
+    const r = transformar(bruto, w);
+    assert.deepEqual(r.filas.map((f: any) => [f.clave, f.valor]), [['ACME', 15], ['Globex', 4]]);
+
+    // Un KPI que cuenta filas.
+    const kpi: any = { tipo: 'kpi', source: { path: 'items' }, transform: { agg: 'conteo' } };
+    assert.equal(transformar(bruto, kpi).valor, 3);
+
+    // Un objeto de conteos {clave: número} se vuelve lista, que es como se dibuja.
+    const estados = transformar({ RECEIVED: 2, PACKED: 5 }, { tipo: 'barras', source: {} } as any);
+    assert.deepEqual(estados.filas, [{ clave: 'RECEIVED', valor: 2 }, { clave: 'PACKED', valor: 5 }]);
+
+    // Si la ruta no existe pero la respuesta trae UNA sola lista, se usa esa:
+    // el modelo le erró al nombre del campo, no a la intención.
+    const rescate = transformar({ total: 3, alertas: [{ x: 1 }, { x: 2 }] }, { tipo: 'tabla', source: { path: 'abiertas' } } as any);
+    assert.equal(rescate.filas.length, 2);
+
+    // Filtro simple.
+    const filtrado = transformar(bruto, { tipo: 'tabla', source: { path: 'items' }, transform: { filter: { field: 'cliente', op: '=', value: 'ACME' } } } as any);
+    assert.equal(filtrado.filas.length, 2);
   });
 
   // ---- Resumen --------------------------------------------------------------

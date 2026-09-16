@@ -193,6 +193,7 @@ export type Permission =
   | 'webhook:admin' // mantenedor de acceso de clientes al panel de webhooks (admin + plataforma)
   | 'master:manage' // crear sellers, ubicaciones (maestros de la operación)
   | 'user:manage' // mantenedor de usuarios (dentro de la operación)
+  | 'dashboard:ai' // armar tableros a medida con el LLM (solo administración)
   | 'operation:manage'; // crear/gestionar OPERACIONES (solo plataforma)
 
 /**
@@ -214,12 +215,12 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   [UserRole.PLATFORM_ADMIN]: [
     'stock:read', 'inventory:receive', 'inventory:putaway', 'order:create',
     'order:fulfill', 'order:cancel', 'count:perform', 'seller:config',
-    'master:manage', 'user:manage', 'operation:manage', 'product:manage', 'billing:manage', 'billing:approve', 'chat:use', 'chat:manage', 'announcement:view', 'announcement:manage', 'webhook:manage', 'webhook:admin',
+    'master:manage', 'user:manage', 'operation:manage', 'product:manage', 'billing:manage', 'billing:approve', 'chat:use', 'chat:manage', 'announcement:view', 'announcement:manage', 'webhook:manage', 'webhook:admin', 'dashboard:ai',
   ],
   [UserRole.ADMIN]: [
     'stock:read', 'inventory:receive', 'inventory:putaway', 'order:create',
     'order:fulfill', 'order:cancel', 'count:perform', 'seller:config',
-    'master:manage', 'user:manage', 'product:manage', 'billing:manage', 'chat:use', 'chat:manage', 'announcement:view', 'webhook:manage', 'webhook:admin',
+    'master:manage', 'user:manage', 'product:manage', 'billing:manage', 'chat:use', 'chat:manage', 'announcement:view', 'webhook:manage', 'webhook:admin', 'dashboard:ai',
   ],
   // El SUPERVISOR maneja el piso de la bodega, no la facturación: sin 'billing:manage'
   // no ve el módulo de Facturación (queda para el administrador de la operación).
