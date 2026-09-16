@@ -313,11 +313,11 @@ export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
   },
   {
     name: 'balancear_carga',
-    description: 'Reparte automáticamente las tareas pendientes entre los operarios, minimizando el tiempo de término (usa la velocidad real de cada uno). Úsala cuando el usuario diga "balancea la carga" o "reparte el picking entre el equipo".',
+    description: 'Reparte entre los operarios las tareas PENDIENTES SIN ASIGNAR de un tipo, minimizando el tiempo de término (usa la velocidad real de cada uno). Úsala cuando el usuario diga "balancea la carga" o "reparte el picking entre el equipo". NO sirve para quitarle tareas a un operario que ya las tiene: para eso usa vaciar_operario.',
     parameters: {
       type: 'object',
       properties: {
-        tipo: { type: 'string', enum: ['PICK', 'PUTAWAY', 'COUNT', 'RECEIVE', 'RESLOT'], description: 'tipo de tarea a balancear (def PICK)' },
+        tipo: { type: 'string', enum: ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'RESLOT', 'COUNT'], description: 'tipo de tarea a balancear (def PICK). Ojo: reparte solo lo que está SIN asignar, no quita tareas ya asignadas a alguien.' },
       },
     },
   },
@@ -332,8 +332,17 @@ export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
     parameters: { type: 'object', properties: { modo: { type: 'string', enum: ['advisory', 'strict'], description: 'advisory o strict' } }, required: ['modo'] },
   },
   {
+    name: 'vaciar_operario',
+    description: 'Deja a UN operario sin tareas: libera todas sus tareas abiertas y las reparte entre los demás operarios activos, equilibrando la carga. Úsala cuando el admin diga "quítale las tareas a X", "pasa lo de X al resto", "deja a X vacío/libre", "X se va" o "X está enfermo". Es la ÚNICA herramienta que le saca trabajo ya asignado a una persona concreta.',
+    parameters: {
+      type: 'object',
+      properties: { operario: str('id o nombre del operario que hay que dejar sin tareas') },
+      required: ['operario'],
+    },
+  },
+  {
     name: 'reasignar_ociosidad',
-    description: 'Dispara la REASIGNACIÓN POR OCIOSIDAD (work-stealing): mueve tareas asignadas pero no iniciadas desde el operario más cargado al más ocioso, para que nadie quede sin trabajo mientras otro está saturado. Úsala cuando el admin diga "que nadie quede ocioso", "redistribuye la carga ahora" o "empareja el trabajo del equipo".',
+    description: 'Dispara la REASIGNACIÓN POR OCIOSIDAD (work-stealing): empareja la carga moviendo tareas no iniciadas desde el operario MÁS CARGADO al MÁS OCIOSO. No vacía a nadie ni elige a quién quitarle: para eso usa vaciar_operario. Úsala cuando el admin diga "que nadie quede ocioso", "redistribuye la carga ahora" o "empareja el trabajo del equipo".',
     parameters: { type: 'object', properties: {} },
   },
 ];

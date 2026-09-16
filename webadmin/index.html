@@ -1070,9 +1070,13 @@
       </div>
     </div>
 
-    <button class="nav" data-pg="reports"><span class="ic">▧</span> Reportes</button>
-    <button class="nav" data-pg="billing"><span class="ic">$</span> Facturación</button>
-    <button class="nav" data-pg="costos"><span class="ic">📊</span> Rentabilidad</button>
+    <div class="navcat" data-cat="finanzas">
+      <button class="navcat-h" data-cat-toggle="finanzas"><span class="ic">$</span> Finanzas <span class="navcat-arrow">▾</span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="billing"><span class="ic">🧾</span> Facturación</button>
+        <button class="nav sub" data-pg="costos"><span class="ic">📊</span> Rentabilidad</button>
+      </div>
+    </div>
     <button class="nav" data-pg="chat"><span class="ic">💬</span> Canal clientes <span class="badge" id="nav-chat"></span></button>
     <button class="nav" data-pg="voicechannel"><span class="ic">🎙️</span> Canal operaciones</button>
     <button class="nav" data-pg="webhooks"><span class="ic">🔗</span> Webhooks</button>
@@ -1091,7 +1095,6 @@
     <button class="nav" data-pg="announcements" data-platform><span class="ic">📣</span> Anuncios</button>
     <div class="spacer"></div>
     <button class="navlearn" id="nt-navcenter" title="Tutoriales y videos de cada sección"><span class="ic">🎓</span> Centro de aprendizaje <span class="cnt"></span></button>
-    <div class="muted" style="padding:8px 11px 6px;font-size:11px">Vista previa · datos de demostración</div>
     <button class="navout" id="side-logout" title="Cerrar sesión"><span class="ic">⏻</span> Salir</button>
     <div class="poweredby" id="poweredby">
       <span class="pb-label">Tecnología</span>
@@ -1467,12 +1470,6 @@
         </table></div></div>
       </section>
 
-      <!-- Reportes -->
-      <section class="page" data-pg="reports">
-        <div class="kpis" id="rep-kpis"></div>
-        <div class="card"><div class="h"><h3>Exactitud de inventario por conteo</h3><div class="sp"></div><span class="muted" id="rep-acc-sub"></span></div><div class="b"><div class="chart" id="rep-acc-chart"></div></div></div>
-        <div class="card"><div class="h"><h3>Despachos últimos 5 días</h3><div class="sp"></div><span class="muted" id="rep-seller"></span></div><div class="b"><div class="chart" id="rep-chart"></div></div></div>
-      </section>
 
       <!-- Facturación 3PL -->
       <section class="page" data-pg="billing">

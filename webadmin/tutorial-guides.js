@@ -152,7 +152,7 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#cc-strat', place:'bottom', title:'Estrategia del cliente', text:'La estrategia (por ejemplo <b>ABC</b>) define la frecuencia: los SKUs de mayor rotación o valor se cuentan más seguido. Se configura por cliente en el mantenedor de clientes.'},
       {el:'#cc-body', place:'top', title:'Tareas propuestas', text:'Cada tarea indica prioridad, objetivo (ubicación o SKU) y el motivo por el que se propone: diferencia reciente, alta rotación, tiempo sin contar…'},
-      {el:['#cc-body td:last-child','#cc-body'], place:'left', title:'Ejecutar el conteo', text:'Al contar ingresas la cantidad física. Si difiere de la teórica, el sistema genera el <b>ajuste</b> correspondiente y lo registra en el kardex. La exactitud resultante se ve en Reportes.'}
+      {el:['#cc-body td:last-child','#cc-body'], place:'left', title:'Ejecutar el conteo', text:'Al contar ingresas la cantidad física. Si difiere de la teórica, el sistema genera el <b>ajuste</b> correspondiente y lo registra en el kardex. La exactitud resultante se ve en el Dashboard.'}
     ]
   },
 
@@ -203,15 +203,6 @@ window.NINJA_TOUR_GUIDES = {
     tips:['Imprime las etiquetas de ubicación para el escaneo desde la app móvil.']
   },
 
-  reports: {
-    icon:'▧', title:'Reportes',
-    summary:'Los indicadores del cliente: nivel de servicio, exactitud de inventario y ritmo de despachos, listos para compartir.',
-    steps:[
-      {el:'#rep-kpis', title:'KPIs del cliente', text:'Resumen de órdenes despachadas, tiempo de ciclo, exactitud de inventario y stock. Se calculan sobre el cliente seleccionado en la barra superior.'},
-      {el:'#rep-acc-chart', title:'Exactitud de inventario', text:'Evolución de la exactitud medida en los conteos cíclicos. Una caída indica que hay que revisar procesos de guardado o picking.'},
-      {el:'#rep-chart', title:'Despachos por día', text:'Cuántas órdenes salieron cada uno de los últimos días. Útil para ver picos de demanda y planificar turnos.'}
-    ]
-  },
 
   billing: {
     icon:'$', title:'Facturación',

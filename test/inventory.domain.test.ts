@@ -4846,6 +4846,91 @@ async function run() {
     assert.ok(cargas[cargas.length - 1] - cargas[0] <= 1, `reparto desbalanceado: ${cargas.join(' vs ')}`);
   });
 
+  /**
+   * El copiloto decía "reasigné las 10 tareas de Operador2, queda vacío" y no
+   * movía ninguna: no existía herramienta para vaciar a una persona y las que
+   * usaba devolvían ok con cero cambios. Estas pruebas cubren las dos mitades:
+   * que ahora se pueda hacer, y que cuando no se hace nada, se diga.
+   */
+  await test('vaciar operario: le saca TODAS las tareas y las reparte entre los demás', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 500, locationId: stg.id });
+    await f.facade.createUser({ id: 'op-1', name: 'Operador1', email: 'o1@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createUser({ id: 'op-2', name: 'Operador2', email: 'o2@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createUser({ id: 'op-3', name: 'Operador3', email: 'o3@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+
+    // Seis órdenes reservadas, todas asignadas a Operador2.
+    const ids: string[] = [];
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      const o = await f.facade.createOrder('acme', { externalOrderId: 'O-' + n, salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: n * 2 }] }, 'ana');
+      await f.facade.allocateOrder('acme', o.id, 'ana');
+      await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, entityRef: 'O-' + n, sellerId: 'acme', operator: 'op-2', unitsEstimate: n * 2, by: 'ana', skipOperatorCheck: true });
+      ids.push(o.id);
+    }
+    let dir: any = await f.facade.operatorsDirectory('op1');
+    assert.equal(dir.operarios.find((o: any) => o.id === 'op-2').tareasAbiertas, 6);
+
+    const r: any = await f.facade.vaciarOperario('op1', 'op-2', 'ana');
+    assert.equal(r.ok, true, r.motivo || '');
+    assert.equal(r.liberadas, 6);
+    assert.equal(r.reasignadas, 6);
+    assert.equal(r.restantes, 0);
+
+    dir = await f.facade.operatorsDirectory('op1');
+    const carga = Object.fromEntries(dir.operarios.map((o: any) => [o.id, o.tareasAbiertas]));
+    assert.equal(carga['op-2'], 0, 'Operador2 tiene que quedar sin nada');
+    assert.equal(carga['op-1'] + carga['op-3'], 6, 'las seis tareas tienen que estar en los otros dos');
+    assert.ok(carga['op-1'] > 0 && carga['op-3'] > 0, 'se repartió a uno solo en vez de balancear');
+
+    // Y por el camino del copiloto, llamándolo por NOMBRE como lo escribe una
+    // persona: antes el nombre se pasaba tal cual como si fuera un id.
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: ids[0], entityRef: 'O-1', sellerId: 'acme', operator: 'op-2', unitsEstimate: 2, by: 'ana', skipOperatorCheck: true });
+    const porNombre: any = await f.facade.copilotConfirmTool('op1', null, { id: 'ana', role: 'ADMIN' }, { tool: 'vaciar_operario', args: { operario: 'Operador2' } });
+    assert.notEqual(porNombre.ok, false, JSON.stringify(porNombre));
+    const dir2: any = await f.facade.operatorsDirectory('op1');
+    assert.equal(dir2.operarios.find((o: any) => o.id === 'op-2').tareasAbiertas, 0, 'el copiloto no vació al operario llamado por su nombre');
+
+    // Balancear cuando no hay nada sin asignar tiene que declararlo, no decir ok a secas.
+    const bal: any = await f.facade.copilotConfirmTool('op1', null, { id: 'ana', role: 'ADMIN' }, { tool: 'balancear_carga', args: { tipo: 'PICK' } });
+    assert.equal(bal.asignadas, 0);
+    assert.equal(bal.sinCambios, true, 'un balanceo que no movió nada debe decirlo');
+    assert.match(String(bal.mensaje), /vaciar_operario/);
+  });
+
+  await test('vaciar operario: sin destino posible no miente — deja todo como estaba y lo explica', async () => {
+    const f = buildFacade();
+    f.clock.set('2026-09-17T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
+    await f.facade.createUser({ id: 'solo', name: 'Único', email: 'u@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'O-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 4 }] }, 'ana');
+    await f.facade.allocateOrder('acme', o.id, 'ana');
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, entityRef: 'O-1', sellerId: 'acme', operator: 'solo', unitsEstimate: 4, by: 'ana', skipOperatorCheck: true });
+
+    const r: any = await f.facade.vaciarOperario('op1', 'solo', 'ana');
+    assert.equal(r.ok, false, 'sin otro operario no puede decir que quedó vacío');
+    assert.equal(r.liberadas, 0, 'no puede soltar la tarea al vacío');
+    assert.equal(r.restantes, 1);
+    assert.match(r.motivo, /No hay otro operario activo/);
+    const dir: any = await f.facade.operatorsDirectory('op1');
+    assert.equal(dir.operarios.find((o: any) => o.id === 'solo').tareasAbiertas, 1, 'la tarea no puede perderse');
+
+    // Y a quien ya está vacío se le dice que ya lo estaba, no que se hizo algo.
+    await f.facade.createUser({ id: 'otro', name: 'Otro', email: 'o@d.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    const r2: any = await f.facade.vaciarOperario('op1', 'otro', 'ana');
+    assert.equal(r2.ok, true);
+    assert.equal(r2.liberadas, 0);
+    assert.match(r2.motivo, /ya no tenía tareas/);
+  });
+
   // ---- Dashboard AI (v101) ---------------------------------------------------
 
   await test('dashboard AI: valida lo que propone el modelo y rechaza lo inventado', () => {

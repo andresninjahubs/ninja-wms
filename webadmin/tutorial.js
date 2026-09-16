@@ -447,7 +447,7 @@
     ['Inicio',['dashboard','copilot','voz','multicliente']],
     ['Workflows de bodega',['orders','pickqueue','inbound','returns','putaway','assembly','movements','counts']],
     ['Inventario y ubicaciones',['inventory','products','packaging','locations']],
-    ['Negocio',['reports','billing','costos','plan']],
+    ['Finanzas',['billing','costos','plan']],
     ['Comunicación e integraciones',['chat','voicechannel','webhooks']],
     ['Administración',['activity','aiaudit','asignaciones','agente','branding','clients','users']],
     ['Plataforma',['pkgmatrix','operations','usage','announcements']]

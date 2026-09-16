@@ -88,12 +88,12 @@
     }).join("");
   }
   var NAV_BY_ROLE={
-    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","reports","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
-    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","reports","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","branding","clients","users"],
+    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
+    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan","branding","clients","users"],
     // Sin "billing": la facturación es del administrador de la operación, no del supervisor.
-    SUPERVISOR:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","reports","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan"],
+    SUPERVISOR:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","plan"],
     OPERATOR:["dashboard","copilot","inventory","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","voicechannel"],
-    CLIENT:["dashboard","copilot","inventory","products","orders","inbound","returns","movements","reports","billing","chat","webhooks"]
+    CLIENT:["dashboard","copilot","inventory","products","orders","inbound","returns","movements","billing","chat","webhooks"]
   };
   function esc(s){return String(s==null?"":s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}
   function fill(el,opts){el.innerHTML=opts.map(function(o){return '<option value="'+esc(o.v)+'">'+esc(o.t)+'</option>';}).join("");}
@@ -293,7 +293,6 @@
       });
       kx.sort(function(a,b){return a.occurredAt<b.occurredAt?1:(a.occurredAt>b.occurredAt?-1:0);});
       D.kardex=kx;
-      loadAccuracy();
       return loadSeller();
     });
   }
@@ -503,7 +502,7 @@
   // Cada sección operativa se vuelve a cargar sola mientras esté visible. Se pausa si la
   // pestaña está en segundo plano, si hay un formulario/panel abierto o un tutorial corriendo.
   // El Dashboard recarga la operación completa (stock por zona + kardex + datos del cliente).
-  var LIVE_PAGES={agente:20000,dashboard:30000,multicliente:30000,inventory:30000,inbound:20000,returns:30000,putaway:20000,movements:30000,counts:60000,reports:60000,locations:60000,products:60000,assembly:60000,packaging:60000,billing:60000};
+  var LIVE_PAGES={agente:20000,dashboard:30000,multicliente:30000,inventory:30000,inbound:20000,returns:30000,putaway:20000,movements:30000,counts:60000,locations:60000,products:60000,assembly:60000,packaging:60000,billing:60000};
   var liveLast=Date.now(), liveBusy=false;
   function activePg(){ if(mcMode)return 'multicliente'; var p=document.querySelector('.page.on'); return p?p.getAttribute('data-pg'):null; }
   function liveRefresh(force){
@@ -533,7 +532,7 @@
   if($("#live-btn"))$("#live-btn").addEventListener('click',function(){ liveRefresh(true); });
 
   // ---- Render ---------------------------------------------------------------
-  function renderAll(){ renderOpMetrics();renderAlerts();renderKpis();renderZone();renderActivity();renderMovements();renderInv();renderProducts();renderPackaging();renderOrdFilters();renderOrders();renderPickQueue();renderInbound();renderReturns();renderPutaway();renderAssembly();renderLocations();renderCounts();renderReports();renderBilling();renderClients();renderUsers();renderOps();chatPoll();pollAnnouncement();syncWebhookNav();injectTableExporters();renderOnboarding(); }
+  function renderAll(){ renderOpMetrics();renderAlerts();renderKpis();renderZone();renderActivity();renderMovements();renderInv();renderProducts();renderPackaging();renderOrdFilters();renderOrders();renderPickQueue();renderInbound();renderReturns();renderPutaway();renderAssembly();renderLocations();renderCounts();renderBilling();renderClients();renderUsers();renderOps();chatPoll();pollAnnouncement();syncWebhookNav();injectTableExporters();renderOnboarding(); }
   // El CLIENT solo ve el nav "Webhooks" si su operador habilitó el panel (flag por seller).
   function syncWebhookNav(){ $$('.nav[data-pg="webhooks"]').forEach(function(n){ var allowed=(NAV_BY_ROLE[role]||[]).indexOf("webhooks")>=0; n.classList.toggle("hidden", !(allowed&&whManage())); }); }
   // Oculta una categoría del sidebar si el rol no tiene NINGÚN sub-ítem visible.
@@ -6090,51 +6089,6 @@
     }).join(""):'<tr><td colspan="4" class="empty">Sin tareas de conteo.</td></tr>';
   }
 
-  // Exactitud de inventario (G8): carga la KPI + tendencia por conteo desde el backend.
-  function loadAccuracy(){
-    if(!op) return;
-    api('/operations/'+encodeURIComponent(op)+'/inventory-accuracy'+(role==='CLIENT'&&seller?('?sellerId='+encodeURIComponent(seller)):''))
-      .then(function(a){ D.acc=a||null; renderReports(); })
-      .catch(function(){ D.acc=null; });
-  }
-
-  function renderReports(){
-    var units=D.inv.reduce(function(a,b){return a+b.qty;},0);
-    var shipped=D.ord.filter(function(o){return o.status==="SHIPPED";}).length;
-    var acc=D.acc;
-    var accV=(acc&&acc.accuracyPct!=null)?(Math.round(acc.accuracyPct*1000)/10)+"%":"—";
-    var accD=(acc&&acc.countsConsidered>0)?(acc.countsConsidered+" conteos · "+acc.linesAccurate+"/"+acc.linesCounted+" líneas"):"requiere conteo cíclico";
-    var k=[
-      {l:"Órdenes despachadas",v:shipped,d:"en el período"},
-      {l:"Unidades en stock",v:units.toLocaleString("es-CL"),d:"del cliente"},
-      {l:"Movimientos",v:D.mov.length,d:"registrados"},
-      {l:"Exactitud inventario",v:accV,d:accD},
-      {l:"Líneas / hora",v:"—",d:"requiere tiempos de picking"}
-    ];
-    $("#rep-kpis").innerHTML=k.map(function(x){return '<div class="kpi"><div class="l">'+x.l+'</div><div class="v">'+x.v+'</div><div class="d">'+esc(x.d)+'</div></div>';}).join("");
-    // Tendencia de exactitud por conteo (más viejo → más nuevo).
-    var accSub=$("#rep-acc-sub"), accChart=$("#rep-acc-chart");
-    if(acc&&acc.trend&&acc.trend.length){
-      var trows=acc.trend.map(function(p){
-        var loc=locById[p.locationId]; var lc=loc?loc.code:(p.locationId||'—');
-        var d=new Date(p.at); var dd=isNaN(d.getTime())?'':((d.getMonth()+1)+'/'+d.getDate());
-        var pct=Math.round(p.accuracyPct*1000)/10;
-        return {cap:(dd?dd+' · ':'')+lc, v:pct, chip:pct>=99?'AVAILABLE':(pct>=95?'RESERVED':'CANCELLED')};
-      });
-      if(accSub)accSub.textContent="Últimos "+acc.trend.length+" conteos";
-      bars(accChart,trows,true);
-    } else {
-      if(accSub)accSub.textContent="Sin conteos registrados aún";
-      if(accChart)accChart.innerHTML='<div class="empty">Realiza un conteo cíclico para medir la exactitud.</div>';
-    }
-    var sel=D.sellers.filter(function(s){return s.id===seller;})[0];
-    $("#rep-seller").textContent=sel?sel.name:seller;
-    // despachos por estado como sustituto real (aún sin serie temporal en el backend)
-    var byCh={}; D.ord.filter(function(o){return o.status==="SHIPPED";}).forEach(function(o){var c=CH_LABEL[o.salesChannel]||o.salesChannel;byCh[c]=(byCh[c]||0)+1;});
-    var rows=Object.keys(byCh).map(function(c){return {cap:c,v:byCh[c]};}).sort(function(a,b){return b.v-a.v;});
-    bars($("#rep-chart"),rows.length?rows:[{cap:"—",v:0}]);
-  }
-
   function renderUsers(){
     var manage=can('user');
     $("#usr-scope").textContent = role==="PLATFORM_ADMIN" ? "Usuarios de todas las operaciones." : ("Usuarios de tu operación ("+(opName(op))+").");
@@ -6802,7 +6756,7 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],reports:["Reportes","KPIs del cliente"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
     if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="dashboard"){loadDash().then(dashTick);}else{clearTimeout(dashTimer);}

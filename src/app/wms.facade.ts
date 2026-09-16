@@ -580,7 +580,7 @@ export class WmsFacade {
     const settings = await this.agentSettings(operationId);
     const mode = settings.actionMode;
     if (canWrite) {
-      sys += ' Además puedes EJECUTAR acciones sobre órdenes con la herramienta avanzar_estado_orden (reservar, pickear, empacar, despachar), CREAR una recepción nueva (crear_recepcion) o una orden de salida nueva reservando su stock si te lo piden (crear_orden), asignar CUALQUIER tipo de tarea que ejecuta un operario —PICK, PACK, SHIP, PUTAWAY, RECEIVE, RESLOT o COUNT— (asignar_tarea), balancear la carga (balancear_carga), y CONFIGURAR LOS AUTOMATISMOS de la bodega: activar/desactivar el auto-balanceo continuo (activar_auto_balanceo), fijar el modo de asignación advisory/estricto (fijar_modo_asignacion) y disparar la reasignación por ociosidad (reasignar_ociosidad). Cuando el administrador te da una directriz para "operar en automático" (ej. "mantén el equipo balanceado solo", "que nadie quede ocioso"), traduce esa intención a estas herramientas de automatismo. Para crear órdenes o recepciones, si no sabes el id del cliente usa clientes_operacion y si no conoces los SKU usa catalogo_productos antes de crear.';
+      sys += ' Además puedes EJECUTAR acciones sobre órdenes con la herramienta avanzar_estado_orden (reservar, pickear, empacar, despachar), CREAR una recepción nueva (crear_recepcion) o una orden de salida nueva reservando su stock si te lo piden (crear_orden), asignar CUALQUIER tipo de tarea que ejecuta un operario —PICK, PACK, SHIP, PUTAWAY, RECEIVE, RESLOT o COUNT— (asignar_tarea), balancear la carga sin asignar (balancear_carga), DEJAR SIN TAREAS a un operario concreto repartiendo su carga al resto (vaciar_operario — es la única que le quita trabajo ya asignado a una persona), y CONFIGURAR LOS AUTOMATISMOS de la bodega: activar/desactivar el auto-balanceo continuo (activar_auto_balanceo), fijar el modo de asignación advisory/estricto (fijar_modo_asignacion) y disparar la reasignación por ociosidad (reasignar_ociosidad). Cuando el administrador te da una directriz para "operar en automático" (ej. "mantén el equipo balanceado solo", "que nadie quede ocioso"), traduce esa intención a estas herramientas de automatismo. Para crear órdenes o recepciones, si no sabes el id del cliente usa clientes_operacion y si no conoces los SKU usa catalogo_productos antes de crear. REGLA INNEGOCIABLE sobre lo que informas: describe SOLO lo que la herramienta devolvió. Si el resultado trae sinCambios:true, o un contador en 0, o ok:false, di claramente que NO se hizo el cambio y por qué; nunca lo cuentes como hecho ni inventes a qué operario pasó cada tarea. Si te piden confirmar algo que acabas de hacer, vuelve a consultarlo con la herramienta de lectura antes de responder.';
       sys += mode === 'confirm'
         ? ' El modo es CONFIRMACIÓN: las acciones que la política no permite ejecutar directamente NO se ejecutan al invocar la herramienta; quedan PROPUESTAS para que el usuario confirme (el resultado de la herramienta te dirá si se ejecutó o quedó propuesta). Si el usuario pide avanzar VARIAS órdenes (ej. "despacha las 3 que están listas"), invoca la herramienta UNA VEZ POR CADA orden en este mismo turno, para dejarlas TODAS propuestas. Nunca digas que algo se ejecutó si la herramienta respondió que quedó propuesto. No inventes órdenes: usa las herramientas de consulta (listar_ordenes) para saber cuáles corresponden.'
         : ' El modo es DIRECTO: la acción se ejecuta al invocar la herramienta salvo que la política de autonomía la deje propuesta (la herramienta te lo dirá). Si el usuario pide varias órdenes, invoca la herramienta una vez por cada una y confírmale lo realizado.';
@@ -694,8 +694,9 @@ export class WmsFacade {
     if (name === 'asignar_tarea') {
       if (!canWrite) return { error: 'No tienes permisos para asignar tareas.' };
       const tipo = (args?.tipo || 'PICK') as WorkTaskType;
-      const operario = String(args?.operario || '').trim();
-      if (!operario) return { error: 'Falta el operario.' };
+      const quienOp = await this.copilotResolveOperator(operationId, args?.operario);
+      if (!quienOp) return { error: `Falta el operario o no lo identifiqué ("${String(args?.operario ?? '')}"). Usa carga_operarios para ver los operarios y pásame su nombre o id exacto.` };
+      const operario = quienOp.id;
       let entityId = String(args?.entidad || '');
       let entityRef: string | null = entityId;
       let units = 0;
@@ -727,6 +728,7 @@ export class WmsFacade {
       try {
         const r = await this.autoBalance(operationId, { type: tipo, execute: true, by: actor?.id || 'copiloto' });
         await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `balancear carga (${tipo})`, actor: actor?.id || 'copiloto', orderRef: null, result: `ok: ${r.asignadas} tareas repartidas`, recommendationId: null });
+        if (!r.asignadas) return { ok: true, sinCambios: true, asignadas: 0, mensaje: `No había tareas ${tipo} sin asignar, así que no se repartió nada. Esta herramienta NO quita tareas ya asignadas: si el usuario quiere dejar a alguien sin carga, usa vaciar_operario. NO digas que se reasignó nada.` };
         return { ok: true, asignadas: r.asignadas, porOperario: r.porOperario };
       } catch (e: any) { return { error: (e && e.message) || 'no se pudo balancear' }; }
     }
@@ -754,8 +756,21 @@ export class WmsFacade {
         const r = await this.rebalanceLoad(operationId, { execute: true });
         const n = (r?.movimientos || []).length;
         await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: 'reasignación por ociosidad', actor: actor?.id || 'copiloto', orderRef: null, result: `ok: ${n} movimientos`, recommendationId: null });
+        if (!n) return { ok: true, sinCambios: true, movimientos: 0, mensaje: 'No se movió ninguna tarea: la carga ya estaba pareja o las tareas del más cargado ya están en curso. NO digas que se reasignó nada.' };
         return { ok: true, movimientos: n, detalle: (r?.movimientos || []).slice(0, 8) };
       } catch (e: any) { return { error: (e && e.message) || 'no se pudo reasignar' }; }
+    }
+    if (name === 'vaciar_operario') {
+      if (!canWrite) return { error: 'No tienes permisos para reasignar tareas.' };
+      const quien = await this.copilotResolveOperator(operationId, args?.operario ?? args?.operator ?? args?.id);
+      if (!quien) return { error: `No identifiqué al operario "${args?.operario ?? ''}". Usa carga_operarios para ver los operarios y pásame su nombre o id exacto.` };
+      try {
+        const r = await this.vaciarOperario(operationId, quien.id, actor?.id || 'copiloto');
+        await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `vaciar operario ${quien.name}`, actor: actor?.id || 'copiloto', orderRef: null, result: `${r.liberadas} liberada(s), ${r.reasignadas} reasignada(s), ${r.restantes} restante(s)`, recommendationId: null });
+        if (!r.liberadas && r.ok) return { ok: true, sinCambios: true, operario: quien.name, mensaje: `${quien.name} ya no tenía tareas abiertas.` };
+        if (!r.ok) return { ok: false, operario: quien.name, liberadas: r.liberadas, reasignadas: r.reasignadas, restantes: r.restantes, mensaje: `${r.motivo || 'No se pudo vaciar.'} NO digas que quedó vacío.` };
+        return { ok: true, operario: quien.name, liberadas: r.liberadas, reasignadas: r.reasignadas, restantes: 0, destinos: r.destinos };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo vaciar al operario' }; }
     }
     // Crear una RECEPCIÓN (inbound). Queda pendiente para cotejo/recepción por un operario.
     if (name === 'crear_recepcion') {
@@ -821,6 +836,7 @@ export class WmsFacade {
       case 'asignar_tarea': return `${a.tipo || 'PICK'} ${a.entidad || '?'} → ${a.operario || '?'}`;
       case 'balancear_carga': return `repartir tareas ${a.tipo || 'PICK'}`;
       case 'reasignar_ociosidad': return 'mover tareas del más cargado al más libre';
+      case 'vaciar_operario': return `dejar sin tareas a ${a.operario || '?'} y repartirlas al resto`;
       case 'activar_auto_balanceo': return a.activar === false || a.activar === 'false' ? 'desactivar auto-balanceo' : 'activar auto-balanceo';
       case 'fijar_modo_asignacion': return `modo ${a.modo || 'advisory'}`;
       case 'crear_recepcion': return `recepción ${a.referencia || ''} ${(a.lineas || []).length} línea(s)${a.sellerId ? ' cliente ' + a.sellerId : ''}`.trim();
@@ -3547,6 +3563,90 @@ export class WmsFacade {
     if (!a || a.operationId !== operationId) return { ok: false };
     await this.assignments.save({ ...a, status: 'released', completedBy: by, completedAt: this.clockNow() });
     return { ok: true };
+  }
+
+  /**
+   * Resuelve un operario desde lo que escribió la persona: id exacto, nombre
+   * exacto, o nombre parcial sin distinguir mayúsculas ni acentos. Sin esto, el
+   * copiloto pasaba "Operador2" como si fuera un id y la asignación se perdía.
+   */
+  private async copilotResolveOperator(operationId: string, quien: unknown): Promise<{ id: string; name: string } | null> {
+    const q = String(quien ?? '').trim();
+    if (!q) return null;
+    const norm = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const users = (await this.listUsers(operationId)).filter((u) => String(u.role) === 'OPERATOR');
+    const porId = users.find((u) => u.id === q);
+    if (porId) return { id: porId.id, name: porId.name };
+    const exacto = users.find((u) => norm(u.name) === norm(q));
+    if (exacto) return { id: exacto.id, name: exacto.name };
+    const parcial = users.filter((u) => norm(u.name).includes(norm(q)) || norm(q).includes(norm(u.name)));
+    return parcial.length === 1 ? { id: parcial[0].id, name: parcial[0].name } : null;
+  }
+
+  /**
+   * Vacía a UN operario: libera todas sus tareas abiertas y las reparte entre
+   * los demás operarios activos, equilibrando por tiempo estimado.
+   *
+   * Existe porque no había forma de hacerlo: `balancear_carga` solo reparte lo
+   * que está SIN asignar y `rebalanceLoad` mueve del más cargado al más libre,
+   * así que pedir "deja a este operario sin nada" no movía una sola tarea y
+   * igual respondía ok. Acá el resultado dice exactamente qué pasó.
+   */
+  async vaciarOperario(operationId: string, operatorId: string, by: string): Promise<{
+    ok: boolean; operario: string; liberadas: number; reasignadas: number; restantes: number;
+    destinos: Array<{ operario: string; tareas: number }>; motivo: string | null;
+  }> {
+    const vacio = { ok: false, operario: operatorId, liberadas: 0, reasignadas: 0, restantes: 0, destinos: [], motivo: null as string | null };
+    if (!this.assignments) return { ...vacio, motivo: 'El módulo de asignaciones no está disponible.' };
+    const roster = await this.operatorRoster(operationId);
+    const abiertas = (await this.assignments.listByOperator(operationId, operatorId)).filter((a) => a.status !== 'done' && a.status !== 'released');
+    if (!abiertas.length) return { ...vacio, ok: true, motivo: 'Ese operario ya no tenía tareas abiertas.' };
+    const destinos = roster.filter((r) => r.id !== operatorId);
+    if (!destinos.length) {
+      return { ...vacio, restantes: abiertas.length, motivo: 'No hay otro operario activo a quien pasarle las tareas; no se movió ninguna.' };
+    }
+    // Carga actual (en horas) de cada destino, para repartir parejo.
+    const horas = new Map(destinos.map((d) => [d.id, 0] as [string, number]));
+    const speed = new Map(destinos.map((d) => [d.id, d.speed] as [string, number]));
+    for (const a of await this.assignments.listOpen(operationId)) {
+      if (a.operator === operatorId || !horas.has(a.operator)) continue;
+      horas.set(a.operator, horas.get(a.operator)! + a.unitsEstimate / (speed.get(a.operator) || 50));
+    }
+    const cuenta = new Map(destinos.map((d) => [d.id, 0] as [string, number]));
+    let liberadas = 0, reasignadas = 0;
+    // Las más pesadas primero: repartir así deja los tiempos más parejos.
+    for (const a of abiertas.slice().sort((x, y) => y.unitsEstimate - x.unitsEstimate)) {
+      const r = await this.releaseAssignment(operationId, a.entityId, a.type, by);
+      if (!r.ok) continue;
+      liberadas++;
+      let mejor = destinos[0], proj = Infinity;
+      for (const d of destinos) {
+        const p = horas.get(d.id)! + a.unitsEstimate / d.speed;
+        if (p < proj) { proj = p; mejor = d; }
+      }
+      try {
+        await this.assignTask(operationId, {
+          type: a.type, entityId: a.entityId, entityRef: a.entityRef, sellerId: a.sellerId,
+          operator: mejor.id, unitsEstimate: a.unitsEstimate, by, skipOperatorCheck: true,
+          note: `reasignada al vaciar a ${operatorId}`,
+        });
+        horas.set(mejor.id, horas.get(mejor.id)! + a.unitsEstimate / mejor.speed);
+        cuenta.set(mejor.id, cuenta.get(mejor.id)! + 1);
+        reasignadas++;
+      } catch { /* si una no se puede reasignar, queda liberada en el pool */ }
+    }
+    const quedan = (await this.assignments.listByOperator(operationId, operatorId)).filter((a) => a.status !== 'done' && a.status !== 'released').length;
+    return {
+      ok: quedan === 0, operario: operatorId, liberadas, reasignadas, restantes: quedan,
+      // Agrupado por NOMBRE: si dos operarios se llaman igual, verlos repetidos en
+      // la lista confunde a quien lee (y al modelo que la narra).
+      destinos: Object.entries(destinos.reduce((acc, d) => {
+        const n = cuenta.get(d.id) || 0;
+        if (n) acc[d.name || d.id] = (acc[d.name || d.id] || 0) + n;
+        return acc;
+      }, {} as Record<string, number>)).map(([operario, tareas]) => ({ operario, tareas })).sort((a, b) => b.tareas - a.tareas),
+      motivo: quedan ? `Quedaron ${quedan} tarea(s) que no se pudieron mover.` : null,
+    };
   }
 
   /** Asignación masiva. */
