@@ -6673,17 +6673,10 @@
     token=null;me=null;role=null;op=null;seller=null;
     $("#lg-email").value="";$("#lg-pass").value="";$("#lg-err").textContent="";
     // Al volver, la portada arranca de nuevo con la caja cerrada.
-    var st=$("#loginstage"); if(st){ st.classList.remove('open'); st.classList.remove('viajando'); st.classList.add('closed'); }
-    // La escena 3D quedó detenida dentro de la caja: se monta otra vez desde cero.
-    if(window.__login3d&&window.NinjaLogin3D&&st&&st.classList.contains('has3d')){
-      try{ window.__login3d.destruir(); }catch(e){}
-      // Canvas nuevo: reusar el viejo deja el contexto WebGL anterior colgando.
-      var viejo=document.getElementById('lh-canvas');
-      if(viejo){ var nuevo=viejo.cloneNode(false); viejo.parentNode.replaceChild(nuevo,viejo); }
-      window.__login3d=window.NinjaLogin3D.montar(document.getElementById('lh-canvas'),{});
-      if(!window.__login3d)st.classList.remove('has3d');
-    }
+    // Primero se muestra la portada y recién después se reinicia: si el canvas
+    // se monta mientras el overlay está oculto, mide 0 y la caja no se dibuja.
     $("#loginov").classList.remove("off");
+    if(window.__loginReset)window.__loginReset();
   }
   if($("#btn-logout"))$("#btn-logout").addEventListener("click",cerrarSesion);
   if($("#side-logout"))$("#side-logout").addEventListener("click",cerrarSesion);
@@ -6802,8 +6795,31 @@
     }
     boton.addEventListener('click',abrir);
     document.addEventListener('keydown',function(e){ if(!abierta&&(e.key==='Enter'||e.key===' '))abrir(); });
-    setTimeout(abrir, 12000);
+    var reloj=setTimeout(abrir, 12000);
     if(reduce)abrir();
+
+    /**
+     * Volver al login tras cerrar sesión. Sin esto la caja quedaba marcada como
+     * "ya abierta" y el clic no hacía nada: el usuario se quedaba mirando una
+     * portada vacía sin forma de volver a entrar.
+     */
+    window.__loginReset=function(){
+      clearTimeout(reloj);
+      abierta=false;
+      stage.classList.remove('open'); stage.classList.remove('viajando'); stage.classList.add('closed');
+      if(escena){
+        try{ escena.destruir(); }catch(e){}
+        // Canvas nuevo: reusar el viejo deja colgando el contexto WebGL anterior.
+        var viejo=document.getElementById('lh-canvas');
+        if(viejo){ viejo.parentNode.replaceChild(viejo.cloneNode(false), viejo); }
+        escena=window.NinjaLogin3D?window.NinjaLogin3D.montar(document.getElementById('lh-canvas'),{}):null;
+        window.__login3d=escena;
+        if(!escena)stage.classList.remove('has3d');
+        else requestAnimationFrame(function(){ try{ window.dispatchEvent(new Event('resize')); }catch(e){} });
+      }
+      reloj=setTimeout(abrir, 12000);
+      if(reduce)abrir();
+    };
   })();
 
   // Aterrizaje común tras autenticarse (login o registro).
