@@ -2,22 +2,52 @@ import { Body, Controller, Get, Inject, Post, Put, Query } from '@nestjs/common'
 import { WmsFacade } from '../app/wms.facade';
 import { actorOf, actorOperation, CurrentUser } from './auth/current-user.decorator';
 import { RequirePermission } from './auth/permissions.decorator';
-import { User, WorkTaskType } from '../domain/types';
+import { ForbiddenError } from '../domain/errors';
+import { ROLE_PERMISSIONS, User, UserRole, WorkTaskType } from '../domain/types';
 import { WMS_FACADE } from './tokens';
 
 /**
  * Asignación de tareas a operarios (balanceo de carga, Camino B). Las lecturas son
- * para todos (stock:read); asignar/reasignar/balancear requiere supervisión
- * (master:manage). Un operario ve SUS tareas en /assignments/mine.
+ * del personal de bodega (stock:read + no ser cliente); asignar/reasignar/balancear
+ * requiere supervisión (master:manage). Un operario ve SUS tareas en /assignments/mine.
  */
 @Controller('assignments')
 export class AssignmentsController {
   constructor(@Inject(WMS_FACADE) private readonly wms: WmsFacade) {}
 
+  /**
+   * El piso de bodega es del personal, no de los clientes.
+   *
+   * `stock:read` lo tiene también el rol CLIENT —lo necesita para ver SU stock— y
+   * estos endpoints no reciben :sellerId, así que el guard no puede aplicar la
+   * frontera de seller: sin esta comprobación un cliente leía el pool, la carga y
+   * las bandejas de TODA la operación, incluidas las órdenes de los demás clientes.
+   */
+  private soloPersonal(user: User | null): void {
+    if (user && user.role === UserRole.CLIENT) {
+      throw new ForbiddenError('El detalle de tareas de bodega es interno de la operación.');
+    }
+  }
+
+  /**
+   * Bandeja ajena = supervisión.
+   *
+   * Cada uno ve la suya sin pedir permiso; mirar la de otro es una vista de jefatura
+   * y exige master:manage. Devuelve el operario que corresponde consultar.
+   */
+  private operarioConsultado(user: User | null, pedido?: string): string {
+    const propio = actorOf(user);
+    if (!pedido || pedido === propio) return propio;
+    const puede = user ? (ROLE_PERMISSIONS[user.role]?.includes('master:manage') ?? false) : true;
+    if (!puede) throw new ForbiddenError('Solo un supervisor o administrador puede ver la bandeja de otro operario.');
+    return pedido;
+  }
+
   /** Pool de tareas pendientes de un tipo (PICK|PUTAWAY|COUNT). */
   @Get('pool')
   @RequirePermission('stock:read')
   pool(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('type') type?: string, @Query('onlyUnassigned') onlyUnassigned?: string, @Query('limit') limit?: string) {
+    this.soloPersonal(user);
     return this.wms.getTaskPool(actorOperation(user, operationId), (type as WorkTaskType) || 'PICK', { onlyUnassigned: onlyUnassigned === 'true', limit: limit ? parseInt(limit, 10) : undefined });
   }
 
@@ -25,6 +55,7 @@ export class AssignmentsController {
   @Get('load')
   @RequirePermission('stock:read')
   load(@CurrentUser() user: User | null, @Query('operationId') operationId?: string) {
+    this.soloPersonal(user);
     return this.wms.operatorLoad(actorOperation(user, operationId));
   }
 
@@ -32,20 +63,23 @@ export class AssignmentsController {
   @Get('mine')
   @RequirePermission('stock:read')
   mine(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('operator') operator?: string) {
-    return this.wms.getOperatorTasks(actorOperation(user, operationId), operator || actorOf(user));
+    this.soloPersonal(user);
+    return this.wms.getOperatorTasks(actorOperation(user, operationId), this.operarioConsultado(user, operator));
   }
 
   /** Actividades de un operario (vista "por operario"): asignadas, en ejecución o pendientes. */
   @Get('operator')
   @RequirePermission('stock:read')
   operator(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('operator') operator?: string) {
-    return this.wms.operatorActivities(actorOperation(user, operationId), operator || actorOf(user));
+    this.soloPersonal(user);
+    return this.wms.operatorActivities(actorOperation(user, operationId), this.operarioConsultado(user, operator));
   }
 
   /** Historial de asignaciones. */
   @Get()
   @RequirePermission('stock:read')
   history(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('type') type?: string, @Query('limit') limit?: string) {
+    this.soloPersonal(user);
     return this.wms.listAssignments(actorOperation(user, operationId), { type: (type as WorkTaskType) || undefined, limit: limit ? parseInt(limit, 10) : 200 });
   }
 
@@ -102,18 +136,21 @@ export class AssignmentsController {
   @Get('board')
   @RequirePermission('stock:read')
   board(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('operator') operator?: string) {
-    return this.wms.operatorBoard(actorOperation(user, operationId), operator || actorOf(user));
+    this.soloPersonal(user);
+    return this.wms.operatorBoard(actorOperation(user, operationId), this.operarioConsultado(user, operator));
   }
   /** El operario toma una tarea disponible (si el admin lo permite). */
   @Post('take')
   @RequirePermission('stock:read')
   take(@CurrentUser() user: User | null, @Body() body: { operationId?: string; type: WorkTaskType; entityId: string }) {
+    this.soloPersonal(user);
     return this.wms.takeTask(actorOperation(user, body?.operationId), actorOf(user), { type: body.type, entityId: body.entityId });
   }
   /** El operario inicia una tarea de su bandeja. */
   @Post('start')
   @RequirePermission('stock:read')
   start(@CurrentUser() user: User | null, @Body() body: { operationId?: string; type: WorkTaskType; entityId: string }) {
+    this.soloPersonal(user);
     return this.wms.startTask(actorOperation(user, body?.operationId), actorOf(user), { type: body.type, entityId: body.entityId });
   }
   /** ¿Pueden los operarios tomar tareas disponibles desde la app? (configurable por el admin) */

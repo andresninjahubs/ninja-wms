@@ -48,6 +48,7 @@ import { UserService } from '../src/domain/user.service';
 import { BarcodeService } from '../src/domain/barcode.service';
 import { OperationService } from '../src/domain/operation.service';
 import { PLATFORM_AI_SCOPE, WmsFacade } from '../src/app/wms.facade';
+import { AssignmentsController } from '../src/api/assignments.controller';
 import {
   FixedClock,
   InMemoryLocationRepository,
@@ -123,14 +124,15 @@ async function test(name: string, fn: () => void | Promise<void>) {
   }
 }
 
-async function expectThrows(fn: () => Promise<unknown>, ctor: new (...a: any[]) => Error) {
+async function expectThrows(fn: () => Promise<unknown>, ctor: new (...a: any[]) => Error, msg?: string) {
+  const ctx = msg ? ` (${msg})` : '';
   try {
     await fn();
   } catch (err) {
-    assert.ok(err instanceof ctor, `esperaba ${ctor.name}, vino ${(err as Error).constructor.name}`);
+    assert.ok(err instanceof ctor, `esperaba ${ctor.name}, vino ${(err as Error).constructor.name}${ctx}`);
     return;
   }
-  assert.fail(`esperaba que lanzara ${ctor.name}, no lanzó`);
+  assert.fail(`esperaba que lanzara ${ctor.name}, no lanzó${ctx}`);
 }
 
 // ---- Fixture ----------------------------------------------------------------
@@ -5678,7 +5680,7 @@ async function run() {
     const pedro = await facade.createUser({ id: 'pedro', name: 'Pedro', email: 'p@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
     const dani = await facade.createUser({ id: 'dani', name: 'Daniela', email: 'd@acme.cl', role: UserRole.CLIENT, operationId: 'op1', sellerId: 'acme' });
     const nadia = await facade.createUser({ id: 'nadia', name: 'Nadia', email: 'n@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
-    await facade.deactivateUser(nadia.id, 'ana');
+    await facade.deactivateUser(nadia.id);
     const order = await facade.createOrder('globex', { externalOrderId: 'GLOBEX-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 4 }] }, 'ana');
     await facade.allocateOrder('globex', order.id, 'ana');
     await facade.setOperatorSelfPickup('op1', true);
@@ -5740,6 +5742,45 @@ async function run() {
     const r = await facade.copilotConfirmTool('op1', null, operario, { tool: 'avanzar_estado_orden', args: { orden: 'GLOBEX-1', accion: 'pickear' } });
     assert.notEqual(r.ok, false, `ejecutar órdenes debe seguir permitido: ${JSON.stringify(r)}`);
     void order;
+  });
+
+  await test('endpoints de bodega: el cliente no lee el piso de la operación', async () => {
+    const { facade, dani, pedro } = await escenarioBandeja();
+    const api = new AssignmentsController(facade as any);
+    const cliente = { id: dani.id, role: UserRole.CLIENT, operationId: 'op1', sellerId: 'acme' } as any;
+    const lecturas: Array<[string, () => any]> = [
+      ['pool', () => api.pool(cliente, 'op1', 'PICK')],
+      ['load', () => api.load(cliente, 'op1')],
+      ['mine', () => api.mine(cliente, 'op1')],
+      ['operator', () => api.operator(cliente, 'op1')],
+      ['history', () => api.history(cliente, 'op1')],
+      ['board', () => api.board(cliente, 'op1')],
+    ];
+    for (const [nombre, fn] of lecturas) {
+      await expectThrows(async () => fn(), ForbiddenError, `${nombre} debería estar cerrado para un cliente`);
+    }
+    // El personal de bodega sigue leyendo sin problema.
+    const operario = { id: pedro.id, role: UserRole.OPERATOR, operationId: 'op1' } as any;
+    assert.ok(Array.isArray(await api.pool(operario, 'op1', 'PICK')));
+    assert.ok(Array.isArray(await api.mine(operario, 'op1')));
+    assert.equal((await api.board(operario, 'op1')).selfPickup, true);
+  });
+
+  await test('endpoints de bodega: la bandeja ajena es vista de jefatura', async () => {
+    const { facade, pedro, order } = await escenarioBandeja();
+    await facade.assignTask('op1', { type: 'PICK', entityId: order.id, entityRef: 'GLOBEX-1', sellerId: 'globex', operator: pedro.id, unitsEstimate: 4, by: 'ana' });
+    const api = new AssignmentsController(facade as any);
+    const otro = { id: 'otro-operario', role: UserRole.OPERATOR, operationId: 'op1' } as any;
+    const jefe = { id: 'rodrigo', role: UserRole.SUPERVISOR, operationId: 'op1' } as any;
+    // Un operario no mira la bandeja de otro…
+    await expectThrows(async () => api.mine(otro, 'op1', pedro.id), ForbiddenError);
+    await expectThrows(async () => api.operator(otro, 'op1', pedro.id), ForbiddenError);
+    await expectThrows(async () => api.board(otro, 'op1', pedro.id), ForbiddenError);
+    // …pero sí la suya, aunque la pida por nombre explícito.
+    assert.equal((await api.mine(otro, 'op1', otro.id)).length, 0);
+    // El supervisor sí ve la de cualquiera.
+    assert.equal((await api.mine(jefe, 'op1', pedro.id)).length, 1);
+    assert.equal((await api.operator(jefe, 'op1', pedro.id)).tareas.length, 1);
   });
 
   // ---- Resumen --------------------------------------------------------------
