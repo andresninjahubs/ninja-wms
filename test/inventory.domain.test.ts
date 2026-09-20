@@ -49,6 +49,7 @@ import { BarcodeService } from '../src/domain/barcode.service';
 import { OperationService } from '../src/domain/operation.service';
 import { PLATFORM_AI_SCOPE, WmsFacade } from '../src/app/wms.facade';
 import { AssignmentsController } from '../src/api/assignments.controller';
+import { AGENT_RULES } from '../src/domain/agent-rules';
 import {
   FixedClock,
   InMemoryLocationRepository,
@@ -2435,7 +2436,8 @@ async function run() {
     const { facade } = buildFacade();
     await facade.createOperation({ id: 'op1', name: 'Op 1' });
     const rules = await facade.agentRules('op1');
-    assert.equal(rules.length, 7, 'siete reglas en el catálogo');
+    assert.equal(rules.length, AGENT_RULES.length, 'el panel expone TODO el catálogo');
+    assert.equal(rules.length, 13, 'trece reglas en el catálogo');
     assert.ok(rules.every((r) => typeof r.enabled === 'boolean' && r.threshold >= 0), 'cada regla trae config efectiva');
     const upd = await facade.updateAgentRule('op1', 'orden_estancada', { threshold: 6, enabled: false }, 'ana');
     assert.equal(upd.threshold, 6); assert.equal(upd.enabled, false);
@@ -5781,6 +5783,143 @@ async function run() {
     // El supervisor sí ve la de cualquiera.
     assert.equal((await api.mine(jefe, 'op1', pedro.id)).length, 1);
     assert.equal((await api.operator(jefe, 'op1', pedro.id)).tareas.length, 1);
+  });
+
+  // ---- Reglas del flujo de entrada, insumos y duplicados (v122) -------------
+  async function escenarioBodega() {
+    const { facade, clock, orders } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const recv = await facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    const stg = await facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    return { facade, clock, recv, stg, orders };
+  }
+  const alertasDe = async (facade: WmsFacade, key: string) =>
+    (await facade.agentAlerts('op1')).abiertas.filter((a) => a.ruleKey === key);
+
+  await test('regla guardado pendiente: dispara por antigüedad y se apaga al guardar', async () => {
+    const { facade, clock, recv, stg } = await escenarioBodega();
+    await facade.receive('acme', { sku: 'CAM', qty: 40, locationId: recv.id });
+    // Recién llegada: nada que avisar (el umbral por defecto es 4 h).
+    await facade.runAgentSweep('op1');
+    assert.equal((await alertasDe(facade, 'guardado_pendiente')).length, 0, 'recién recibida no alerta');
+    // Seis horas después, sigue en recepción.
+    clock.set('2026-01-01T06:00:00.000Z');
+    await facade.runAgentSweep('op1');
+    const a = await alertasDe(facade, 'guardado_pendiente');
+    assert.equal(a.length, 1, 'a las 6 h sí alerta');
+    assert.match(a[0].title, /CAM lleva 6 h sin guardar en RECV-01/);
+    // Se guarda: la alerta ya no se regenera.
+    await facade.putaway('acme', { sku: 'CAM', qty: 40, fromLocationId: recv.id, toLocationId: stg.id });
+    await facade.ackAgentAlert('op1', a[0].id, 'ana');
+    clock.set('2026-01-02T06:00:00.000Z');
+    await facade.runAgentSweep('op1');
+    assert.equal((await alertasDe(facade, 'guardado_pendiente')).length, 0, 'guardada → deja de alertar');
+  });
+
+  await test('regla guardado pendiente: en modo directo reparte el guardado', async () => {
+    const { facade, clock, recv } = await escenarioBodega();
+    await facade.createUser({ id: 'pedro', name: 'Pedro', email: 'pedro@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await facade.receive('acme', { sku: 'CAM', qty: 40, locationId: recv.id });
+    await facade.updateAgentRule('op1', 'guardado_pendiente', { actionType: 'execute', actionMode: 'directo' }, 'ana');
+    await facade.updateAgentSettings('op1', { shadowMode: false, autonomyLevel: 1 }, 'ana');
+    clock.set('2026-01-01T06:00:00.000Z');
+    const sweep = await facade.runAgentSweep('op1', { autonomous: true });
+    assert.ok(sweep.ejecutadas >= 1, `esperaba una ejecución, vino ${JSON.stringify(sweep)}`);
+    const suyas = await facade.getOperatorTasks('op1', 'pedro');
+    assert.equal(suyas.length, 1, 'el guardado quedó asignado');
+    assert.equal(suyas[0].type, 'PUTAWAY');
+  });
+
+  await test('regla guardado pendiente: la antigüedad es la de la capa FIFO viva, no la del primer movimiento', async () => {
+    const { facade, clock, recv, stg } = await escenarioBodega();
+    // Enero: llega y se guarda todo. Esa entrada NO debe contaminar la antigüedad.
+    await facade.receive('acme', { sku: 'CAM', qty: 100, locationId: recv.id });
+    clock.set('2026-01-01T01:00:00.000Z');
+    await facade.putaway('acme', { sku: 'CAM', qty: 100, fromLocationId: recv.id, toLocationId: stg.id });
+    // Marzo: llega una tanda nueva y queda sin guardar 5 h.
+    clock.set('2026-03-01T00:00:00.000Z');
+    await facade.receive('acme', { sku: 'CAM', qty: 20, locationId: recv.id });
+    clock.set('2026-03-01T05:00:00.000Z');
+    await facade.runAgentSweep('op1');
+    const a = await alertasDe(facade, 'guardado_pendiente');
+    assert.equal(a.length, 1);
+    assert.match(a[0].title, /lleva 5 h sin guardar/, `midió mal la espera: ${a[0].title}`);
+  });
+
+  await test('regla recepción abierta: parcial y pendiente alertan; cerrada no', async () => {
+    const { facade, clock, recv } = await escenarioBodega();
+    const r = await facade.createReceipt('acme', { locationId: recv.id, supplier: 'Proveedor X', reference: 'OC-1', lines: [{ sku: 'CAM', qty: 100 }] }, 'ana');
+    await facade.runAgentSweep('op1');
+    assert.equal((await alertasDe(facade, 'recepcion_abierta')).length, 0, 'recién creada no alerta');
+    clock.set('2026-01-01T10:00:00.000Z'); // umbral por defecto: 8 h
+    await facade.runAgentSweep('op1');
+    let a = await alertasDe(facade, 'recepcion_abierta');
+    assert.equal(a.length, 1);
+    assert.match(a[0].title, /sin recibir/);
+    assert.match(a[0].detail, /0 de 100 un cotejadas/);
+    // Se recibe parcial y se cierra: deja de alertar.
+    await facade.receiveReceipt('acme', r.id, [{ lineNo: 1, qty: 60 }], 'ana');
+    await facade.closeReceipt('acme', r.id, 'ana');
+    await facade.ackAgentAlert('op1', a[0].id, 'ana');
+    clock.set('2026-01-03T10:00:00.000Z');
+    await facade.runAgentSweep('op1');
+    assert.equal((await alertasDe(facade, 'recepcion_abierta')).length, 0, 'cerrada → deja de alertar');
+  });
+
+  await test('regla insumo de embalaje: respeta el mínimo del insumo', async () => {
+    const { facade } = await escenarioBodega();
+    await facade.createPackaging('op1', { sku: 'CAJA-M', name: 'Caja mediana', unitPrice: 300, minStock: 50 });
+    await facade.createPackaging('op1', { sku: 'CINTA', name: 'Cinta', unitPrice: 100, minStock: 5 });
+    await facade.receivePackagingStock('op1', 'CAJA-M', 30, 'ana');   // bajo su mínimo
+    await facade.receivePackagingStock('op1', 'CINTA', 500, 'ana');   // sobrada
+    await facade.runAgentSweep('op1');
+    const a = await alertasDe(facade, 'embalaje_bajo');
+    assert.equal(a.length, 1, 'solo la caja está bajo el mínimo');
+    assert.match(a[0].title, /Caja mediana bajo el mínimo \(30 de 50\)/);
+    // Al reponer, deja de alertar.
+    await facade.receivePackagingStock('op1', 'CAJA-M', 200, 'ana');
+    await facade.ackAgentAlert('op1', a[0].id, 'ana');
+    await facade.runAgentSweep('op1');
+    assert.equal((await alertasDe(facade, 'embalaje_bajo')).length, 0);
+  });
+
+  await test('regla devolución sin procesar: alerta y se apaga al procesarla', async () => {
+    const { facade, clock, stg } = await escenarioBodega();
+    await facade.receive('acme', { sku: 'CAM', qty: 50, locationId: stg.id });
+    const o = await facade.createOrder('acme', { externalOrderId: 'PED-D1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 3 }] }, 'ana');
+    await facade.allocateOrder('acme', o.id, 'ana');
+    const dev = await facade.createReturn('acme', { originalOrderRef: 'PED-D1', reason: 'cliente se arrepintió' }, 'ana');
+    await facade.runAgentSweep('op1');
+    assert.equal((await alertasDe(facade, 'devolucion_sin_procesar')).length, 0, 'recién abierta no alerta');
+    clock.set('2026-01-02T02:00:00.000Z'); // umbral por defecto: 24 h
+    await facade.runAgentSweep('op1');
+    const a = await alertasDe(facade, 'devolucion_sin_procesar');
+    assert.equal(a.length, 1);
+    assert.match(a[0].detail, /3 un/);
+    await facade.processReturn('acme', dev.id, { lines: [{ sku: 'CAM', toStock: 3 }] }, 'ana');
+    await facade.ackAgentAlert('op1', a[0].id, 'ana');
+    clock.set('2026-01-04T02:00:00.000Z');
+    await facade.runAgentSweep('op1');
+    assert.equal((await alertasDe(facade, 'devolucion_sin_procesar')).length, 0, 'procesada → deja de alertar');
+  });
+
+  await test('regla órdenes duplicadas: agrupa por referencia externa repetida', async () => {
+    const { facade, stg, orders } = await escenarioBodega();
+    await facade.receive('acme', { sku: 'CAM', qty: 50, locationId: stg.id });
+    await facade.createOrder('acme', { externalOrderId: 'PED-DUP', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 1 }] }, 'ana');
+    await facade.createOrder('acme', { externalOrderId: 'PED-UNICA', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 1 }] }, 'ana');
+    await facade.runAgentSweep('op1');
+    assert.equal((await alertasDe(facade, 'ordenes_duplicadas')).length, 0, 'sin repetidas no alerta');
+    // createOrder es idempotente por referencia externa, así que la duplicada se
+    // inyecta por el repositorio (que es justo como llega desde un OMS mal portado).
+    const orig = (await facade.listOrders('acme')).find((x) => x.externalOrderId === 'PED-DUP')!;
+    await orders.save({ ...orig, id: orig.id + '-bis' });
+    await facade.runAgentSweep('op1');
+    const a = await alertasDe(facade, 'ordenes_duplicadas');
+    assert.equal(a.length, 1);
+    assert.match(a[0].title, /PED-DUP está 2 veces/);
   });
 
   // ---- Resumen --------------------------------------------------------------

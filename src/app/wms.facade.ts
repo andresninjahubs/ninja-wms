@@ -4270,6 +4270,16 @@ export class WmsFacade {
       const r = await this.autoBalance(operationId, { type: 'PICK', execute: true, by: actor });
       return `${r.asignadas} tarea(s) de picking repartida(s)`;
     }
+    // Las tres del flujo de entrada / vuelta a ubicación: mismo reparto que el picking,
+    // sobre su propio pool. Si no hay operarios activos, autoBalance devuelve 0 y lo
+    // decimos tal cual en vez de dar por hecho un reparto que no ocurrió.
+    if (tool === 'atender_guardado' || tool === 'atender_recepciones' || tool === 'atender_reposicion') {
+      const tipo: WorkTaskType = tool === 'atender_guardado' ? 'PUTAWAY' : tool === 'atender_recepciones' ? 'RECEIVE' : 'RESTOCK';
+      const etiqueta = tool === 'atender_guardado' ? 'guardado' : tool === 'atender_recepciones' ? 'recepción' : 'reposición';
+      const r = await this.autoBalance(operationId, { type: tipo, execute: true, by: actor });
+      if (!r.asignadas) return `no quedó nada de ${etiqueta} por repartir (o no hay operarios activos)`;
+      return `${r.asignadas} tarea(s) de ${etiqueta} repartida(s)`;
+    }
     if (tool === 'atender_deadline_riesgo') {
       // Escalada en dos pasos para los compromisos que se van a incumplir.
       //   Paso 1 — la mejor salida: que la tome alguien que está SIN trabajo. Se
@@ -4389,6 +4399,50 @@ export class WmsFacade {
    * Evalúa UNA regla y devuelve los candidatos a alerta POR ENTIDAD (orden, SKU, lote,
    * operario), cada uno con su referencia, para que sean accionables. Devuelve [] si nada.
    */
+
+  /**
+   * Desde cuándo espera el stock que HOY sigue en una ubicación.
+   *
+   * El saldo no guarda cuándo llegó cada unidad, así que hay que reconstruirlo del
+   * ledger. No basta con la entrada más antigua: por una ubicación de recepción
+   * pasa mercadería todo el año, y quedarse con la primera de la historia daría
+   * "lleva 4.000 h esperando" para algo que llegó ayer. Así que se arman las capas
+   * FIFO —cada entrada es una capa, cada salida consume desde la más vieja— y la
+   * antigüedad es la de la capa más vieja que todavía tiene saldo. Devuelve el ISO
+   * por `sku:ubicación`.
+   */
+  private async esperaEnUbicacion(sellerId: string, locationIds: Set<string>): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (!locationIds.size) return out;
+    const movs = (await this.inventory.listMovements(sellerId, 20000).catch(() => [] as any[]))
+      .filter((m: any) => m && locationIds.has(m.locationId))
+      .sort((a: any, b: any) => (a.occurredAt < b.occurredAt ? -1 : a.occurredAt > b.occurredAt ? 1 : 0));
+    const capas = new Map<string, Array<{ at: string; qty: number }>>();
+    for (const m of movs) {
+      const k = `${m.sku}:${m.locationId}`;
+      const q = capas.get(k) || [];
+      if (m.qtyDelta > 0) q.push({ at: m.occurredAt, qty: m.qtyDelta });
+      else {
+        let resta = -m.qtyDelta;
+        while (resta > 0 && q.length) {
+          const cabeza = q[0];
+          const usa = Math.min(cabeza.qty, resta);
+          cabeza.qty -= usa; resta -= usa;
+          if (cabeza.qty <= 0) q.shift();
+        }
+      }
+      capas.set(k, q);
+    }
+    for (const [k, q] of capas.entries()) if (q.length) out.set(k, q[0].at);
+    return out;
+  }
+  /** Horas transcurridas desde un ISO (0 si no se puede calcular). */
+  private horasDesde(iso: string | undefined | null, nowMs: number): number {
+    if (!iso) return 0;
+    const t = Date.parse(iso);
+    return Number.isNaN(t) ? 0 : Math.max(0, (nowMs - t) / 3600000);
+  }
+
   private async evalAgentRule(operationId: string, def: AgentRuleDef, cfg: AgentRuleConfig): Promise<Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'ORDER' | 'SKU' | 'LOT' | 'OPERATOR' }>> {
     const sid = cfg.sellerId || undefined;
     const nm = new Map<string, string>();
@@ -4470,6 +4524,114 @@ export class WmsFacade {
         action: l.days < 0 ? 'Da de baja o pon en cuarentena el lote vencido.' : 'Prioriza su salida (FEFO).',
       });
       return out.sort((a, b) => a.title.localeCompare(b.title));
+    }
+    // ---- v122: flujo de entrada, insumos, devoluciones y duplicados ----------
+    if (def.key === 'guardado_pendiente' || def.key === 'reposicion_pendiente') {
+      const esGuardado = def.key === 'guardado_pendiente';
+      const nowMs = Date.parse(this.clockNow());
+      const locs = await this.locations.listByOperation(operationId);
+      // Guardado: todo lo que está en zona de RECEPCIÓN salvo la ubicación de
+      // reposición. Reposición: exactamente esa ubicación. Son dos colas distintas
+      // (una viene del proveedor, la otra de una cancelación) y se atienden aparte.
+      const objetivo = new Map<string, string>();
+      for (const l of locs) {
+        const esRepo = l.code === REPOSICION_CODE;
+        if (esGuardado ? (l.zoneType === ZoneType.RECEIVING && !esRepo) : esRepo) objetivo.set(l.id, l.code);
+      }
+      if (!objetivo.size) return [];
+      const ids = new Set(objetivo.keys());
+      const sellers = sid ? [sid] : (await this.listSellers(operationId)).map((x) => x.id);
+      const out: Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'SKU' }> = [];
+      for (const s of sellers) {
+        const bal = await this.inventory.getStock({ sellerId: s }).catch(() => []);
+        const espera = await this.esperaEnUbicacion(s, ids);
+        const agg = new Map<string, { sku: string; loc: string; qty: number }>();
+        for (const b of bal) {
+          if (b.qty <= 0 || b.state !== StockState.AVAILABLE || !ids.has(b.locationId)) continue;
+          const k = `${b.sku}:${b.locationId}`;
+          const e = agg.get(k) || { sku: b.sku, loc: b.locationId, qty: 0 };
+          e.qty += b.qty; agg.set(k, e);
+        }
+        for (const [k, e] of agg.entries()) {
+          const horas = this.horasDesde(espera.get(k), nowMs);
+          if (horas < cfg.threshold) continue;
+          const ubic = objetivo.get(e.loc) || e.loc;
+          out.push({
+            sellerId: s, entityRef: `${e.sku}@${ubic}`, entityType: 'SKU' as const,
+            title: esGuardado
+              ? `${e.sku} lleva ${Math.round(horas)} h sin guardar en ${ubic}`
+              : `${e.sku} lleva ${Math.round(horas)} h esperando volver a su ubicación`,
+            detail: `${cl(s)} · ${e.qty} un en ${ubic}.` + (esGuardado ? ' Mientras siga ahí no se puede reservar.' : ' Volvió de una cancelación.'),
+            action: esGuardado ? 'Asigna el guardado a un operario activo.' : 'Asigna la reposición a un operario activo.',
+          });
+        }
+      }
+      return out.sort((a, b) => a.entityRef.localeCompare(b.entityRef));
+    }
+    if (def.key === 'recepcion_abierta') {
+      const nowMs = Date.parse(this.clockNow());
+      const sellers = sid ? [sid] : (await this.listSellers(operationId)).map((x) => x.id);
+      const out: Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'ORDER' }> = [];
+      for (const s of sellers) {
+        for (const r of await this.receipts.list(s).catch(() => [])) {
+          if (r.status !== ReceiptOrderStatus.PENDING && r.status !== ReceiptOrderStatus.PARTIAL) continue;
+          const horas = this.horasDesde(r.createdAt, nowMs);
+          if (horas < cfg.threshold) continue;
+          const esperadas = r.lines.reduce((a, l) => a + (l.expectedQty || 0), 0);
+          const recibidas = r.lines.reduce((a, l) => a + (l.receivedQty || 0), 0);
+          out.push({
+            sellerId: s, entityRef: r.id, entityType: 'ORDER' as const,
+            title: `Recepción ${r.id} abierta hace ${Math.round(horas)} h (${r.status === ReceiptOrderStatus.PARTIAL ? 'parcial' : 'sin recibir'})`,
+            detail: `${cl(s)}${r.supplier ? ' · ' + r.supplier : ''} · ${recibidas} de ${esperadas} un cotejadas.`,
+            action: r.status === ReceiptOrderStatus.PARTIAL ? 'Termina el cotejo y ciérrala, o cierra con lo recibido.' : 'Asígnala a un operario para recibirla.',
+          });
+        }
+      }
+      return out.sort((a, b) => a.entityRef.localeCompare(b.entityRef));
+    }
+    if (def.key === 'embalaje_bajo') {
+      const mats: any[] = await this.listPackaging(operationId).catch(() => [] as any[]);
+      return mats.filter((m: any) => m.active !== false).map((m: any) => {
+        // El mínimo del insumo manda; el umbral de la regla es el piso para los que
+        // todavía no tienen mínimo configurado.
+        const minimo = (m.minStock && m.minStock > 0) ? m.minStock : cfg.threshold;
+        return { m, minimo };
+      }).filter(({ m, minimo }: any) => minimo > 0 && (m.onHand ?? 0) <= minimo).map(({ m, minimo }: any) => ({
+        sellerId: null, entityRef: m.sku, entityType: 'SKU' as const,
+        title: (m.onHand ?? 0) <= 0 ? `${m.name} AGOTADO` : `${m.name} bajo el mínimo (${m.onHand} de ${minimo})`,
+        detail: `Insumo de embalaje ${m.sku}. Sin stock no se puede empacar ni despachar, aunque la orden esté lista.`,
+        action: 'Repón el insumo e ingrésalo en Empaquetado.',
+      }));
+    }
+    if (def.key === 'devolucion_sin_procesar') {
+      const nowMs = Date.parse(this.clockNow());
+      const sellers = sid ? [sid] : (await this.listSellers(operationId)).map((x) => x.id);
+      const out: Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'ORDER' }> = [];
+      for (const s of sellers) {
+        for (const r of await this.listReturns(s).catch(() => [])) {
+          if (r.status !== 'PENDING' && r.status !== 'PARTIAL') continue;
+          const horas = this.horasDesde(r.createdAt, nowMs);
+          if (horas < cfg.threshold) continue;
+          const un = r.lines.reduce((a, l) => a + (l.expectedQty || 0), 0);
+          out.push({
+            sellerId: s, entityRef: r.id, entityType: 'ORDER' as const,
+            title: `Devolución ${r.id} sin procesar hace ${Math.round(horas)} h`,
+            detail: `${cl(s)} · ${un} un${r.originalOrderRef ? ' · orden ' + r.originalOrderRef : ''}. El stock no vuelve a estar disponible hasta procesarla.`,
+            action: 'Haz el control de calidad y define la disposición de cada unidad.',
+          });
+        }
+      }
+      return out.sort((a, b) => a.entityRef.localeCompare(b.entityRef));
+    }
+    if (def.key === 'ordenes_duplicadas') {
+      const dup = await this.auditDuplicateOrders(operationId).catch(() => ({ groups: [] as Array<{ sellerId: string; externalOrderId: string; count: number; orderIds: string[] }>, totalDuplicates: 0 }));
+      const minimo = Math.max(1, cfg.threshold);
+      return dup.groups.filter((g) => (g.count - 1) >= minimo && (!sid || g.sellerId === sid)).map((g) => ({
+        sellerId: g.sellerId, entityRef: `${g.sellerId}:${g.externalOrderId}`, entityType: 'ORDER' as const,
+        title: `Orden ${g.externalOrderId} está ${g.count} veces`,
+        detail: `${cl(g.sellerId)} · ${g.count} órdenes con la misma referencia externa. Riesgo de preparar y despachar dos veces.`,
+        action: 'Revísalas y cancela las repetidas antes de que salgan a piso.',
+      }));
     }
     return [];
   }

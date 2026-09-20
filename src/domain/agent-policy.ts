@@ -66,6 +66,12 @@ export const ACTION_POLICIES: ActionPolicy[] = [
   { tool: 'cancelar_devolucion',    minLevel: 2, reversible: true,  requiresEvidence: false, category: 'returns',  label: 'Cancelar una devolución' },
   { tool: 'mensaje_a_operario',     minLevel: 2, reversible: false, requiresEvidence: false, category: 'comms',    label: 'Mandar un mensaje a un operario' },
   { tool: 'recibir_insumos_embalaje', minLevel: 2, reversible: false, requiresEvidence: true, category: 'inbound', label: 'Ingresar insumos de embalaje' },
+  // ---- v122: reglas del flujo de entrada y de reposición ----
+  // Reparten trabajo que ya existe en el pool, sin tocar stock: nivel 1, como el resto
+  // del balanceo. Nadie pierde una tarea empezada; solo se asigna lo que no tiene dueño.
+  { tool: 'atender_guardado',       minLevel: 1, reversible: true,  requiresEvidence: false, category: 'workload', label: 'Repartir el guardado pendiente' },
+  { tool: 'atender_recepciones',    minLevel: 1, reversible: true,  requiresEvidence: false, category: 'workload', label: 'Asignar las recepciones abiertas' },
+  { tool: 'atender_reposicion',     minLevel: 1, reversible: true,  requiresEvidence: false, category: 'workload', label: 'Repartir la reposición pendiente' },
 ];
 
 export function actionPolicy(tool: string): ActionPolicy | undefined {

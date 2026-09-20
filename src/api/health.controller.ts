@@ -17,7 +17,7 @@ export class HealthController {
   @Get('ui-config')
   uiConfig() {
     const raw = process.env.HIDDEN_MODULES;
-    const defaults = ['voz', 'costos', 'plan', 'aiaudit', 'asignaciones', 'agente'];
+    const defaults = ['voz', 'costos', 'plan', 'aiaudit', 'asignaciones', 'agente', 'agdiario', 'agalertas'];
     const hidden = raw == null ? defaults : raw.split(',').map((s) => s.trim()).filter(Boolean);
     return { hiddenModules: hidden, hideForPlatformAdmin: process.env.HIDDEN_MODULES_FOR_PLATFORM === 'true' };
   }

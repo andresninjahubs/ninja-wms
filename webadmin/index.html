@@ -437,6 +437,16 @@
   .fcount{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;padding:3px 6px;border-radius:999px;background:var(--line-2,rgba(0,0,0,.06));color:var(--ink-2);min-width:18px;text-align:center}
   .fchip.on .fcount{background:rgba(255,255,255,.26);color:#fff}
   .fchip.zero .fcount{opacity:.45}
+  /* Pestañas de deadline: no son un estado más del ciclo de vida, son una alerta.
+     Van separadas por una línea y con el color de la urgencia que representan. */
+  .fchip.dlsep{margin-left:5px;padding-left:12px;border-left:2px solid var(--line-2,rgba(0,0,0,.12));border-top-left-radius:0;border-bottom-left-radius:0}
+  .fchip.dl-v{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
+  .fchip.dl-v .fcount{background:var(--crit-wash);color:var(--crit)}
+  .fchip.dl-v.on{background:var(--crit);color:#fff;border-color:transparent;box-shadow:0 6px 14px -8px var(--crit)}
+  .fchip.dl-r{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+  .fchip.dl-r .fcount{background:var(--warn-wash);color:var(--warn)}
+  .fchip.dl-r.on{background:var(--warn);color:#fff;border-color:transparent;box-shadow:0 6px 14px -8px var(--warn)}
+  .fchip.dl-v.on .fcount,.fchip.dl-r.on .fcount{background:rgba(255,255,255,.26);color:#fff}
   .mvbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:13px 15px;margin-bottom:14px}
   @media(max-width:1100px){.mvbar{grid-template-columns:repeat(3,1fr)}}
   @media(max-width:640px){.mvbar{grid-template-columns:repeat(2,1fr)}}
@@ -1108,8 +1118,10 @@
     <div class="navcat" data-cat="ninjaia">
       <button class="navcat-h" data-cat-toggle="ninjaia"><span class="ic">🛰️</span> Ninja IA <span class="navcat-arrow">▾</span></button>
       <div class="navcat-body">
-        <button class="nav sub" data-pg="agente"><span class="ic">🛰️</span> Agente <span class="badge" id="nav-agente"></span></button>
+        <button class="nav sub" data-pg="agente"><span class="ic">🛰️</span> Agente</button>
+        <button class="nav sub" data-pg="agdiario"><span class="ic">📓</span> Diario del agente</button>
         <button class="nav sub" data-pg="torre"><span class="ic">📡</span> Torre en vivo</button>
+        <button class="nav sub" data-pg="agalertas"><span class="ic">🔔</span> Alertas activas <span class="badge" id="nav-agente"></span></button>
         <button class="nav sub" data-pg="aiaudit"><span class="ic">🧠</span> Auditoría IA</button>
       </div>
     </div>
@@ -1837,20 +1849,39 @@
           <div class="b"><div id="agt-agenda"></div></div>
         </div>
         <div class="card">
-          <div class="h"><h3>Alertas activas</h3><div class="sp" style="flex:1"></div><span class="muted" id="agt-alerts-sub"></span></div>
-          <div class="b"><div id="agt-alerts"></div></div>
-        </div>
-        <div class="card">
           <div class="h"><h3>Instrucciones al agente</h3><div class="sp" style="flex:1"></div><span class="muted">Directrices vigentes que el agente respeta en cada ciclo</span></div>
           <div class="b"><div id="agt-instr"></div></div>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Reglas del agente</h3><div class="sp" style="flex:1"></div><span class="muted">Enciende/apaga cada regla y ajusta su umbral y enfriamiento</span></div>
+          <div class="b"><div id="agt-rules"></div></div>
+        </div>
+      </section>
+
+      <!-- Diario del agente: la memoria del agente, en su propia pantalla -->
+      <section class="page" data-pg="agdiario">
+        <div class="toolbar">
+          <span class="muted">Lo que el agente fue haciendo ciclo a ciclo: qué evaluó, qué decidió y qué resultó. Cada entrada trae la tabla de acciones ejecutadas o propuestas.</span>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn" id="agd-now" style="padding:8px 14px">Actualizar</button>
         </div>
         <div class="card">
           <div class="h"><h3>Diario del agente</h3><div class="sp" style="flex:1"></div><span class="muted">Memoria: ciclos, decisiones y resultados</span></div>
           <div class="b"><div id="agt-journal"></div></div>
         </div>
+      </section>
+
+      <!-- Alertas activas: la bandeja de lo que el agente detectó y sigue abierto -->
+      <section class="page" data-pg="agalertas">
+        <div class="toolbar">
+          <span class="muted">Lo que el agente detectó y todavía nadie resolvió. Cada alerta lleva a su pantalla y se puede descartar o ejecutar su acción.</span>
+          <div class="sp" style="flex:1"></div>
+          <span class="muted" id="agt-alerts-sub"></span>
+          <button class="btn pri" id="aga-eval" style="padding:8px 14px">⚡ Ejecutar ciclo ahora</button>
+        </div>
         <div class="card">
-          <div class="h"><h3>Reglas del agente</h3><div class="sp" style="flex:1"></div><span class="muted">Enciende/apaga cada regla y ajusta su umbral y enfriamiento</span></div>
-          <div class="b"><div id="agt-rules"></div></div>
+          <div class="h"><h3>Alertas activas</h3><div class="sp" style="flex:1"></div><span class="muted">Abiertas, de la más nueva a la más antigua</span></div>
+          <div class="b"><div id="agt-alerts"></div></div>
         </div>
       </section>
 

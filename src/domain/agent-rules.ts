@@ -7,7 +7,14 @@
 import { AgentRuleSeverity } from './types';
 
 /** Herramientas que una regla puede ejecutar automáticamente (Fase 3). Reversibles y auditadas. */
-export type AgentActionTool = 'liberar_inactivos' | 'balancear_carga' | 'asignar_a_ociosos' | 'atender_deadline_riesgo';
+export type AgentActionTool =
+  | 'liberar_inactivos'
+  | 'balancear_carga'
+  | 'asignar_a_ociosos'
+  | 'atender_deadline_riesgo'
+  | 'atender_guardado'
+  | 'atender_recepciones'
+  | 'atender_reposicion';
 
 export interface AgentRuleDef {
   key: string;
@@ -71,6 +78,50 @@ export const AGENT_RULES: AgentRuleDef[] = [
     name: 'Lote por vencer (FEFO)',
     description: 'Lotes con saldo cuyo vencimiento está próximo o ya venció.',
     unit: 'días', defaultThreshold: 14, defaultSeverity: 'warn', defaultCooldownMin: 1440, link: 'inventory',
+  },
+  // ---- Flujo de entrada y de vuelta a ubicación -----------------------------
+  // Tres cuellos de botella clásicos que no miran las reglas de órdenes: la
+  // mercadería que llegó pero todavía no es vendible, la recepción que quedó a
+  // medio cotejar, y el stock que volvió de una cancelación y no regresó a su sitio.
+  {
+    key: 'guardado_pendiente',
+    name: 'Mercadería sin guardar',
+    description: 'Stock esperando guardado en zona de recepción hace más de N horas. Mientras siga ahí NO es reservable: aparecen quiebres que no son reales.',
+    unit: 'horas', defaultThreshold: 4, defaultSeverity: 'crit', defaultCooldownMin: 60, link: 'putaway',
+    autoAction: { tool: 'atender_guardado', label: 'Repartir el guardado pendiente entre operarios activos' },
+  },
+  {
+    key: 'recepcion_abierta',
+    name: 'Recepción abierta sin cerrar',
+    description: 'Recepciones pendientes o parciales que llevan demasiadas horas sin terminar de cotejarse.',
+    unit: 'horas', defaultThreshold: 8, defaultSeverity: 'warn', defaultCooldownMin: 120, link: 'inbound',
+    autoAction: { tool: 'atender_recepciones', label: 'Asignar las recepciones abiertas a operarios activos' },
+  },
+  {
+    key: 'reposicion_pendiente',
+    name: 'Reposición pendiente',
+    description: 'Mercadería que volvió de una orden cancelada y sigue en la ubicación de reposición sin regresar a su sitio.',
+    unit: 'horas', defaultThreshold: 12, defaultSeverity: 'warn', defaultCooldownMin: 180, link: 'putaway',
+    autoAction: { tool: 'atender_reposicion', label: 'Repartir la reposición pendiente entre operarios activos' },
+  },
+  // ---- Insumos, devoluciones y calidad de la data ---------------------------
+  {
+    key: 'embalaje_bajo',
+    name: 'Insumo de embalaje por agotarse',
+    description: 'Insumos de embalaje bajo su stock mínimo. Sin cajas no se despacha, aunque todo lo demás esté listo.',
+    unit: 'mínimo', defaultThreshold: 20, defaultSeverity: 'crit', defaultCooldownMin: 720, link: 'packaging',
+  },
+  {
+    key: 'devolucion_sin_procesar',
+    name: 'Devolución sin procesar',
+    description: 'Devoluciones recibidas hace más de N horas que siguen sin resolverse (el stock no vuelve a estar disponible hasta que se procesan).',
+    unit: 'horas', defaultThreshold: 24, defaultSeverity: 'warn', defaultCooldownMin: 240, link: 'returns',
+  },
+  {
+    key: 'ordenes_duplicadas',
+    name: 'Órdenes duplicadas',
+    description: 'Mismo cliente y misma referencia externa en más de una orden: riesgo de preparar y despachar dos veces.',
+    unit: 'mínimo', defaultThreshold: 1, defaultSeverity: 'crit', defaultCooldownMin: 360, link: 'orders',
   },
 ];
 

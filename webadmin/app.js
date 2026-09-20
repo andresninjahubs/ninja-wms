@@ -31,6 +31,8 @@
       return r*s.dir;
     });
   }
+  /** Fija el orden de una tabla desde código (lo mismo que hacer clic en su encabezado). */
+  function setSort(key, sk, dir){ _sort[key]={sk:sk,dir:dir||1}; }
   function paintSort(key){
     $$('th[data-tk="'+key+'"][data-sk]').forEach(function(th){
       var ind=th.querySelector('.sar'); if(!ind)return;
@@ -88,10 +90,10 @@
     }).join("");
   }
   var NAV_BY_ROLE={
-    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","torre","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
-    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","torre","plan","branding","clients","users"],
+    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
+    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan","branding","clients","users"],
     // Sin "billing": la facturación es del administrador de la operación, no del supervisor.
-    SUPERVISOR:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","torre","plan"],
+    SUPERVISOR:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan"],
     OPERATOR:["dashboard","copilot","inventory","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","voicechannel"],
     CLIENT:["dashboard","copilot","inventory","products","orders","inbound","returns","movements","billing","chat","webhooks"]
   };
@@ -199,7 +201,15 @@
   // Se quitan del menú, del Centro de aprendizaje y de la navegación directa. Por defecto
   // el super-admin de plataforma sí los ve (para revisarlos antes de mostrarlos al cliente).
   var uiConfig={hiddenModules:[],hideForPlatformAdmin:false};
-  function moduleHidden(pg){ if(role==='PLATFORM_ADMIN'&&!uiConfig.hideForPlatformAdmin)return false; return uiConfig.hiddenModules.indexOf(pg)>=0; }
+  // Pantallas que nacieron dentro de otra: si el módulo padre está oculto, ellas
+  // también. Sin esto, apagar "agente" dejaba igual visibles su diario y sus alertas.
+  var MOD_PADRE={agdiario:'agente',agalertas:'agente'};
+  function moduleHidden(pg){
+    if(role==='PLATFORM_ADMIN'&&!uiConfig.hideForPlatformAdmin)return false;
+    if(uiConfig.hiddenModules.indexOf(pg)>=0)return true;
+    var padre=MOD_PADRE[pg];
+    return !!padre&&uiConfig.hiddenModules.indexOf(padre)>=0;
+  }
   function loadUiConfig(){ return api('/ui-config').then(function(c){ if(c&&Array.isArray(c.hiddenModules))uiConfig=c; }).catch(function(){}); }
   var uiConfigP=loadUiConfig(); // se pide al cargar la página (endpoint público) para que el menú no parpadee tras el login
   function applyHiddenModules(){
@@ -519,7 +529,7 @@
       if(document.activeElement&&/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)&&document.activeElement.closest('.content'))return Promise.resolve();
     }
     liveBusy=true; paintLive();
-    var p= pg==='agente' ? Promise.resolve(renderAgente()) : pg==='multicliente' ? Promise.resolve(renderMultiCliente()) : (pg==='dashboard'||pg==='locations') ? loadOp() : loadSeller();
+    var p= pg==='agente' ? Promise.resolve(renderAgente()) : pg==='agalertas' ? Promise.resolve(renderAgAlertas()) : pg==='agdiario' ? Promise.resolve(renderAgDiario()) : pg==='multicliente' ? Promise.resolve(renderMultiCliente()) : (pg==='dashboard'||pg==='locations') ? loadOp() : loadSeller();
     if(pg==='billing'&&typeof renderBilling==='function')p=Promise.resolve(p).then(function(){renderBilling();});
     return Promise.resolve(p).catch(function(){}).then(function(){ liveBusy=false; liveLast=Date.now(); paintLive(); });
   }
@@ -3424,17 +3434,49 @@
     renderLocations();
   });});
 
+  /**
+   * Nivel de deadline de una orden PARA FILTRAR.
+   *
+   * Despachada o cancelada ya no compromete nada: su deadline dejó de correr y no
+   * debe engrosar los contadores de vencidas ni de riesgo (si no, la pestaña
+   * "Vencidas" se llenaría de histórico y dejaría de servir como bandeja de trabajo).
+   */
+  function dlNivelOrden(o){
+    if(!o||o.status==='SHIPPED'||o.status==='CANCELLED')return 'sin';
+    return dlState(o.dueAt).level;
+  }
+  /** ¿Esta orden entra en la pestaña activa? Estados del ciclo + las dos de deadline. */
+  function ordEnFiltro(o){
+    if(ordFilter==='DL_VENCIDO')return dlNivelOrden(o)==='vencido';
+    if(ordFilter==='DL_RIESGO'){var l=dlNivelOrden(o);return l==='critico'||l==='riesgo';}
+    return ordFilter==='ALL'||o.status===ordFilter;
+  }
   function renderOrdFilters(){
     var states=["ALL","RECEIVED","ALLOCATED","PICKING","PICKED","PACKED","SHIPPED","CANCELLED"];
     // Contador por estado: cuántas órdenes hay en cada etapa del ciclo de vida, para ver
     // la carga de trabajo sin tener que abrir cada filtro. Se recalcula en cada refresco.
     var counts={ALL:(D.ord||[]).length};
-    (D.ord||[]).forEach(function(o){counts[o.status]=(counts[o.status]||0)+1;});
-    $("#ord-filters").innerHTML=states.map(function(s){
-      var n=counts[s]||0;
-      return '<button class="fchip '+(ordFilter===s?"on":"")+(n?"":" zero")+'" data-f="'+s+'">'+(s==="ALL"?"Todas":STN[s])+'<span class="fcount">'+n+'</span></button>';
-    }).join("");
-    $$("#ord-filters .fchip").forEach(function(b){b.addEventListener("click",function(){ordFilter=b.getAttribute("data-f");renderOrdFilters();renderOrders();});});
+    var venc=0,riesgo=0;
+    (D.ord||[]).forEach(function(o){
+      counts[o.status]=(counts[o.status]||0)+1;
+      var l=dlNivelOrden(o);
+      if(l==='vencido')venc++; else if(l==='critico'||l==='riesgo')riesgo++;
+    });
+    var chip=function(k,label,n,extra){
+      return '<button class="fchip '+(extra||"")+' '+(ordFilter===k?"on":"")+(n?"":" zero")+'" data-f="'+k+'">'+label+'<span class="fcount">'+n+'</span></button>';
+    };
+    var html=states.map(function(s){return chip(s,(s==="ALL"?"Todas":STN[s]),counts[s]||0);}).join("");
+    // Las dos bandejas por compromiso de salida, al final y separadas de los estados.
+    html+=chip('DL_VENCIDO','⏰ Vencidas',venc,'dl-v dlsep')+chip('DL_RIESGO','⚠️ En riesgo',riesgo,'dl-r');
+    $("#ord-filters").innerHTML=html;
+    $$("#ord-filters .fchip").forEach(function(b){b.addEventListener("click",function(){
+      ordFilter=b.getAttribute("data-f");
+      // Entrar a una bandeja de deadline la ordena por urgencia (la tabla trae por
+      // defecto "más reciente primero", que aquí no dice nada). Después el usuario
+      // puede reordenar por la columna que quiera, como en cualquier otra pestaña.
+      if(ordFilter==='DL_VENCIDO'||ordFilter==='DL_RIESGO')setSort('orders','deadline',1);
+      renderOrdFilters();renderOrders();
+    });});
   }
   function renderInbFilters(){
     if(!$("#inb-filters"))return;
@@ -3443,7 +3485,7 @@
     $$("#inb-filters .fchip").forEach(function(b){b.addEventListener("click",function(){inbFilter=b.getAttribute("data-f");renderInbound();});});
   }
   function renderOrders(){
-    var os=D.ord.filter(function(o){return ordFilter==="ALL"||o.status===ordFilter;});
+    var os=D.ord.filter(ordEnFiltro);
     os=sortRows('orders',os,ORD_COLS);
     var canOrder=can('order');
     $("#ord-body").innerHTML=os.length?os.map(function(o){
@@ -3468,7 +3510,7 @@
         +'</div>';
       var selCell=bulkEnabled()?'<td class="selcol"><input type="checkbox" class="bulk-ck" data-bk="'+o.id+'" '+(bulkSel[o.id]?'checked':'')+' aria-label="Seleccionar orden"></td>':'';
       return '<tr class="click'+(bulkSel[o.id]?' selected':'')+'" data-o="'+o.id+'">'+selCell+'<td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td><td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td style="white-space:nowrap">'+dlChip(o)+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span></td><td style="text-align:right">'+acts+'</td></tr>';
-    }).join(""):'<tr><td colspan="'+(bulkEnabled()?9:8)+'" class="empty">Sin órdenes en este estado.</td></tr>';
+    }).join(""):'<tr><td colspan="'+(bulkEnabled()?9:8)+'" class="empty">'+(ordFilter==='DL_VENCIDO'?'Ninguna orden pendiente pasó su deadline. 🎉':ordFilter==='DL_RIESGO'?'Ninguna orden pendiente está cerca de su deadline.':'Sin órdenes en este estado.')+'</td></tr>';
     var selTh=$("#ord-selall"); if(selTh)selTh.closest('th').classList.toggle('hidden',!bulkEnabled());
     var selM=$("#ord-selall-m"); if(selM)selM.classList.toggle('hidden',!bulkEnabled()||!os.length);
     syncBulkHeader(os); paintBulkBar();
@@ -3552,11 +3594,11 @@
     });
   }
   (function bindBulk(){
-    var h=$("#ord-selall"); if(h)h.addEventListener('change',function(){ var vis=D.ord.filter(function(o){return ordFilter==="ALL"||o.status===ordFilter;}); vis.forEach(function(o){ if(h.checked)bulkSel[o.id]=true; else delete bulkSel[o.id]; }); renderOrders(); paintBulkBar(); });
+    var h=$("#ord-selall"); if(h)h.addEventListener('change',function(){ var vis=D.ord.filter(ordEnFiltro); vis.forEach(function(o){ if(h.checked)bulkSel[o.id]=true; else delete bulkSel[o.id]; }); renderOrders(); paintBulkBar(); });
     var sa=$("#bulk-action"); if(sa)sa.addEventListener('change',function(){ $("#bulk-apply").disabled=!sa.value; });
     var ap=$("#bulk-apply"); if(ap)ap.addEventListener('click',bulkApply);
     var cl=$("#bulk-clear"); if(cl)cl.addEventListener('click',bulkClear);
-    function selectVisible(){ D.ord.filter(function(o){return ordFilter==="ALL"||o.status===ordFilter;}).forEach(function(o){bulkSel[o.id]=true;}); renderOrders(); paintBulkBar(); }
+    function selectVisible(){ D.ord.filter(ordEnFiltro).forEach(function(o){bulkSel[o.id]=true;}); renderOrders(); paintBulkBar(); }
     var al=$("#bulk-all"); if(al)al.addEventListener('click',selectVisible);
     var alm=$("#ord-selall-m"); if(alm)alm.addEventListener('click',selectVisible);
   })();
@@ -3615,7 +3657,12 @@
   /** Carga la configuración de deadlines de la operación (una vez por sesión/operación). */
   function loadDeadlineConfig(){
     if(!op)return Promise.resolve();
-    return api('/operations/'+op+'/deadline-config').then(function(c){ DL=c||{}; if(DL.riesgoHoras==null)DL.riesgoHoras=4; if(!DL.cortes)DL.cortes=[]; }).catch(function(){});
+    return api('/operations/'+op+'/deadline-config').then(function(c){
+      DL=c||{}; if(DL.riesgoHoras==null)DL.riesgoHoras=4; if(!DL.cortes)DL.cortes=[];
+      // La ventana de riesgo define qué cae en la pestaña "En riesgo": si la tabla ya
+      // se pintó con el valor por defecto, hay que recontar con el real.
+      if(D.ord&&D.ord.length){ renderOrdFilters(); renderOrders(); }
+    }).catch(function(){});
   }
   var DIAS=[['1','Lun'],['2','Mar'],['3','Mié'],['4','Jue'],['5','Vie'],['6','Sáb'],['0','Dom']];
   function openDeadlineConfig(){
@@ -3653,7 +3700,7 @@
     $("#dl-save").addEventListener('click',function(){
       read();
       api('/operations/'+op+'/deadline-config',{method:'PATCH',body:{cortes:cortes,riesgoHoras:Number($("#dl-riesgo").value)||0,offsetHoras:Number($("#dl-off").value)}})
-        .then(function(c){ DL=c||{}; if(!DL.cortes)DL.cortes=[]; closeModal(); toast('Deadlines actualizados'); renderPickQueue(); })
+        .then(function(c){ DL=c||{}; if(!DL.cortes)DL.cortes=[]; closeModal(); toast('Deadlines actualizados'); renderPickQueue(); renderOrdFilters(); renderOrders(); })
         .catch(function(e){ toast(e.message); });
     });
   }
@@ -6515,15 +6562,56 @@
   function agtScope(){return 'operationId='+encodeURIComponent(op);}
   function agtCanSee(){return !!token&&!!op&&(role==='ADMIN'||role==='SUPERVISOR'||role==='PLATFORM_ADMIN');}
   function agtBadge(n){var b=$('#nav-agente');if(b){b.textContent=n?String(n):'';b.style.display=n?'':'none';}}
+  /**
+   * Dispara un ciclo del agente desde donde se pida y refresca lo que esté en pantalla.
+   * Vive aparte porque el botón está en dos pestañas (configuración y alertas).
+   */
+  function agtCiclo(btn, despues){
+    if(!op)return;
+    if(btn)btn.disabled=true;
+    api('/agent/sweep',{method:'POST',body:{operationId:op}}).then(function(r){
+      if(btn)btn.disabled=false;
+      var b=r&&r.barrido;
+      toast(r&&r.skipped?('Ciclo omitido: '+r.skipped):(b?('Ciclo: '+b.nuevas+' alerta(s) nueva(s), '+b.ejecutadas+' ejecutada(s), '+b.propuestas+' propuesta(s), '+b.sombra+' en sombra'):'Ciclo ejecutado'));
+      if(despues)despues();
+    }).catch(function(e){ if(btn)btn.disabled=false; toast(e.message); });
+  }
+  /**
+   * Pestaña AGENTE: solo configuración — estado y autonomía, ventanas horarias,
+   * instrucciones y reglas. El diario y las alertas viven en su propia pantalla
+   * (son bitácora y bandeja de trabajo, no ajustes que uno viene a tocar).
+   */
   function renderAgente(){
     if(!op)return;
     var ev=$('#agt-eval');
-    if(ev)ev.onclick=function(){ev.disabled=true;api('/agent/sweep',{method:'POST',body:{operationId:op}}).then(function(r){ev.disabled=false;var b=r&&r.barrido;toast(r&&r.skipped?('Ciclo omitido: '+r.skipped):(b?('Ciclo: '+b.nuevas+' alerta(s) nueva(s), '+b.ejecutadas+' ejecutada(s), '+b.propuestas+' propuesta(s), '+b.sombra+' en sombra'):'Ciclo ejecutado'));renderAgente();}).catch(function(e){ev.disabled=false;toast(e.message);});};
+    if(ev)ev.onclick=function(){ agtCiclo(ev, renderAgente); };
     api('/agent/status?operationId='+encodeURIComponent(op)).then(function(st){ paintAgentStatus(st); paintAgentAgenda(st); }).catch(function(){});
     api('/agent/rules?'+agtScope()).then(paintAgentRules).catch(function(){});
-    api('/agent/alerts?'+agtScope()).then(paintAgentAlerts).catch(function(){});
     api('/agent/instructions?operationId='+encodeURIComponent(op)).then(paintAgentInstructions).catch(function(){});
+    agtRefrescaInsignia();
+  }
+  /** Pestaña ALERTAS ACTIVAS. */
+  function renderAgAlertas(){
+    if(!op)return;
+    var ev=$('#aga-eval');
+    if(ev)ev.onclick=function(){ agtCiclo(ev, renderAgAlertas); };
+    api('/agent/alerts?'+agtScope()).then(paintAgentAlerts).catch(function(){});
+  }
+  /** Pestaña DIARIO DEL AGENTE. */
+  function renderAgDiario(){
+    if(!op)return;
+    var b=$('#agd-now');
+    if(b&&!b.__bound){ b.__bound=true; b.addEventListener('click',renderAgDiario); }
     api('/agent/journal?operationId='+encodeURIComponent(op)+'&limit=40').then(paintAgentJournal).catch(function(){});
+  }
+  /**
+   * La insignia del menú cuenta alertas abiertas, así que hay que saber cuántas hay
+   * aunque no estemos en esa pestaña. paintAgentAlerts ya la actualiza cuando la
+   * pantalla está montada; esto cubre el resto de los casos sin pintar nada.
+   */
+  function agtRefrescaInsignia(){
+    if(!op)return;
+    api('/agent/alerts?'+agtScope()).then(function(d){ agtBadge(((d&&d.abiertas)||[]).length); }).catch(function(){});
   }
   var AGT_LEVELS=[['0','0 · Observador — solo vigila y propone'],['1','1 · Asistido — asigna y balancea solo; el resto propone'],['2','2 · Supervisado — además avanza órdenes, crea recepciones/órdenes y configura automatismos'],['3','3 · Autónomo — todo dentro de límites; escala excepciones']];
   function paintAgentStatus(st){
@@ -6854,8 +6942,8 @@
         +'</div></div>';
     }).join('');
     $$('#agt-alerts [data-agtgo]').forEach(function(x){x.addEventListener('click',function(){go(x.getAttribute('data-agtgo'));});});
-    $$('#agt-alerts [data-agtack]').forEach(function(x){x.addEventListener('click',function(){api('/agent/alerts/'+encodeURIComponent(x.getAttribute('data-agtack'))+'/ack',{method:'POST',body:{operationId:op}}).then(function(){toast('Alerta descartada');renderAgente();}).catch(function(e){toast(e.message);});});});
-    $$('#agt-alerts [data-agtexec]').forEach(function(x){x.addEventListener('click',function(){x.disabled=true;api('/agent/alerts/'+encodeURIComponent(x.getAttribute('data-agtexec'))+'/execute',{method:'POST',body:{operationId:op}}).then(function(r){toast(r&&r.ok?('Ejecutado'+(r.result?': '+r.result:'')):('No se pudo: '+((r&&r.error)||'')));renderAgente();}).catch(function(e){toast(e.message);renderAgente();});});});
+    $$('#agt-alerts [data-agtack]').forEach(function(x){x.addEventListener('click',function(){api('/agent/alerts/'+encodeURIComponent(x.getAttribute('data-agtack'))+'/ack',{method:'POST',body:{operationId:op}}).then(function(){toast('Alerta descartada');renderAgAlertas();}).catch(function(e){toast(e.message);});});});
+    $$('#agt-alerts [data-agtexec]').forEach(function(x){x.addEventListener('click',function(){x.disabled=true;api('/agent/alerts/'+encodeURIComponent(x.getAttribute('data-agtexec'))+'/execute',{method:'POST',body:{operationId:op}}).then(function(r){toast(r&&r.ok?('Ejecutado'+(r.result?': '+r.result:'')):('No se pudo: '+((r&&r.error)||'')));renderAgAlertas();}).catch(function(e){toast(e.message);renderAgAlertas();});});});
   }
   function paintAgentRules(list){
     var box=$('#agt-rules');if(!box)return;list=list||[];
@@ -6894,11 +6982,11 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Agente de bodega: autonomía, alertas, instrucciones y diario"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
     if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="dashboard"){loadDash().then(dashTick);}else{clearTimeout(dashTimer);}
-    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
+    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});
