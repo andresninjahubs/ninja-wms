@@ -274,8 +274,32 @@ export const COPILOT_TOOLS: ToolSpec[] = [
 ];
 
 /**
- * Herramientas de ACCIÓN (escritura). Solo se exponen a usuarios con permiso de
- * operación (order:fulfill). Según el modo de la operación, se ejecutan directo o
+ * Herramientas que reparten trabajo entre personas o configuran ese reparto.
+ *
+ * Mandar a la gente no es lo mismo que ejecutar el trabajo: estas exigen
+ * `master:manage` (supervisor o administrador), no basta con `order:fulfill`.
+ * Sin esta separación un operario conseguía por el chat lo que la API le negaba
+ * —liberar la tarea de un colega, vaciarlo, reasignar en masa—, y el permiso
+ * quedaba dependiendo de por dónde entrara la petición.
+ */
+export const COPILOT_MANAGE_TOOLS: ReadonlySet<string> = new Set([
+  'asignar_tarea',
+  'asignar_tareas_masivo',
+  'liberar_asignacion',
+  'vaciar_operario',
+  'balancear_carga',
+  'reasignar_ociosidad',
+  'activar_auto_balanceo',
+  'fijar_modo_asignacion',
+  // Las directrices del agente dirigen a quién se le asigna: mismo permiso.
+  // Por REST ya exigen seller:config, que el operario tampoco tiene.
+  'guardar_instruccion',
+]);
+
+/**
+ * Herramientas de ACCIÓN (escritura). Se exponen a usuarios con permiso de
+ * operación (order:fulfill); las de COPILOT_MANAGE_TOOLS además exigen
+ * master:manage. Según el modo de la operación, se ejecutan directo o
  * se proponen para confirmación del usuario.
  */
 export const COPILOT_ACTION_TOOLS: ToolSpec[] = [

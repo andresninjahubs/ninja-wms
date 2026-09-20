@@ -2892,14 +2892,28 @@
   var annActive=null, annDismissedId=null;
   function annRoleLabel(r){return {PLATFORM_ADMIN:'Plataforma',ADMIN:'Administrador',SUPERVISOR:'Supervisor',OPERATOR:'Operario',CLIENT:'Cliente'}[r]||r;}
   function opName2(id){if(!id)return '—';var o=(D.ops||[]).filter(function(x){return x.id===id;})[0];return o?(o.name||id):id;}
+  /**
+   * Muestra la barra superior SOLO si hay un anuncio activo de verdad.
+   *
+   * Cuidado con el caso vacío: cuando no hay ninguno activo el backend responde
+   * 200 con cuerpo vacío y api() lo normaliza a {} —un objeto sin id, pero
+   * igualmente "truthy"—, así que la barra se abría igual y quedaba una franja
+   * de color sin texto. Por eso exigimos id y título, y ante cualquier error
+   * la barra se esconde en vez de quedarse pegada de la vuelta anterior.
+   */
   function pollAnnouncement(){
     var bar=$("#ann-bar"); if(!bar)return;
-    if(!can('annView')){bar.style.display='none';return;}
+    function ocultar(){ annActive=null; bar.style.display='none'; }
+    if(!can('annView')){ocultar();return;}
     api('/announcements/active').then(function(a){
+      var hay=a&&typeof a==='object'&&a.id&&String(a.title||'').trim();
+      if(!hay){ocultar();return;}
       annActive=a;
-      if(a&&a.id!==annDismissedId){$("#ann-text").textContent=a.title;$("#ann-link").textContent=a.linkLabel||'Ver más';bar.style.display='';}
-      else bar.style.display='none';
-    }).catch(function(){});
+      if(a.id===annDismissedId){bar.style.display='none';return;} // el usuario la cerró
+      $("#ann-text").textContent=a.title;
+      $("#ann-link").textContent=a.linkLabel||'Ver más';
+      bar.style.display='';
+    }).catch(ocultar);
   }
   function renderAnnouncements(){
     if(!$("#ann-list")||!can('annManage'))return;

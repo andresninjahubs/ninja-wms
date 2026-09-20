@@ -126,7 +126,7 @@ import {
   ReplenishItem,
 } from '../domain/copilot';
 import { askCopilotAgent, askCopilotChat, askCopilotLlmDetailed, listModels as listLlmModels, PROVIDER_DEFAULTS as COPILOT_PROVIDERS } from '../domain/copilot-llm';
-import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS } from '../domain/copilot-tools';
+import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS, COPILOT_MANAGE_TOOLS } from '../domain/copilot-tools';
 
 export interface CreateSkuInput {
   sku: string;
@@ -604,14 +604,25 @@ export class WmsFacade {
       'Tienes HERRAMIENTAS para consultar datos en vivo del WMS (kardex, línea de tiempo de órdenes, facturación, canal de voz, etc.). Úsalas cuando necesites un dato que no esté en el resumen. Responde SOLO con datos reales (del resumen o de las herramientas); nunca inventes cifras.',
     ].join(' ');
     const canWrite = this.copilotCanWrite(actor?.role);
+    const canManage = this.copilotCanManage(actor?.role);
     const settings = await this.agentSettings(operationId);
     const mode = settings.actionMode;
     if (canWrite) {
-      sys += ' Además puedes EJECUTAR acciones sobre órdenes con la herramienta avanzar_estado_orden (reservar, pickear, empacar, despachar), CREAR una recepción nueva (crear_recepcion) o una orden de salida nueva reservando su stock si te lo piden (crear_orden), asignar CUALQUIER tipo de tarea que ejecuta un operario —PICK, PACK, SHIP, PUTAWAY, RECEIVE, RESLOT o COUNT— (asignar_tarea), balancear la carga sin asignar (balancear_carga), DEJAR SIN TAREAS a un operario concreto repartiendo su carga al resto (vaciar_operario — es la única que le quita trabajo ya asignado a una persona), y CONFIGURAR LOS AUTOMATISMOS de la bodega: activar/desactivar el auto-balanceo continuo (activar_auto_balanceo), fijar el modo de asignación advisory/estricto (fijar_modo_asignacion) y disparar la reasignación por ociosidad (reasignar_ociosidad). Cuando el administrador te da una directriz para "operar en automático" (ej. "mantén el equipo balanceado solo", "que nadie quede ocioso"), traduce esa intención a estas herramientas de automatismo. También puedes CERRAR los flujos que antes quedaban a medias: recibir mercadería contra una recepción y cerrarla (recibir_recepcion, cerrar_recepcion), cancelar y reactivar órdenes (cancelar_orden, reactivar_orden), reservar varias de una vez (reservar_ordenes), soltar una tarea al pool o asignar varias de golpe (liberar_asignacion, asignar_tareas_masivo), manejar devoluciones (crear_devolucion, procesar_devolucion, cancelar_devolucion), avisarle a un operario en su app (mensaje_a_operario) e ingresar insumos de embalaje (recibir_insumos_embalaje). Antes de opinar o actuar sobre algo que ya está configurado, MÍRALO: instrucciones_vigentes para las directrices que ya te dieron, estado_automatismos para el modo de asignación y el auto-balanceo, reglas_agente para entender por qué el agente hizo o no hizo algo, y tareas_operario antes de tocarle la carga a alguien. Para crear órdenes o recepciones, si no sabes el id del cliente usa clientes_operacion y si no conoces los SKU usa catalogo_productos antes de crear. REGLA INNEGOCIABLE sobre lo que informas: describe SOLO lo que la herramienta devolvió. Si el resultado trae sinCambios:true, o un contador en 0, o ok:false, di claramente que NO se hizo el cambio y por qué; nunca lo cuentes como hecho ni inventes a qué operario pasó cada tarea. Si te piden confirmar algo que acabas de hacer, vuelve a consultarlo con la herramienta de lectura antes de responder.';
+      // El bloque de escritura se arma en dos partes: lo que puede hacer quien
+      // EJECUTA el trabajo, y lo que solo puede hacer quien lo REPARTE. Si le
+      // describimos al modelo herramientas que el usuario no tiene, propone
+      // movimientos de carga que después se rechazan y le queda debiendo.
+      sys += ' Además puedes EJECUTAR acciones sobre órdenes con la herramienta avanzar_estado_orden (reservar, pickear, empacar, despachar), CREAR una recepción nueva (crear_recepcion) o una orden de salida nueva reservando su stock si te lo piden (crear_orden).';
+      if (canManage) {
+        sys += ' También MANDAS el trabajo del equipo: asignar CUALQUIER tipo de tarea que ejecuta un operario —PICK, PACK, SHIP, PUTAWAY, RECEIVE, RESLOT o COUNT— (asignar_tarea), balancear la carga sin asignar (balancear_carga), DEJAR SIN TAREAS a un operario concreto repartiendo su carga al resto (vaciar_operario — es la única que le quita trabajo ya asignado a una persona), soltar una tarea al pool o asignar varias de golpe (liberar_asignacion, asignar_tareas_masivo), y CONFIGURAR LOS AUTOMATISMOS de la bodega: activar/desactivar el auto-balanceo continuo (activar_auto_balanceo), fijar el modo de asignación advisory/estricto (fijar_modo_asignacion) y disparar la reasignación por ociosidad (reasignar_ociosidad). Cuando el administrador te da una directriz para "operar en automático" (ej. "mantén el equipo balanceado solo", "que nadie quede ocioso"), traduce esa intención a estas herramientas de automatismo. Usa tareas_operario antes de tocarle la carga a alguien.';
+      } else {
+        sys += ' NO puedes asignar, liberar ni redistribuir tareas: eso lo hace un supervisor o administrador. Si te lo piden, dilo así de simple y, si es para uno mismo, recuerda que el trabajo disponible se toma desde la app del operario cuando la operación lo tiene habilitado. Puedes SÍ consultar la carga del equipo (carga_operarios, tareas_operario) para informar.';
+      }
+      sys += ' También puedes CERRAR los flujos que antes quedaban a medias: recibir mercadería contra una recepción y cerrarla (recibir_recepcion, cerrar_recepcion), cancelar y reactivar órdenes (cancelar_orden, reactivar_orden), reservar varias de una vez (reservar_ordenes), manejar devoluciones (crear_devolucion, procesar_devolucion, cancelar_devolucion), avisarle a un operario en su app (mensaje_a_operario) e ingresar insumos de embalaje (recibir_insumos_embalaje). Antes de opinar o actuar sobre algo que ya está configurado, MÍRALO: instrucciones_vigentes para las directrices que ya te dieron, estado_automatismos para el modo de asignación y el auto-balanceo, y reglas_agente para entender por qué el agente hizo o no hizo algo. Para crear órdenes o recepciones, si no sabes el id del cliente usa clientes_operacion y si no conoces los SKU usa catalogo_productos antes de crear. REGLA INNEGOCIABLE sobre lo que informas: describe SOLO lo que la herramienta devolvió. Si el resultado trae sinCambios:true, o un contador en 0, o ok:false, di claramente que NO se hizo el cambio y por qué; nunca lo cuentes como hecho ni inventes a qué operario pasó cada tarea. Si te piden confirmar algo que acabas de hacer, vuelve a consultarlo con la herramienta de lectura antes de responder.';
       sys += mode === 'confirm'
         ? ' El modo es CONFIRMACIÓN: las acciones que la política no permite ejecutar directamente NO se ejecutan al invocar la herramienta; quedan PROPUESTAS para que el usuario confirme (el resultado de la herramienta te dirá si se ejecutó o quedó propuesta). Si el usuario pide avanzar VARIAS órdenes (ej. "despacha las 3 que están listas"), invoca la herramienta UNA VEZ POR CADA orden en este mismo turno, para dejarlas TODAS propuestas. Nunca digas que algo se ejecutó si la herramienta respondió que quedó propuesto. No inventes órdenes: usa las herramientas de consulta (listar_ordenes) para saber cuáles corresponden.'
         : ' El modo es DIRECTO: la acción se ejecuta al invocar la herramienta salvo que la política de autonomía la deje propuesta (la herramienta te lo dirá). Si el usuario pide varias órdenes, invoca la herramienta una vez por cada una y confírmale lo realizado.';
-      sys += ' Con guardar_instruccion puedes anotar directrices del administrador para el agente (ej. "hoy priorizar Chilexpress") y quedan vigentes en los próximos ciclos.';
+      if (canManage) sys += ' Con guardar_instruccion puedes anotar directrices del administrador para el agente (ej. "hoy priorizar Chilexpress") y quedan vigentes en los próximos ciclos.';
       sys += ' POLÍTICA DEL AGENTE: ' + describePolicy(settings);
     }
     sys += `\n\n=== RESUMEN DE LA OPERACIÓN (punto de partida; usa herramientas para profundizar) ===\n${ctx}`;
@@ -622,7 +633,11 @@ export class WmsFacade {
       const detalle = (pista.items || []).slice(0, 25).map((i: any) => `${i.label}: ${i.value}`).join(' · ');
       sys += `\n\n=== DATO YA CALCULADO PARA ESTA PREGUNTA (exacto, de ahora mismo) ===\n${pista.answer}${detalle ? '\n' + detalle : ''}\n(Úsalo si responde lo que preguntaron; si la pregunta apunta a otra cosa, ignóralo y usa las herramientas. No lo repitas literal: contesta con tu voz.)`;
     }
-    const tools = canWrite ? [...COPILOT_TOOLS, ...COPILOT_ACTION_TOOLS] : COPILOT_TOOLS;
+    // Al que no manda no se le ofrecen las herramientas de mando: así el modelo no
+    // las intenta, no propone algo que va a ser rechazado y no le promete al operario
+    // un movimiento de carga que no va a ocurrir.
+    const accion = canManage ? COPILOT_ACTION_TOOLS : COPILOT_ACTION_TOOLS.filter((t) => !COPILOT_MANAGE_TOOLS.has(t.name));
+    const tools = canWrite ? [...COPILOT_TOOLS, ...accion] : COPILOT_TOOLS;
     // Recolectamos TODAS las acciones propuestas en el turno (el LLM puede pedir varias).
     const pendingActions: CopilotPendingAction[] = [];
     const exec = async (name: string, args: any) => {
@@ -652,12 +667,18 @@ export class WmsFacade {
   private async copilotExecAction(
     name: string,
     args: any,
-    ctx: { operationId: string; sellerId: string | null; mode: 'confirm' | 'direct'; canWrite: boolean; question: string; actor?: { id?: string; role?: string } | null; pendingActions: CopilotPendingAction[]; settings?: Required<CopilotSettings>; autonomous?: boolean; confirmed?: boolean; usage?: { cycle: number; hour: number } },
+    ctx: { operationId: string; sellerId: string | null; mode: 'confirm' | 'direct'; canWrite: boolean; canManage?: boolean; question: string; actor?: { id?: string; role?: string } | null; pendingActions: CopilotPendingAction[]; settings?: Required<CopilotSettings>; autonomous?: boolean; confirmed?: boolean; usage?: { cycle: number; hour: number } },
   ): Promise<any | undefined> {
     const { operationId, sellerId, canWrite, question, actor, pendingActions } = ctx;
     const isAction = ACTION_POLICIES.some((p) => p.tool === name);
     if (!isAction) return undefined; // no es una acción → el caller usa las herramientas de lectura
     if (!canWrite) return { error: 'No tienes permisos para ejecutar acciones.' };
+    // Repartir trabajo entre personas exige master:manage, igual que la API REST.
+    // Un operario ejecuta lo suyo, pero no le mueve la carga a un colega por el chat.
+    const canManage = ctx.canManage ?? this.copilotCanManage(actor?.role);
+    if (COPILOT_MANAGE_TOOLS.has(name) && !canManage) {
+      return { error: 'Solo un supervisor o administrador puede asignar, liberar o redistribuir tareas. Si quieres tomar trabajo disponible, hazlo desde la app del operario.' };
+    }
     const settings = ctx.settings ?? await this.agentSettings(operationId);
     const pol = decidePolicy({ tool: name, settings, autonomous: !!ctx.autonomous, confirmed: !!ctx.confirmed, usage: ctx.usage });
     if (pol.decision === 'deny') return { error: `Acción no permitida: ${pol.reason}.` };
@@ -1698,6 +1719,18 @@ export class WmsFacade {
     // En producción una petición sin identidad NUNCA obtiene permisos de escritura.
     if (!role) return process.env.AUTH_REQUIRED !== 'true';
     return ROLE_PERMISSIONS[role as UserRole]?.includes('order:fulfill') ?? false;
+  }
+  /**
+   * ¿Puede además MANDAR trabajo? (asignar, liberar, vaciar, balancear, configurar).
+   *
+   * Ejecutar el trabajo y repartirlo entre personas son cosas distintas: un operario
+   * tiene lo primero (`order:fulfill`) y no lo segundo (`master:manage`). El chat
+   * debe exigir exactamente lo mismo que la API REST, si no el permiso depende de
+   * por dónde entre la petición.
+   */
+  private copilotCanManage(role?: string | null): boolean {
+    if (!role) return process.env.AUTH_REQUIRED !== 'true';
+    return ROLE_PERMISSIONS[role as UserRole]?.includes('master:manage') ?? false;
   }
   /** Ajustes efectivos del agente (política de autonomía, sombra, límites, notificaciones). */
   /** Valida y normaliza la agenda del agente; el error va derecho al formulario. */
@@ -4637,7 +4670,7 @@ export class WmsFacade {
     const pendingActions: CopilotPendingAction[] = [];
     let actions = 0;
     const exec = async (name: string, args: any) => {
-      const r = await this.copilotExecAction(name, args, { operationId, sellerId: null, mode: settings.actionMode, canWrite: true, question: 'ciclo automático del agente', actor: { id: 'agente', role: 'SUPERVISOR' }, pendingActions, settings, autonomous: true, usage });
+      const r = await this.copilotExecAction(name, args, { operationId, sellerId: null, mode: settings.actionMode, canWrite: true, canManage: true, question: 'ciclo automático del agente', actor: { id: 'agente', role: 'SUPERVISOR' }, pendingActions, settings, autonomous: true, usage });
       if (r !== undefined) { if (r && r.ok) { usage.cycle++; actions++; } return r; }
       return this.runCopilotTool(name, args, operationId, null);
     };
@@ -4749,7 +4782,12 @@ export class WmsFacade {
    * y, si el administrador lo permite, las tareas disponibles (sin asignar) para tomar.
    */
   async operatorBoard(operationId: string, operator: string): Promise<{ operator: string; selfPickup: boolean; mode: 'advisory' | 'strict'; mine: Array<WorkAssignment & { next?: boolean; position?: number; estado: 'in_progress' | 'assigned'; cliente: string | null }>; available: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; cliente: string | null; unidades: number; prioridad: number; motivo: string }> }> {
-    const [selfPickup, mode, mine] = await Promise.all([this.getOperatorSelfPickup(operationId), this.getAssignmentMode(operationId), this.getOperatorTasks(operationId, operator)]);
+    const [selfPickupOp, mode, mine] = await Promise.all([this.getOperatorSelfPickup(operationId), this.getAssignmentMode(operationId), this.getOperatorTasks(operationId, operator)]);
+    // El tablero no le ofrece trabajo a quien no puede tomarlo: si se lo mostrara,
+    // un usuario cliente vería en su pantalla las órdenes de los demás clientes de
+    // la operación antes siquiera de intentar tomar una.
+    const puedeTomar = selfPickupOp && await this.assertPuedeTomarTareas(operationId, operator).then(() => true).catch(() => false);
+    const selfPickup = puedeTomar;
     const sname = new Map<string, string>();
     try { for (const x of await this.listSellers(operationId)) sname.set(x.id, x.name); } catch { /* ignore */ }
     const ledger = this.taskLedger ? await this.taskLedger.list(operationId, { limit: 2000 }) : [];
@@ -4759,7 +4797,7 @@ export class WmsFacade {
     if (selfPickup) {
       const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, RESTOCK: 6, COUNT: 7, RESLOT: 8 };
       const LABEL: Record<string, string> = { SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: 'cola de picking', RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', RESTOCK: 'devolver a su ubicación', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' };
-      for (const t of ['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
+      for (const t of ['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
         const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: 30 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
         pool.forEach((p, i) => available.push({ type: t, entityId: p.entityId, entityRef: p.entityRef, sellerId: p.sellerId, cliente: sname.get(p.sellerId) || p.sellerId, unidades: p.unidades, prioridad: (TYPE_W[t] ?? 8) * 1000 + i + 1, motivo: `${LABEL[t]} #${i + 1}` }));
       }
@@ -4771,6 +4809,11 @@ export class WmsFacade {
   async takeTask(operationId: string, operator: string, input: { type: WorkTaskType; entityId: string }): Promise<WorkAssignment> {
     if (!(await this.getOperatorSelfPickup(operationId))) throw new ForbiddenError('El administrador no permite tomar tareas desde la app; espera a que te asignen.');
     if (!this.assignments) throw new ValidationError('Asignaciones no disponibles');
+    // Quién puede tomar trabajo de bodega. Esta comprobación va aquí y no se delega
+    // en assignTask porque esta vía la omite (ya resolvió la tarea del pool): sin
+    // ella, un usuario CLIENTE —que solo necesita permiso de lectura para llegar a
+    // este endpoint— se auto-asignaba tareas, incluso de OTRO cliente de la operación.
+    await this.assertPuedeTomarTareas(operationId, operator);
     const cur = await this.assignments.get(`${input.type}:${input.entityId}`);
     if (cur && (cur.status === 'assigned' || cur.status === 'in_progress')) {
       if (cur.operator === operator) return cur;
@@ -4781,6 +4824,23 @@ export class WmsFacade {
     if (!item) throw new NotFoundError('La tarea ya no está disponible.');
     const a = await this.assignTask(operationId, { type: input.type, entityId: item.entityId, entityRef: item.entityRef, sellerId: item.sellerId, operator, unitsEstimate: item.unidades, by: operator, note: (item as any).note || 'tomada desde la app', skipOperatorCheck: true });
     return a;
+  }
+  /**
+   * ¿Este usuario puede tomar trabajo de bodega desde la app?
+   *
+   * Debe ser alguien de la operación, no ser un usuario cliente y estar activo:
+   * las mismas tres condiciones que exige la asignación directa. Sin identidad
+   * solo pasa en modo demo (AUTH_REQUIRED distinto de 'true'), igual que el resto
+   * del sistema.
+   */
+  private async assertPuedeTomarTareas(operationId: string, operator: string): Promise<void> {
+    const u = (await this.listUsers(operationId)).find((x) => x.id === operator);
+    if (!u) {
+      if (process.env.AUTH_REQUIRED !== 'true' && operator === 'system') return; // demo sin login
+      throw new ForbiddenError('Solo el personal de la operación puede tomar tareas de bodega.');
+    }
+    if (String(u.role) === 'CLIENT') throw new ForbiddenError('Tu cuenta es de cliente: no puedes tomar tareas de bodega.');
+    if (u.active === false) throw new ForbiddenError('Tu cuenta está inactiva; pide que la reactiven antes de tomar tareas.');
   }
   /** El operario INICIA una tarea de su bandeja: pasa a in_progress en el ledger (y en la asignación). */
   async startTask(operationId: string, operator: string, input: { type: WorkTaskType; entityId: string }): Promise<{ ok: true; assignment: WorkAssignment | null }> {

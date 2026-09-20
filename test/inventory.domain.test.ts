@@ -5666,6 +5666,82 @@ async function run() {
     assert.equal(r.connected, true);
   });
 
+  // ---- Quién toma y quién manda el trabajo (v119) ---------------------------
+  async function escenarioBandeja() {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await facade.createSeller({ id: 'globex', operationId: 'op1', name: 'Globex' });
+    const stg = await facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await facade.createSku('globex', { sku: 'CAM', description: 'Camisa' });
+    await facade.receive('globex', { sku: 'CAM', qty: 100, locationId: stg.id });
+    const pedro = await facade.createUser({ id: 'pedro', name: 'Pedro', email: 'p@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    const dani = await facade.createUser({ id: 'dani', name: 'Daniela', email: 'd@acme.cl', role: UserRole.CLIENT, operationId: 'op1', sellerId: 'acme' });
+    const nadia = await facade.createUser({ id: 'nadia', name: 'Nadia', email: 'n@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await facade.deactivateUser(nadia.id, 'ana');
+    const order = await facade.createOrder('globex', { externalOrderId: 'GLOBEX-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 4 }] }, 'ana');
+    await facade.allocateOrder('globex', order.id, 'ana');
+    await facade.setOperatorSelfPickup('op1', true);
+    return { facade, pedro, dani, nadia, order };
+  }
+
+  await test('autoservicio: un usuario CLIENTE no puede tomar tareas de bodega', async () => {
+    const { facade, dani, order } = await escenarioBandeja();
+    await expectThrows(() => facade.takeTask('op1', dani.id, { type: 'PICK', entityId: order.id }), ForbiddenError);
+    // Y su tablero no le muestra el trabajo de los demás clientes de la operación.
+    const board = await facade.operatorBoard('op1', dani.id);
+    assert.equal(board.selfPickup, false, 'al cliente no se le ofrece trabajo disponible');
+    assert.equal(board.available.length, 0);
+  });
+
+  await test('autoservicio: un operario inactivo o desconocido tampoco toma tareas', async () => {
+    const { facade, nadia, order } = await escenarioBandeja();
+    await expectThrows(() => facade.takeTask('op1', nadia.id, { type: 'PICK', entityId: order.id }), ForbiddenError);
+    await expectThrows(() => facade.takeTask('op1', 'fantasma', { type: 'PICK', entityId: order.id }), ForbiddenError);
+  });
+
+  await test('autoservicio: el operario activo sí toma la tarea, y solo si está habilitado', async () => {
+    const { facade, pedro, order } = await escenarioBandeja();
+    const a = await facade.takeTask('op1', pedro.id, { type: 'PICK', entityId: order.id });
+    assert.equal(a.operator, 'pedro');
+    assert.equal(a.status, 'assigned');
+    // Idempotente para el mismo operario; cerrada para cualquier otro.
+    assert.equal((await facade.takeTask('op1', pedro.id, { type: 'PICK', entityId: order.id })).operator, 'pedro');
+    // Con el autoservicio apagado, ni el operario activo puede.
+    const f2 = await escenarioBandeja();
+    await f2.facade.setOperatorSelfPickup('op1', false);
+    await expectThrows(() => f2.facade.takeTask('op1', f2.pedro.id, { type: 'PICK', entityId: f2.order.id }), ForbiddenError);
+  });
+
+  await test('copiloto: el operario no reparte trabajo por el chat; el supervisor sí', async () => {
+    const { facade, pedro, order } = await escenarioBandeja();
+    await facade.assignTask('op1', { type: 'PICK', entityId: order.id, entityRef: 'GLOBEX-1', sellerId: 'globex', operator: pedro.id, unitsEstimate: 4, by: 'ana' });
+    const operario = { id: 'pedro', role: 'OPERATOR' };
+    const supervisor = { id: 'rodrigo', role: 'SUPERVISOR' };
+    // El operario tiene order:fulfill, pero no master:manage.
+    for (const tool of ['asignar_tarea', 'liberar_asignacion', 'vaciar_operario', 'balancear_carga', 'asignar_tareas_masivo', 'reasignar_ociosidad', 'activar_auto_balanceo', 'fijar_modo_asignacion', 'guardar_instruccion']) {
+      const r = await facade.copilotConfirmTool('op1', null, operario, { tool, args: {} });
+      assert.equal(r.ok, false, `${tool} debería estar cerrada para un operario`);
+      assert.match(String(r.error), /supervisor o administrador/i, `${tool}: mensaje equivocado (${r.error})`);
+    }
+    // La tarea siguió donde estaba: nada se movió.
+    const suyas = await facade.getOperatorTasks('op1', 'pedro');
+    assert.equal(suyas.length, 1);
+    // El supervisor sí puede: libera y la tarea vuelve al pool.
+    const ok = await facade.copilotConfirmTool('op1', null, supervisor, { tool: 'liberar_asignacion', args: { tipo: 'PICK', entidad: 'GLOBEX-1' } });
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+    assert.equal((await facade.getOperatorTasks('op1', 'pedro')).length, 0);
+  });
+
+  await test('copiloto: el operario conserva las acciones de ejecución', async () => {
+    const { facade, order } = await escenarioBandeja();
+    const operario = { id: 'pedro', role: 'OPERATOR' };
+    // Avanzar una orden es su trabajo: no se le cierra.
+    const r = await facade.copilotConfirmTool('op1', null, operario, { tool: 'avanzar_estado_orden', args: { orden: 'GLOBEX-1', accion: 'pickear' } });
+    assert.notEqual(r.ok, false, `ejecutar órdenes debe seguir permitido: ${JSON.stringify(r)}`);
+    void order;
+  });
+
   // ---- Resumen --------------------------------------------------------------
   console.log(`\n${passed} pasaron, ${failures.length} fallaron\n`);
   if (failures.length > 0) process.exit(1);
