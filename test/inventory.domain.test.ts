@@ -6262,6 +6262,38 @@ async function run() {
     assert.equal(suyo.clientes[0].id, 'acme');
   });
 
+  await test('órdenes de la operación: el 3PL ve a todos sus clientes, el cliente solo al suyo', async () => {
+    const { facade } = await escenarioMcp();
+    await facade.createSeller({ id: 'globex', operationId: 'op1', name: 'Globex' });
+    for (const sid of ['acme', 'globex']) await facade.createSku(sid, { sku: 'CAM', description: 'Camiseta' });
+    const mk = (sid: string, ext: string) =>
+      facade.createOrder(sid, { externalOrderId: ext, salesChannel: 'web', shipTo: { name: 'x' } as any, lines: [{ sku: 'CAM', qty: 1 }] });
+    await mk('acme', 'ACME-1');
+    await mk('acme', 'ACME-2');
+    await mk('globex', 'GLOBEX-1');
+
+    // El operador logístico: una sola bandeja con los dos clientes, cada orden
+    // etiquetada con el NOMBRE del suyo (en la tabla no sirve leer un id).
+    const todas = await facade.listOperationOrders('op1');
+    assert.equal(todas.length, 3);
+    assert.deepEqual(new Set(todas.map((o) => o.sellerId)), new Set(['acme', 'globex']));
+    assert.equal(todas.find((o) => o.externalOrderId === 'GLOBEX-1')!.sellerName, 'Globex');
+
+    // El filtro de la interfaz acota, nada más.
+    const soloAcme = await facade.listOperationOrders('op1', { sellerId: 'acme' });
+    assert.deepEqual(soloAcme.map((o) => o.externalOrderId).sort(), ['ACME-1', 'ACME-2']);
+
+    // La reja del tenant: un usuario cliente queda encerrado en su seller...
+    const suyas = await facade.listOperationOrders('op1', { sellerScope: 'acme' });
+    assert.equal(suyas.length, 2);
+    assert.ok(suyas.every((o) => o.sellerId === 'acme'));
+
+    // ...y pedir el seller ajeno por parámetro no lo saca de ahí: devuelve vacío,
+    // nunca las órdenes del otro cliente.
+    const ajenas = await facade.listOperationOrders('op1', { sellerId: 'globex', sellerScope: 'acme' });
+    assert.equal(ajenas.length, 0, 'un filtro de la interfaz jamás debe ampliar el alcance');
+  });
+
   await test('esquema de Prisma: sintaxis válida (lo que tumbó el despliegue v125)', () => {
     // Un comentario de bloque en schema.prisma es válido en TypeScript y NO en
     // Prisma, y solo se descubre cuando el build del contenedor corre

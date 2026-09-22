@@ -438,6 +438,10 @@
   .fchip.on .fcount{background:rgba(255,255,255,.26);color:#fff}
   .fchip.zero .fcount{opacity:.45}
   /* Destinatarios: cada dirección de destino es un bloque propio dentro del formulario. */
+  /* Filtro por cliente de la tabla de órdenes (solo aparece con más de un cliente). */
+  .ordcli-f{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);white-space:nowrap}
+  .ordcli-f select{padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--text);font-size:13px;max-width:250px}
+  .ordcli-n{font-weight:600}
   .cgdir{border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:10px;background:var(--surface-2);display:flex;flex-direction:column;gap:9px}
   .cgdir-f{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
   /* Conexión MCP: bloque de configuración para copiar y pegar. */
@@ -1400,6 +1404,7 @@
         <div class="toolbar">
           <div class="filters" id="ord-filters"></div>
           <div class="sp" style="flex:1"></div>
+          <label class="ordcli-f hidden" id="ord-seller-wrap">Cliente <select id="ord-seller"></select></label>
           <button class="btn hidden m-only" id="ord-selall-m">☑ Seleccionar todas</button>
           <button class="btn hidden" id="ord-reserve-all">⚡ Reserva masiva</button>
           <button class="btn hidden" id="ord-import">⇪ Carga masiva</button>
@@ -1407,7 +1412,7 @@
           <button class="btn" id="ord-export">Exportar</button>
         </div>
         <div class="card"><div class="tablewrap"><table>
-          <thead><tr><th class="selcol" data-action><input type="checkbox" id="ord-selall" aria-label="Seleccionar todas las órdenes visibles" title="Seleccionar todas"></th><th data-tk="orders" data-sk="orden">Orden</th><th data-tk="orders" data-sk="fecha">Fecha</th><th data-tk="orders" data-sk="deadline">Deadline</th><th data-tk="orders" data-sk="canal">Canal</th><th data-tk="orders" data-sk="tipo">Tipo</th><th data-tk="orders" data-sk="lineas">Líneas</th><th data-tk="orders" data-sk="estado">Estado</th><th data-action></th></tr></thead>
+          <thead><tr><th class="selcol" data-action><input type="checkbox" id="ord-selall" aria-label="Seleccionar todas las órdenes visibles" title="Seleccionar todas"></th><th data-tk="orders" data-sk="orden">Orden</th><th class="ordcli hidden" data-tk="orders" data-sk="cliente">Cliente</th><th data-tk="orders" data-sk="fecha">Fecha</th><th data-tk="orders" data-sk="deadline">Deadline</th><th data-tk="orders" data-sk="canal">Canal</th><th data-tk="orders" data-sk="tipo">Tipo</th><th data-tk="orders" data-sk="lineas">Líneas</th><th data-tk="orders" data-sk="estado">Estado</th><th data-action></th></tr></thead>
           <tbody id="ord-body"></tbody>
         </table></div></div>
       </section>

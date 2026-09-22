@@ -3,7 +3,7 @@ import { WmsFacade } from '../app/wms.facade';
 import { CreateOperationDto, DeadlineConfigDto, UpdateBrandingDto, UpdateOperationDto } from './dto';
 import { RequirePermission } from './auth/permissions.decorator';
 import { actorOf, CurrentUser } from './auth/current-user.decorator';
-import { User } from '../domain/types';
+import { User, UserRole } from '../domain/types';
 import { WMS_FACADE } from './tokens';
 
 /**
@@ -118,6 +118,27 @@ export class OperationsController {
   ) {
     const w = ['24h', '7d', '30d', '90d'].includes(String(window)) ? (window as any) : '24h';
     return this.wms.operationDashboard(operationId, { sellerId: sellerId || null, window: w, from: from || null, to: to || null });
+  }
+
+  /**
+   * Órdenes de toda la operación (todos sus clientes) en una sola lista.
+   *
+   * Es la vista natural del 3PL: su bandeja de trabajo cruza a todos los
+   * clientes de la bodega. `?sellerId=` la acota a uno cuando el usuario filtra.
+   *
+   * La frontera de operación la impone el guard con `:operationId`. La de seller
+   * se impone acá: un usuario CLIENT queda encerrado en el suyo, sin importar lo
+   * que pida el parámetro.
+   */
+  @Get(':operationId/orders')
+  @RequirePermission('stock:read')
+  orders(
+    @Param('operationId') operationId: string,
+    @CurrentUser() user: User | null,
+    @Query('sellerId') sellerId?: string,
+  ) {
+    const sellerScope = user && user.role === UserRole.CLIENT ? (user.sellerId ?? null) : null;
+    return this.wms.listOperationOrders(operationId, { sellerId: sellerId || null, sellerScope });
   }
 
   @Get(':operationId/sellers')

@@ -6605,6 +6605,46 @@ export class WmsFacade {
     return this.orders.listOrders(sellerId);
   }
 
+  /**
+   * Órdenes de TODA la operación, de todos sus clientes, en una sola lista.
+   * ---------------------------------------------------------------------------
+   * Un 3PL no trabaja cliente por cliente: su bandeja de pendientes es una sola
+   * y cruza a todos los sellers de la bodega. Hasta ahora el panel obligaba a
+   * elegir un cliente antes de ver una orden, que es la vista del cliente, no la
+   * del operador logístico.
+   *
+   * Cada orden sale con `sellerName` al lado de su `sellerId`: quien mira la
+   * tabla necesita leer "Acme", no "acme-cli".
+   *
+   * `sellerScope` es la reja del tenant: si el usuario es un CLIENT, se le
+   * fuerza su propio seller y el parámetro `sellerId` de la consulta no puede
+   * sacarlo de ahí. Un filtro de la interfaz nunca debe poder ampliar permisos.
+   */
+  async listOperationOrders(
+    operationId: string,
+    opts?: { sellerId?: string | null; sellerScope?: string | null },
+  ): Promise<Array<SalesOrder & { sellerName: string }>> {
+    const todos = await this.listSellers(operationId);
+    const nombre = new Map(todos.map((s) => [s.id, s.name] as const));
+
+    let ids = todos.map((s) => s.id);
+    // La reja primero, el filtro después: así un sellerId ajeno no devuelve nada
+    // en vez de devolver lo que no corresponde.
+    if (opts?.sellerScope) ids = ids.filter((id) => id === opts.sellerScope);
+    if (opts?.sellerId) ids = ids.filter((id) => id === opts.sellerId);
+
+    const porSeller = await Promise.all(
+      ids.map((sid) => this.orders.listOrders(sid).catch(() => [] as SalesOrder[])),
+    );
+    const out: Array<SalesOrder & { sellerName: string }> = [];
+    for (const lista of porSeller) {
+      for (const o of lista) out.push({ ...o, sellerName: nombre.get(o.sellerId) ?? o.sellerId });
+    }
+    // Más reciente primero: es el orden por defecto de la tabla del panel.
+    out.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    return out;
+  }
+
   // ---- Idempotencia de órdenes: auditoría y consolidación de duplicados (G1) --
   /**
    * Audita duplicados por (sellerId, externalOrderId) con count > 1 en una operación.

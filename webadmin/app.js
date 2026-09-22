@@ -7,7 +7,7 @@
   var API=location.origin;
 
   var token=null, me=null, role=null, op=null, seller=null;
-  var D={ ops:[], sellers:[], locations:[], users:[], opStock:{}, inv:[], ord:[], mov:[], plan:[], skus:[], packaging:[], acc:null };
+  var D={ ops:[], sellers:[], locations:[], users:[], opStock:{}, inv:[], ord:[], ordAll:[], mov:[], plan:[], skus:[], packaging:[], acc:null };
   var locByCode={}, locById={}, ordFilter="ALL", inbFilter="ALL";
   // Etiquetas de estado de una orden de recepción (para chips de filtro).
   var REC_STL={PENDING:"Pendiente",PARTIAL:"Parcial",RECEIVED:"Recepcionada",CANCELLED:"Anulada"};
@@ -54,7 +54,7 @@
     paintSort(key);
   }
   // Extractores de valor por columna para cada tabla ordenable.
-  var ORD_COLS={orden:function(o){return o.externalOrderId||o.id;},fecha:function(o){return o.createdAt||"";},deadline:function(o){return o.dueAt||"9999";},canal:function(o){return CH_LABEL[o.salesChannel]||o.salesChannel;},tipo:function(o){return (o.orderType||"");},lineas:function(o){return o.lines.length;},estado:function(o){return STN[o.status]||o.status;}};
+  var ORD_COLS={orden:function(o){return o.externalOrderId||o.id;},fecha:function(o){return o.createdAt||"";},deadline:function(o){return o.dueAt||"9999";},canal:function(o){return CH_LABEL[o.salesChannel]||o.salesChannel;},tipo:function(o){return (o.orderType||"");},lineas:function(o){return o.lines.length;},estado:function(o){return STN[o.status]||o.status;},cliente:function(o){return o._sellerName||o.sellerName||o.sellerId||'';}};
   var RET_COLS={dev:function(r){return r.id;},orden:function(r){return r.originalOrderRef||"";},fecha:function(r){return r.createdAt||"";},lineas:function(r){return r.lines.length;},estado:function(r){return RET_ST[r.status]||r.status;}};
   var INB_COLS={orden:function(o){return o.id;},prov:function(o){return o.supplier||"";},ref:function(o){return o.reference||"";},fecha:function(o){return o.createdAt||"";},lineas:function(o){return o.lines?o.lines.length:0;},estado:function(o){return o.status;}};
   // CSS autocontenido para la ventana de impresión del manifiesto de recepción.
@@ -330,8 +330,9 @@
       api('/sellers/'+seller+'/cycle-counts/plan').catch(function(){return [];}),
       api('/sellers/'+seller+'/skus').catch(function(){return [];}),
       api('/sellers/'+seller+'/receipts').catch(function(){return [];}),
-      api('/sellers/'+seller+'/returns').catch(function(){return [];})
-    ]).then(function(r){D.inv=r[0];D.ord=r[1];D.mov=r[2];D.plan=r[3];D.skus=r[4];D.receipts=r[5];D.ret=r[6]||[];ordSig=ordSigOf(D.ord);renderAll();if(typeof liveLast!=='undefined'){liveLast=Date.now();paintLive();}}).catch(err);
+      api('/sellers/'+seller+'/returns').catch(function(){return [];}),
+      loadOrdAll()
+    ]).then(function(r){D.inv=r[0];D.ord=r[1];D.mov=r[2];D.plan=r[3];D.skus=r[4];D.receipts=r[5];D.ret=r[6]||[];ordSig=ordSigOf(ordRows());renderAll();if(typeof liveLast!=='undefined'){liveLast=Date.now();paintLive();}}).catch(err);
   }
 
   // ===== Vista consolidada de TODOS los clientes ("Todos los clientes") =====
@@ -474,7 +475,14 @@
     });
   }
   $("#op").addEventListener("change",function(){op=this.value;seller=null;loadOp().catch(err);});
-  $("#seller").addEventListener("change",function(){ if(this.value==='__all__'){ mcEnter(); return; } mcMode=false; seller=this.value; loadSeller(); });
+  $("#seller").addEventListener("change",function(){
+    if(this.value==='__all__'){ mcEnter(); return; }
+    mcMode=false; seller=this.value;
+    // Elegir un cliente acá es una decisión explícita, así que la tabla de órdenes la
+    // sigue. La carga inicial no pasa por este evento: ahí la tabla arranca en "todos".
+    ordSellerFilter=seller; bulkSel={};
+    loadSeller();
+  });
   $$("#dash-scope .segbtn").forEach(function(b){b.addEventListener("click",function(){
     dashOnlySeller=b.getAttribute("data-scope")==='seller';
     $$("#dash-scope .segbtn").forEach(function(x){x.classList.toggle("on",x===b);});
@@ -513,12 +521,18 @@
   function ordSigOf(list){ return (list||[]).map(function(o){return o.id+':'+o.status+':'+((o.events||[]).length);}).sort().join('|'); }
   function ordersLivePage(){ var p=document.querySelector('.page[data-pg="orders"].on,.page[data-pg="pickqueue"].on'); return !!p; }
   function pollOrders(){
-    if(!token||!seller||!ordersLivePage())return;
-    api('/sellers/'+encodeURIComponent(seller)+'/orders').then(function(list){
+    if(!token||!ordersLivePage())return;
+    // En consolidado la fuente de verdad es la bandeja de toda la operación; si no,
+    // la del cliente en foco. En ambos casos solo se re-dibuja si algo cambió.
+    var multi=ordMulti();
+    if(!multi&&!seller)return;
+    var p=multi?api('/operations/'+encodeURIComponent(op)+'/orders'):api('/sellers/'+encodeURIComponent(seller)+'/orders');
+    p.then(function(list){
       list=list||[];
       var sig=ordSigOf(list);
       if(sig===ordSig)return;
-      ordSig=sig; D.ord=list;
+      ordSig=sig;
+      if(multi)D.ordAll=list; else D.ord=list;
       renderOrdFilters(); renderOrders(); renderPickQueue();
     }).catch(function(){});
   }
@@ -3248,7 +3262,14 @@
       .catch(function(e){toast(e.message);});
   }
   function exportMovements(){ downloadXlsx('/movements/export','kardex-movimientos-ninjawms.xlsx',"Kardex exportado"); }
-  function exportOrders(){ downloadXlsx('/orders/export','ordenes-ninjawms.xlsx',"Órdenes exportadas"); }
+  function exportOrders(){
+    // El export del servidor es por cliente. En consolidado eso mentiría: se exporta
+    // la tabla tal como está en pantalla, con su filtro y su columna de cliente.
+    if(ordMulti()&&!ordSellerFilter){ tableToXlsx($("#ord-body")&&$("#ord-body").closest('table'),'ordenes-ninjawms.xlsx','Órdenes'); return; }
+    var previo=seller;
+    if(ordSellerFilter)seller=ordSellerFilter;
+    try{ downloadXlsx('/orders/export','ordenes-ninjawms.xlsx',"Órdenes exportadas"); } finally { seller=previo; }
+  }
 
   // ----- Exportación GENÉRICA a Excel de cualquier tabla del portal -----
   // Lee la tabla tal como se muestra (sin la columna de acciones) y baja un .xlsx.
@@ -3464,13 +3485,89 @@
     if(ordFilter==='DL_RIESGO'){var l=dlNivelOrden(o);return l==='critico'||l==='riesgo';}
     return ordFilter==='ALL'||o.status===ordFilter;
   }
+  // ===== Órdenes de TODOS los clientes (vista por defecto del 3PL) =====
+  // Un operador logístico trabaja una sola bandeja que cruza a todos sus clientes;
+  // obligarlo a elegir uno antes de ver una orden es la vista del cliente, no la suya.
+  // Por eso la tabla arranca consolidada y el filtro por cliente es opcional.
+  //
+  // El CLIENT y las operaciones de un solo cliente no entran acá: para ellos la lista
+  // de siempre (`D.ord`, del seller en foco) ya es exactamente lo mismo, sin la columna
+  // ni el selector de más.
+  var ordSellerFilter='';   // '' = todos los clientes
+  function ordMulti(){ return role!=='CLIENT' && (D.sellers||[]).length>1; }
+  /** Las órdenes que alimentan la tabla, ya acotadas por el filtro de cliente. */
+  function ordRows(){
+    if(!ordMulti())return D.ord||[];
+    var rows=D.ordAll||[];
+    return ordSellerFilter?rows.filter(function(o){return o.sellerId===ordSellerFilter;}):rows;
+  }
+  /** Busca una orden en el universo completo, no en lo que se está mostrando. */
+  function ordById(id){ return byId(D.ordAll||[],id)||byId(D.ord||[],id)||null; }
+  /**
+   * El seller al que hay que pegarle para operar ESTA orden.
+   * En consolidado cada fila puede ser de un cliente distinto, así que el seller
+   * sale de la orden; el global solo sirve de red por si la orden no lo trae.
+   */
+  function osel(o){ return (o&&o.sellerId)||seller; }
+  /** Nombre visible del cliente de una orden. */
+  function ordSellerName(o){ return (o&&(o.sellerName||o._sellerName))||sellerName(osel(o)); }
+
+  /**
+   * Recarga lo que la tabla de órdenes necesita después de una acción.
+   * En consolidado hay que refrescar las dos listas: la de todos los clientes
+   * (lo que se ve) y la del seller en foco (de la que viven las otras pantallas).
+   */
+  function recargaOrdenes(){
+    return Promise.all([loadOrdAll(),loadSeller()]).then(function(){ renderOrdFilters(); renderOrders(); });
+  }
+
+  /**
+   * Acciones que necesitan UN cliente (crear orden, carga masiva, reserva masiva).
+   * En consolidado el filtro es quien lo define; en "todos" no hay respuesta posible,
+   * así que se pide antes de abrir el formulario en vez de adivinar un destinatario.
+   */
+  function exigeCliente(quehacer){
+    if(!ordMulti()||ordSellerFilter)return true;
+    toast('Elige un cliente en el filtro de arriba para '+quehacer+'.');
+    var sel=$("#ord-seller"); if(sel)sel.focus();
+    return false;
+  }
+
+  /** Trae la bandeja consolidada. Silenciosa: si falla, la tabla sigue con lo del seller. */
+  function loadOrdAll(){
+    if(!ordMulti()||!op)return Promise.resolve();
+    return api('/operations/'+encodeURIComponent(op)+'/orders').then(function(list){
+      D.ordAll=list||[];
+    }).catch(function(){ if(!D.ordAll)D.ordAll=[]; });
+  }
+
+  /** Selector "Cliente" de la barra de órdenes. Solo existe si hay más de uno. */
+  function renderOrdSeller(){
+    var wrap=$("#ord-seller-wrap"), sel=$("#ord-seller");
+    if(!wrap||!sel)return;
+    var multi=ordMulti();
+    wrap.classList.toggle("hidden",!multi);
+    $$("#ord-body .ordcli, th.ordcli").forEach(function(el){el.classList.toggle("hidden",!multi);});
+    if(!multi){ordSellerFilter='';return;}
+    // Cuántas órdenes tiene cada cliente: el filtro dice de una dónde está el trabajo.
+    var n={}; (D.ordAll||[]).forEach(function(o){n[o.sellerId]=(n[o.sellerId]||0)+1;});
+    var opts=[{v:'',t:'Todos los clientes ('+(D.ordAll||[]).length+')'}].concat(
+      (D.sellers||[]).map(function(x){return {v:x.id,t:x.name+' ('+(n[x.id]||0)+')'};}));
+    var prev=ordSellerFilter;
+    fill(sel,opts);
+    if(!opts.some(function(o){return o.v===prev;}))ordSellerFilter='';
+    sel.value=ordSellerFilter;
+  }
+
   function renderOrdFilters(){
+    renderOrdSeller();
+    var base=ordRows();
     var states=["ALL","RECEIVED","ALLOCATED","PICKING","PICKED","PACKED","SHIPPED","CANCELLED"];
     // Contador por estado: cuántas órdenes hay en cada etapa del ciclo de vida, para ver
     // la carga de trabajo sin tener que abrir cada filtro. Se recalcula en cada refresco.
-    var counts={ALL:(D.ord||[]).length};
+    var counts={ALL:base.length};
     var venc=0,riesgo=0;
-    (D.ord||[]).forEach(function(o){
+    base.forEach(function(o){
       counts[o.status]=(counts[o.status]||0)+1;
       var l=dlNivelOrden(o);
       if(l==='vencido')venc++; else if(l==='critico'||l==='riesgo')riesgo++;
@@ -3498,7 +3595,7 @@
     $$("#inb-filters .fchip").forEach(function(b){b.addEventListener("click",function(){inbFilter=b.getAttribute("data-f");renderInbound();});});
   }
   function renderOrders(){
-    var os=D.ord.filter(ordEnFiltro);
+    var os=ordRows().filter(ordEnFiltro);
     os=sortRows('orders',os,ORD_COLS);
     var canOrder=can('order');
     $("#ord-body").innerHTML=os.length?os.map(function(o){
@@ -3522,22 +3619,23 @@
         +(canReactivate?'<button class="mini pri" data-react="'+o.id+'">Reactivar</button>':'')
         +'</div>';
       var selCell=bulkEnabled()?'<td class="selcol"><input type="checkbox" class="bulk-ck" data-bk="'+o.id+'" '+(bulkSel[o.id]?'checked':'')+' aria-label="Seleccionar orden"></td>':'';
-      return '<tr class="click'+(bulkSel[o.id]?' selected':'')+'" data-o="'+o.id+'">'+selCell+'<td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td><td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td style="white-space:nowrap">'+dlChip(o)+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span></td><td style="text-align:right">'+acts+'</td></tr>';
-    }).join(""):'<tr><td colspan="'+(bulkEnabled()?9:8)+'" class="empty">'+(ordFilter==='DL_VENCIDO'?'Ninguna orden pendiente pasó su deadline. 🎉':ordFilter==='DL_RIESGO'?'Ninguna orden pendiente está cerca de su deadline.':'Sin órdenes en este estado.')+'</td></tr>';
+      var cliCell=ordMulti()?'<td class="ordcli"><span class="ordcli-n">'+esc(ordSellerName(o))+'</span></td>':'';
+      return '<tr class="click'+(bulkSel[o.id]?' selected':'')+'" data-o="'+o.id+'">'+selCell+'<td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td>'+cliCell+'<td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td style="white-space:nowrap">'+dlChip(o)+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span></td><td style="text-align:right">'+acts+'</td></tr>';
+    }).join(""):'<tr><td colspan="'+((bulkEnabled()?9:8)+(ordMulti()?1:0))+'" class="empty">'+(ordFilter==='DL_VENCIDO'?'Ninguna orden pendiente pasó su deadline. 🎉':ordFilter==='DL_RIESGO'?'Ninguna orden pendiente está cerca de su deadline.':'Sin órdenes en este estado.')+'</td></tr>';
     var selTh=$("#ord-selall"); if(selTh)selTh.closest('th').classList.toggle('hidden',!bulkEnabled());
     var selM=$("#ord-selall-m"); if(selM)selM.classList.toggle('hidden',!bulkEnabled()||!os.length);
     syncBulkHeader(os); paintBulkBar();
-    $$("#ord-body tr.click").forEach(function(tr){tr.addEventListener("click",function(e){if(e.target.closest("[data-cancel],[data-react],[data-oedit],[data-oalloc],[data-ostart],[data-opick],[data-opack],[data-olabels],[data-oship],.selcol"))return;openOrder(D.ord.filter(function(o){return o.id===tr.getAttribute("data-o");})[0]);});});
+    $$("#ord-body tr.click").forEach(function(tr){tr.addEventListener("click",function(e){if(e.target.closest("[data-cancel],[data-react],[data-oedit],[data-oalloc],[data-ostart],[data-opick],[data-opack],[data-olabels],[data-oship],.selcol"))return;openOrder(ordById(tr.getAttribute("data-o")));});});
     $$("#ord-body .bulk-ck").forEach(function(ck){ck.addEventListener("change",function(){ if(ck.checked)bulkSel[ck.getAttribute("data-bk")]=true; else delete bulkSel[ck.getAttribute("data-bk")]; ck.closest("tr").classList.toggle("selected",ck.checked); paintBulkBar(); syncBulkHeader(os); });});
     $$("#ord-body [data-cancel]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();cancelOrder(b.getAttribute("data-cancel"));});});
     $$("#ord-body [data-react]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();reactivateOrder(b.getAttribute("data-react"));});});
-    $$("#ord-body [data-oedit]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openOrderForm(byId(D.ord,b.getAttribute("data-oedit")));});});
-    $$("#ord-body [data-oalloc]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();var id=b.getAttribute("data-oalloc");openConfirm("Reservar stock","Se reservará el stock para esta orden (pasa a RESERVADA).",function(){api('/sellers/'+seller+'/orders/'+id+'/allocate',{method:'POST'}).then(function(){toast("Orden reservada");return loadSeller();}).catch(function(e){reserveError(e,(byId(D.ord,id)||{}).externalOrderId);});});});});
-    $$("#ord-body [data-ostart]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();var id=b.getAttribute("data-ostart");api('/sellers/'+seller+'/orders/'+id+'/start-picking',{method:'POST'}).then(function(){toast("Orden en picking");return loadSeller();}).catch(function(e){toast(e.message);});});});
-    $$("#ord-body [data-opick]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();pqFlow=false;openPickForm(byId(D.ord,b.getAttribute("data-opick")));});});
-    $$("#ord-body [data-opack]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openPackForm(byId(D.ord,b.getAttribute("data-opack")));});});
-    $$("#ord-body [data-olabels]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openLabels(byId(D.ord,b.getAttribute("data-olabels")));});});
-    $$("#ord-body [data-oship]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openShipForm(byId(D.ord,b.getAttribute("data-oship")));});});
+    $$("#ord-body [data-oedit]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openOrderForm(ordById(b.getAttribute("data-oedit")));});});
+    $$("#ord-body [data-oalloc]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();var id=b.getAttribute("data-oalloc");openConfirm("Reservar stock","Se reservará el stock para esta orden (pasa a RESERVADA).",function(){api('/sellers/'+osel(ordById(id))+'/orders/'+id+'/allocate',{method:'POST'}).then(function(){toast("Orden reservada");return recargaOrdenes();}).catch(function(e){reserveError(e,(ordById(id)||{}).externalOrderId);});});});});
+    $$("#ord-body [data-ostart]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();var id=b.getAttribute("data-ostart");api('/sellers/'+osel(ordById(id))+'/orders/'+id+'/start-picking',{method:'POST'}).then(function(){toast("Orden en picking");return recargaOrdenes();}).catch(function(e){toast(e.message);});});});
+    $$("#ord-body [data-opick]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();pqFlow=false;openPickForm(ordById(b.getAttribute("data-opick")));});});
+    $$("#ord-body [data-opack]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openPackForm(ordById(b.getAttribute("data-opack")));});});
+    $$("#ord-body [data-olabels]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openLabels(ordById(b.getAttribute("data-olabels")));});});
+    $$("#ord-body [data-oship]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openShipForm(ordById(b.getAttribute("data-oship")));});});
     paintSort('orders');
   }
 
@@ -3547,17 +3645,17 @@
   // correcto se omiten y al final se informa el resultado. La selección sobrevive a los
   // refrescos automáticos de la tabla.
   var bulkSel={};
-  function bulkEnabled(){ return (role==='ADMIN'||role==='SUPERVISOR'||role==='PLATFORM_ADMIN') && can('fulfill') && !!seller; }
+  function bulkEnabled(){ return (role==='ADMIN'||role==='SUPERVISOR'||role==='PLATFORM_ADMIN') && can('fulfill') && (ordMulti()||!!seller); }
   var BULK_ACTIONS=[
-    {k:'allocate', label:'Reservar stock',       from:['RECEIVED'],  to:'Reservada',   ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/allocate',{method:'POST'});}},
-    {k:'start',    label:'Pasar a picking',      from:['ALLOCATED'], to:'En picking',  ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/start-picking',{method:'POST'});}},
-    {k:'pick',     label:'Confirmar picking completo', from:['PICKING','ALLOCATED'], to:'Pickeada', ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/pick',{method:'POST'});}},
-    {k:'pack',     label:'Empacar (1 bulto)',    from:['PICKED'],    to:'Empacada',    ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/pack',{method:'POST',body:{bultos:1}});}},
-    {k:'ship',     label:'Despachar',            from:['PACKED'],    to:'Despachada',  needsCarrier:true, ep:function(id,o,x){return api('/sellers/'+seller+'/orders/'+id+'/ship',{method:'POST',body:{carrier:(o.carrier||x.carrier||undefined)}});}},
-    {k:'cancel',   label:'Cancelar',             from:['RECEIVED','ALLOCATED','PICKING'], to:'Cancelada', danger:true, ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/cancel',{method:'POST'});}},
-    {k:'react',    label:'Reactivar',            from:['CANCELLED'], to:'Ingresada',   ep:function(id){return api('/sellers/'+seller+'/orders/'+id+'/reactivate',{method:'POST'});}}
+    {k:'allocate', label:'Reservar stock',       from:['RECEIVED'],  to:'Reservada',   ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/allocate',{method:'POST'});}},
+    {k:'start',    label:'Pasar a picking',      from:['ALLOCATED'], to:'En picking',  ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/start-picking',{method:'POST'});}},
+    {k:'pick',     label:'Confirmar picking completo', from:['PICKING','ALLOCATED'], to:'Pickeada', ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/pick',{method:'POST'});}},
+    {k:'pack',     label:'Empacar (1 bulto)',    from:['PICKED'],    to:'Empacada',    ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/pack',{method:'POST',body:{bultos:1}});}},
+    {k:'ship',     label:'Despachar',            from:['PACKED'],    to:'Despachada',  needsCarrier:true, ep:function(id,o,x){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/ship',{method:'POST',body:{carrier:(o.carrier||x.carrier||undefined)}});}},
+    {k:'cancel',   label:'Cancelar',             from:['RECEIVED','ALLOCATED','PICKING'], to:'Cancelada', danger:true, ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/cancel',{method:'POST'});}},
+    {k:'react',    label:'Reactivar',            from:['CANCELLED'], to:'Ingresada',   ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/reactivate',{method:'POST'});}}
   ];
-  function bulkSelected(){ return (D.ord||[]).filter(function(o){return bulkSel[o.id];}); }
+  function bulkSelected(){ return ordRows().filter(function(o){return bulkSel[o.id];}); }
   function syncBulkHeader(visible){
     var h=$("#ord-selall"); if(!h)return;
     var vis=(visible||[]).length, n=(visible||[]).filter(function(o){return bulkSel[o.id];}).length;
@@ -3595,7 +3693,7 @@
       (function next(){
         if(i>=apply.length){
           closeModal(); bulkSel={};
-          loadSeller().then(function(){ paintBulkBar(); });
+          recargaOrdenes().then(function(){ paintBulkBar(); });
           var msg=a.label+': '+ok+' ok'+(skip?' · '+skip+' omitida(s)':'')+(fail.length?' · '+fail.length+' con error':'');
           if(fail.length){ openModal('Resultado del cambio masivo','<p class="muted" style="margin:0 0 10px">'+esc(msg)+'</p><div style="max-height:40vh;overflow:auto">'+fail.map(function(f){return '<div class="kv"><span>'+esc(f.ref)+'</span><b style="color:var(--crit)">'+esc(f.err)+'</b></div>';}).join('')+'</div><div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn pri" id="m-ok">Cerrar</button></div>'); $("#m-ok").addEventListener('click',closeModal); }
           else toast(msg);
@@ -3607,11 +3705,11 @@
     });
   }
   (function bindBulk(){
-    var h=$("#ord-selall"); if(h)h.addEventListener('change',function(){ var vis=D.ord.filter(ordEnFiltro); vis.forEach(function(o){ if(h.checked)bulkSel[o.id]=true; else delete bulkSel[o.id]; }); renderOrders(); paintBulkBar(); });
+    var h=$("#ord-selall"); if(h)h.addEventListener('change',function(){ var vis=ordRows().filter(ordEnFiltro); vis.forEach(function(o){ if(h.checked)bulkSel[o.id]=true; else delete bulkSel[o.id]; }); renderOrders(); paintBulkBar(); });
     var sa=$("#bulk-action"); if(sa)sa.addEventListener('change',function(){ $("#bulk-apply").disabled=!sa.value; });
     var ap=$("#bulk-apply"); if(ap)ap.addEventListener('click',bulkApply);
     var cl=$("#bulk-clear"); if(cl)cl.addEventListener('click',bulkClear);
-    function selectVisible(){ D.ord.filter(ordEnFiltro).forEach(function(o){bulkSel[o.id]=true;}); renderOrders(); paintBulkBar(); }
+    function selectVisible(){ ordRows().filter(ordEnFiltro).forEach(function(o){bulkSel[o.id]=true;}); renderOrders(); paintBulkBar(); }
     var al=$("#bulk-all"); if(al)al.addEventListener('click',selectVisible);
     var alm=$("#ord-selall-m"); if(alm)alm.addEventListener('click',selectVisible);
   })();
@@ -3788,7 +3886,8 @@
     renderPickList(order.id);
   }
   function renderPickList(orderId){
-    api('/sellers/'+seller+'/orders/'+orderId+'/picklist').then(function(tasks){
+    var sid=osel(ordById(orderId));
+    api('/sellers/'+sid+'/orders/'+orderId+'/picklist').then(function(tasks){
       var pending=tasks.filter(function(t){return (t.qty-(t.pickedQty||0))>0;});
       var rows=tasks.map(function(t){
         var rem=t.qty-(t.pickedQty||0), done=rem<=0;
@@ -3812,13 +3911,13 @@
         var qv=parseInt(qtyEl.value,10);
         if(!(qv>0)){toast("Ingresa la cantidad a pickear");qtyEl.focus();return;}
         var body={sku:b.getAttribute("data-sku"),locationId:b.getAttribute("data-loc"),qty:qv};
-        api('/sellers/'+seller+'/orders/'+orderId+'/pick-task',{method:'POST',body:body}).then(function(o){
+        api('/sellers/'+sid+'/orders/'+orderId+'/pick-task',{method:'POST',body:body}).then(function(o){
           if(o.status==="PICKED"){toast("Picking completo");return onPickComplete();}
-          toast("Ubicación pickeada");renderPickList(orderId);loadSeller();
+          toast("Ubicación pickeada");renderPickList(orderId);recargaOrdenes();
         }).catch(function(e){toast(e.message);});
       });});
       if($("#pk-all"))$("#pk-all").addEventListener("click",function(){
-        api('/sellers/'+seller+'/orders/'+orderId+'/pick',{method:'POST'}).then(function(){toast("Picking completo");return onPickComplete();}).catch(function(e){toast(e.message);});
+        api('/sellers/'+sid+'/orders/'+orderId+'/pick',{method:'POST'}).then(function(){toast("Picking completo");return onPickComplete();}).catch(function(e){toast(e.message);});
       });
       $("#pk-close").addEventListener("click",function(){pqFlow=false;closeModal();});
     }).catch(function(e){$("#m-body").innerHTML='<p class="ferr">'+esc(e.message)+'</p>';});
@@ -3920,9 +4019,9 @@
       });
       if(perr){$("#pk2-err").textContent=perr;return;}
       $("#pk2-save").disabled=true;
-      api('/sellers/'+seller+'/orders/'+order.id+'/pack',{method:'POST',body:{bultos:bultos,materials:materials}}).then(function(o){
+      api('/sellers/'+osel(order)+'/orders/'+order.id+'/pack',{method:'POST',body:{bultos:bultos,materials:materials}}).then(function(o){
         toast("Orden empacada");
-        loadSeller(); loadPackaging();
+        recargaOrdenes(); loadPackaging();
         renderLabelsBody(o,true);
       }).catch(function(e){$("#pk2-save").disabled=false;$("#pk2-err").textContent=e.message;});
     });
@@ -3945,13 +4044,13 @@
     if($("#lb-print"))$("#lb-print").addEventListener("click",function(){printLabels(p);});
     if($("#lb-retry"))$("#lb-retry").addEventListener("click",function(){
       $("#lb-retry").disabled=true;
-      api('/sellers/'+seller+'/orders/'+order.id+'/labels/fetch',{method:'POST'}).then(function(o){toast("Etiquetas actualizadas");loadSeller();renderLabelsBody(o,false);}).catch(function(e){$("#lb-retry").disabled=false;toast(e.message);});
+      api('/sellers/'+osel(order)+'/orders/'+order.id+'/labels/fetch',{method:'POST'}).then(function(o){toast("Etiquetas actualizadas");recargaOrdenes();renderLabelsBody(o,false);}).catch(function(e){$("#lb-retry").disabled=false;toast(e.message);});
     });
   }
   function openLabels(order){
     if(!order)return;
     openModal("Etiquetas · "+esc(order.externalOrderId||order.id.slice(0,8)),'<div class="form"><p class="muted" style="margin:0">Cargando…</p></div>');
-    api('/sellers/'+seller+'/orders/'+order.id).then(function(o){renderLabelsBody(o,false);}).catch(function(e){$("#m-body").innerHTML='<p class="ferr">'+esc(e.message)+'</p>';});
+    api('/sellers/'+osel(order)+'/orders/'+order.id).then(function(o){renderLabelsBody(o,false);}).catch(function(e){$("#m-body").innerHTML='<p class="ferr">'+esc(e.message)+'</p>';});
   }
 
   // ----- Despachar orden (courier + tracking) -----
@@ -3970,7 +4069,7 @@
     $("#sh-cancel").addEventListener("click",closeModal);
     $("#sh-save").addEventListener("click",function(){
       var body={carrier:$("#sh-carrier").value.trim()||null,trackingNumber:$("#sh-track").value.trim()||null};
-      api('/sellers/'+seller+'/orders/'+order.id+'/ship',{method:'POST',body:body}).then(function(){closeModal();toast("Orden despachada");return loadSeller();}).catch(function(e){$("#sh-err").textContent=e.message;});
+      api('/sellers/'+osel(order)+'/orders/'+order.id+'/ship',{method:'POST',body:body}).then(function(){closeModal();toast("Orden despachada");return recargaOrdenes();}).catch(function(e){$("#sh-err").textContent=e.message;});
     });
   }
 
@@ -4222,6 +4321,9 @@
   if($("#cg-q"))$("#cg-q").addEventListener("input",function(){CG.q=this.value;pintaConsignees();});
 
   function openOrderForm(order){
+    // Una orden nace de UN cliente. En consolidado hay que decir de cuál: el filtro
+    // de la tabla es el que manda, y si está en "todos" no hay a quién asignársela.
+    if(!order&&!exigeCliente('crear una orden'))return;
     if(!seller){toast("Selecciona un cliente primero");return;}
     var isEdit=!!order;
     var chOpts=CHANNELS.map(function(c){return '<option value="'+esc(c)+'"'+((order&&order.salesChannel===c)?' selected':(!order&&c==="web-propia"?' selected':''))+'>'+esc(CH_LABEL[c]||c)+'</option>';}).join("");
@@ -4431,9 +4533,11 @@
       var docv=$("#of-doc")?$("#of-doc").value:""; if(docv)body.documentType=docv;
       var carv=$("#of-carrier")?$("#of-carrier").value.trim():""; if(carv)body.carrier=carv;
       var duev=$("#of-due")?localInputToIso($("#of-due").value):null; if(duev){body.dueAt=duev;body.dueSource='manual';}
-      var p=isEdit?api('/sellers/'+seller+'/orders/'+order.id,{method:'PATCH',body:body}):api('/sellers/'+seller+'/orders',{method:'POST',body:body});
+      // Editar: el seller es el de la orden. Crear: el del filtro, o el global si no hay.
+      var destino=isEdit?osel(order):(ordSellerFilter||seller);
+      var p=isEdit?api('/sellers/'+destino+'/orders/'+order.id,{method:'PATCH',body:body}):api('/sellers/'+destino+'/orders',{method:'POST',body:body});
       var btn=this; btn.disabled=true;
-      p.then(function(o){closeModal();toast(isEdit?((order.status==="ALLOCATED")?"Orden actualizada y stock reservado de nuevo":"Orden actualizada"):"Orden creada");return loadSeller();})
+      p.then(function(o){closeModal();toast(isEdit?((order.status==="ALLOCATED")?"Orden actualizada y stock reservado de nuevo":"Orden actualizada"):"Orden creada");return recargaOrdenes();})
        .catch(function(e){btn.disabled=false; if(showStockShortage(e,order&&order.externalOrderId)){$("#of-err").textContent="No se guardó: falta stock. La orden quedó como estaba.";} else {$("#of-err").textContent=e.message;} });
     });
   }
@@ -4752,9 +4856,9 @@
       +'<div style="display:flex;gap:10px"><button class="btn" id="m-no">Cancelar</button><button class="btn pri" id="due-save">Guardar</button></div></div></div>');
     $("#m-no").addEventListener('click',closeModal);
     var send=function(iso){
-      api('/sellers/'+seller+'/orders/'+o.id+'/due-date',{method:'PATCH',body:{dueAt:iso,source:'manual'}})
-        .then(function(){ closeModal(); toast(iso?'Deadline actualizado':'Deadline quitado'); return loadSeller(); })
-        .then(function(){ var f=byId(D.ord,o.id); if(f)openOrder(f); })
+      api('/sellers/'+osel(o)+'/orders/'+o.id+'/due-date',{method:'PATCH',body:{dueAt:iso,source:'manual'}})
+        .then(function(){ closeModal(); toast(iso?'Deadline actualizado':'Deadline quitado'); return recargaOrdenes(); })
+        .then(function(){ var f=ordById(o.id); if(f)openOrder(f); })
         .catch(function(e){ toast(e.message); });
     };
     $("#due-save").addEventListener('click',function(){ send(localInputToIso($("#due-at").value)); });
@@ -4764,7 +4868,7 @@
   var TASK_TYPE={RESERVE:"Reserva",PICK:"Picking",PACK:"Packing",SHIP:"Despacho",PUTAWAY:"Guardado",RESTOCK:"Reposición",RECEIVE:"Recepción",COUNT:"Conteo",RESLOT:"Re-slotting"};
   var TASK_STATE={pending:"Pendiente",assigned:"Asignada",in_progress:"En curso",done:"Hecha",cancelled:"Cancelada"};
   function renderOrderTasks(orderId){
-    api('/sellers/'+seller+'/orders/'+orderId+'/tasks').then(function(tasks){
+    api('/sellers/'+osel(ordById(orderId))+'/orders/'+orderId+'/tasks').then(function(tasks){
       var el=$("#dr-tasks"); if(!el)return;
       if(!tasks||!tasks.length){el.innerHTML='<span class="muted">Sin tareas registradas.</span>';return;}
       el.classList.remove("muted");
@@ -4799,14 +4903,14 @@
     }
     if(o.packing)msg+='<p class="muted" style="margin:10px 0 0">La orden estaba empacada: los insumos de embalaje usados no se reponen.</p>';
     confirmBox("Cancelar orden",msg,"Sí, cancelar",function(){
-      api('/sellers/'+seller+'/orders/'+id+'/cancel',{method:'POST'})
-        .then(function(){toast(recolectadas?("Orden cancelada · "+recolectadas+" un devueltas a su ubicación"):"Orden cancelada");return loadSeller();})
+      api('/sellers/'+osel(o)+'/orders/'+id+'/cancel',{method:'POST'})
+        .then(function(){toast(recolectadas?("Orden cancelada · "+recolectadas+" un devueltas a su ubicación"):"Orden cancelada");return recargaOrdenes();})
         .catch(function(e){toast(e.message);});
     },true);
   }
   function reactivateOrder(id){
     confirmBox("Reactivar orden","Vuelve al flujo como <b>Ingresada</b>. Si antes tenía stock reservado, se intenta reservar de nuevo. Queda registrado en el historial de la orden y en el kardex, con tu usuario.","Reactivar",function(){
-      api('/sellers/'+seller+'/orders/'+id+'/reactivate',{method:'POST'}).then(function(o){toast("Orden reactivada"+(o&&o.status==="ALLOCATED"?" y re-reservada":""));return loadSeller();}).catch(function(e){toast(e.message);});
+      api('/sellers/'+osel(ordById(id))+'/orders/'+id+'/reactivate',{method:'POST'}).then(function(o){toast("Orden reactivada"+(o&&o.status==="ALLOCATED"?" y re-reservada":""));return recargaOrdenes();}).catch(function(e){toast(e.message);});
     });
   }
   $("#dr-x").addEventListener("click",function(){$("#drawer").classList.remove("on");});
@@ -7413,9 +7517,23 @@
   }
 
   if($("#wh-new"))$("#wh-new").addEventListener("click",function(){openWebhookForm(null);});
+  // Filtro por cliente de la tabla de órdenes. Elegir uno también lo pone en foco
+  // en el resto del panel: así "crear orden", "carga masiva" y "reserva masiva"
+  // apuntan al mismo cliente que se está mirando, sin un segundo selector que cuadrar.
+  if($("#ord-seller"))$("#ord-seller").addEventListener("change",function(){
+    ordSellerFilter=this.value||'';
+    bulkSel={};
+    if(ordSellerFilter&&ordSellerFilter!==seller){
+      seller=ordSellerFilter;
+      if($("#seller"))$("#seller").value=seller;
+      loadSeller();
+      return;
+    }
+    renderOrdFilters(); renderOrders(); paintBulkBar();
+  });
   $("#ord-new").addEventListener("click",function(){openOrderForm(null);});
-  if($("#ord-import"))$("#ord-import").addEventListener("click",openBulkImport);
-  if($("#ord-reserve-all"))$("#ord-reserve-all").addEventListener("click",openReserveMasiva);
+  if($("#ord-import"))$("#ord-import").addEventListener("click",function(){ if(exigeCliente('hacer una carga masiva'))openBulkImport(); });
+  if($("#ord-reserve-all"))$("#ord-reserve-all").addEventListener("click",function(){ if(exigeCliente('reservar en masa'))openReserveMasiva(); });
   if($("#pkg-new"))$("#pkg-new").addEventListener("click",function(){openPkgForm(null);});
   if($("#ret-new"))$("#ret-new").addEventListener("click",openNewReturn);
   // Tablas ordenables por clic en la cabecera (orden inicial: fecha, más reciente primero).
