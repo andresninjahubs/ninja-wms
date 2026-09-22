@@ -7,6 +7,7 @@
 type PrismaClient = any;
 import { AiDashboard } from '../../domain/ai-dashboard';
 import type { Consignee } from '../../domain/consignee';
+import type { ApiKey, ApiKeyScope } from '../../domain/api-key';
 import {
   LocationRepository,
   LoginEventRepository,
@@ -15,6 +16,7 @@ import {
   PackagingRepository,
   BrandingRepository,
   ConsigneeRepository,
+  ApiKeyRepository,
   OpsChannelRepository,
   AiDashboardRepository,
   AiConfigRepository,
@@ -534,6 +536,48 @@ export class PrismaSerialRepository implements SerialRepository {
 function iso(v: any): string {
   if (!v) return new Date(0).toISOString();
   return v instanceof Date ? v.toISOString() : String(v);
+}
+
+export class PrismaApiKeyRepository implements ApiKeyRepository {
+  constructor(private readonly db: PrismaClient) {}
+  private get tabla(): any { return (this.db as any).apiKey; }
+  async listByUser(userId: string): Promise<ApiKey[]> {
+    const rows = await this.tabla.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
+    return rows.map((r: any) => this.toDomain(r));
+  }
+  async findByHash(hash: string): Promise<ApiKey | null> {
+    const r = await this.tabla.findUnique({ where: { hash } });
+    return r ? this.toDomain(r) : null;
+  }
+  async get(id: string): Promise<ApiKey | null> {
+    const r = await this.tabla.findUnique({ where: { id } });
+    return r ? this.toDomain(r) : null;
+  }
+  async save(k: ApiKey): Promise<void> {
+    const cols = {
+      userId: k.userId, label: k.label, prefix: k.prefix, hash: k.hash, scope: k.scope, operationId: k.operationId,
+      createdBy: k.createdBy,
+      expiresAt: k.expiresAt ? new Date(k.expiresAt) : null,
+      lastUsedAt: k.lastUsedAt ? new Date(k.lastUsedAt) : null,
+      revokedAt: k.revokedAt ? new Date(k.revokedAt) : null,
+    };
+    await this.tabla.upsert({
+      where: { id: k.id },
+      create: { id: k.id, ...cols, createdAt: new Date(k.createdAt) },
+      update: cols,
+    });
+  }
+  private toDomain(r: any): ApiKey {
+    return {
+      id: r.id, userId: r.userId, label: r.label, prefix: r.prefix, hash: r.hash,
+      scope: (r.scope === 'write' ? 'write' : 'read') as ApiKeyScope,
+      operationId: r.operationId,
+      createdAt: iso(r.createdAt), createdBy: r.createdBy ?? null,
+      expiresAt: r.expiresAt ? iso(r.expiresAt) : null,
+      lastUsedAt: r.lastUsedAt ? iso(r.lastUsedAt) : null,
+      revokedAt: r.revokedAt ? iso(r.revokedAt) : null,
+    };
+  }
 }
 
 export class PrismaConsigneeRepository implements ConsigneeRepository {

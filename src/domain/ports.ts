@@ -3,6 +3,7 @@
  * Las implementaciones concretas (Prisma, en-memoria) viven en /infra.
  */
 import type { Consignee } from './consignee';
+import type { ApiKey } from './api-key';
 import type { AgentSchedule } from './agent-schedule';
 import { AiDashboard } from './ai-dashboard';
 import {
@@ -375,6 +376,15 @@ export interface ConsigneeRepository {
   findByRut(sellerId: string, rut: string): Promise<Consignee | null>;
   save(consignee: Consignee): Promise<void>;
   delete(id: string): Promise<void>;
+}
+
+/** Llaves de API (credenciales de máquina). El secreto se guarda hasheado. */
+export interface ApiKeyRepository {
+  listByUser(userId: string): Promise<ApiKey[]>;
+  /** Búsqueda por el hash del secreto: es como se autentica cada petición. */
+  findByHash(hash: string): Promise<ApiKey | null>;
+  get(id: string): Promise<ApiKey | null>;
+  save(key: ApiKey): Promise<void>;
 }
 
 export interface BrandingRepository {

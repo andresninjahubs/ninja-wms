@@ -32,6 +32,8 @@ import { OperationService } from '../domain/operation.service';
 import { BarcodeService, RegisterPackInput } from '../domain/barcode.service';
 import { ForbiddenError, NotFoundError, PlanLimitError, ValidationError } from '../domain/errors';
 import { Consignee, ConsigneeInput, direccionPrincipal, formatearRut, normalizarConsignee } from '../domain/consignee';
+import { ApiKey, ApiKeyScope, apiKeyPublica, llaveVigente, nuevoSecreto, prefijoVisible } from '../domain/api-key';
+import { createHash } from 'crypto';
 import { CORE_FEATURE, LIMIT_KEYS, MODULE_CATALOG, PLAN_CATALOG, PlanConfig, PlanDef, PlanFeature, PlanId, PlanLimits, defaultPlanConfig, effectivePlanId, mergeCatalog, planDef, trialStateOf } from '../domain/plans';
 import { looksLikeJwt, signToken, verifyToken } from './auth-token';
 import { toDomainEvents } from '../domain/domain-events';
@@ -57,6 +59,7 @@ import {
   SerialRepository,
   BrandingRepository,
   ConsigneeRepository,
+  ApiKeyRepository,
   ShippingLabelProvider,
   SkuRepository,
   StockQuery,
@@ -131,6 +134,11 @@ import {
 import { askCopilotAgent, askCopilotChat, askCopilotLlmDetailed, listModels as listLlmModels, PROVIDER_DEFAULTS as COPILOT_PROVIDERS } from '../domain/copilot-llm';
 import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS, COPILOT_MANAGE_TOOLS } from '../domain/copilot-tools';
 
+/** SHA-256 del secreto de una llave. Lo mismo al emitir y al autenticar. */
+function hashApiKey(secreto: string): string {
+  return createHash('sha256').update(secreto, 'utf8').digest('hex');
+}
+
 export interface CreateSkuInput {
   sku: string;
   description: string;
@@ -204,7 +212,161 @@ export class WmsFacade {
     private readonly aiDashboards?: AiDashboardRepository,
     /** Destinatarios frecuentes por cliente (opcional). */
     private readonly consignees?: ConsigneeRepository,
+    /** Llaves de API para clientes MCP e integraciones (opcional). */
+    private readonly apiKeys?: ApiKeyRepository,
   ) {}
+
+  // ---- Llaves de API y servidor MCP -----------------------------------------
+  /**
+   * Emite una llave nueva. El secreto se devuelve UNA sola vez: de la base solo
+   * se puede recuperar su hash, así que si la persona lo pierde hay que revocar
+   * y emitir otra. Es a propósito — una credencial que se puede volver a leer
+   * desde el panel es una credencial que se filtra en una captura de pantalla.
+   */
+  async createApiKey(userId: string, input: { label: string; scope?: ApiKeyScope; diasVigencia?: number | null; operationId?: string | null }, actor?: string): Promise<{ key: ReturnType<typeof apiKeyPublica>; secreto: string }> {
+    const repo = this.apiKeyRepo();
+    const u = await this.usersService.getUser(userId);
+    if (!u) throw new NotFoundError('Usuario no encontrado');
+    const label = String(input.label ?? '').trim();
+    if (!label) throw new ValidationError('Ponle un nombre a la llave (ej: "Claude de escritorio")');
+    // Tenant de la llave: el del usuario, salvo el super admin de plataforma, que
+    // no tiene operación propia y por eso debe decir explícitamente sobre cuál opera.
+    const operationId = (u.operationId ?? String(input.operationId ?? '').trim()) || '';
+    if (!operationId) throw new ValidationError('Indica la operación sobre la que va a operar esta llave');
+    if (u.operationId && input.operationId && input.operationId !== u.operationId) {
+      throw new ForbiddenError('Una llave solo puede operar sobre la operación de su dueño');
+    }
+    await this.operationsService.mustGet(operationId);
+    const secreto = nuevoSecreto((n) => randomBytes(n).toString('hex'));
+    const now = this.clockNow();
+    const dias = input.diasVigencia ?? null;
+    const k: ApiKey = {
+      id: this.ids.next(),
+      userId,
+      label,
+      prefix: prefijoVisible(secreto),
+      hash: hashApiKey(secreto),
+      // Una llave de escritura no puede darle poderes a quien no los tiene: si el
+      // dueño no puede ejecutar acciones, la llave nace de solo lectura.
+      scope: (input.scope === 'write' && this.copilotCanWrite(u.role)) ? 'write' : 'read',
+      operationId,
+      createdAt: now,
+      createdBy: actor ?? null,
+      expiresAt: dias && dias > 0 ? new Date(Date.parse(now) + dias * 86400000).toISOString() : null,
+      lastUsedAt: null,
+      revokedAt: null,
+    };
+    await repo.save(k);
+    return { key: apiKeyPublica(k, now), secreto };
+  }
+  async listApiKeys(userId: string) {
+    if (!this.apiKeys) return [];
+    const now = this.clockNow();
+    return (await this.apiKeys.listByUser(userId)).map((k) => apiKeyPublica(k, now));
+  }
+  async revokeApiKey(userId: string, id: string) {
+    const repo = this.apiKeyRepo();
+    const k = await repo.get(id);
+    if (!k || k.userId !== userId) throw new NotFoundError('Llave no encontrada');
+    if (!k.revokedAt) await repo.save({ ...k, revokedAt: this.clockNow() });
+    return { ok: true };
+  }
+  /**
+   * Resuelve el secreto de una llave a su usuario. Devuelve null ante cualquier
+   * duda (llave inexistente, revocada, vencida, usuario inactivo): quien llama
+   * responde 401 sin distinguir el motivo, para no filtrar si la llave existe.
+   */
+  async resolveApiKey(secreto: string): Promise<{ user: User; key: ApiKey } | null> {
+    if (!this.apiKeys || !secreto) return null;
+    const k = await this.apiKeys.findByHash(hashApiKey(secreto.trim()));
+    if (!k) return null;
+    const now = this.clockNow();
+    if (!llaveVigente(k, now)) return null;
+    const user = await this.usersService.getUser(k.userId);
+    if (!user || user.active === false) return null;
+    // Marca de último uso: es lo que deja ver en el panel si una llave quedó viva
+    // sin que nadie la use. Best-effort, nunca bloquea la petición.
+    this.apiKeys.save({ ...k, lastUsedAt: now }).catch(() => undefined);
+    return { user: safeUser(user), key: k };
+  }
+  private apiKeyRepo(): ApiKeyRepository {
+    if (!this.apiKeys) throw new ValidationError('Las llaves de API no están disponibles en esta instalación');
+    return this.apiKeys;
+  }
+
+  /**
+   * Catálogo de herramientas que se le ofrece a un cliente MCP.
+   *
+   * Es EXACTAMENTE el mismo del copiloto, con los mismos filtros por rol: lectura
+   * siempre; escritura solo si el dueño de la llave puede ejecutar acciones y la
+   * llave es de alcance `write`; y las de mando (asignar, liberar, balancear)
+   * solo si además tiene `master:manage`. Un cliente MCP no es una puerta nueva
+   * al sistema: es la misma puerta, con la misma llave.
+   */
+  mcpToolCatalog(role: string | null | undefined, scope: ApiKeyScope) {
+    const lectura = COPILOT_TOOLS;
+    if (scope !== 'write' || !this.copilotCanWrite(role)) return lectura;
+    const acciones = this.copilotCanManage(role)
+      ? COPILOT_ACTION_TOOLS
+      : COPILOT_ACTION_TOOLS.filter((t) => !COPILOT_MANAGE_TOOLS.has(t.name));
+    return [...lectura, ...acciones];
+  }
+
+  /**
+   * Ejecuta una herramienta pedida por un cliente MCP.
+   *
+   * La diferencia con el chat es solo el transporte: la política de autonomía
+   * decide igual. Si una acción queda PROPUESTA, no se ejecuta y se devuelve
+   * diciéndolo — el agente externo tiene que volver a llamarla con
+   * `confirmar: true`, que es el equivalente al botón del panel. Así un modelo
+   * de otro proveedor no puede saltarse el modo confirmación de la operación.
+   */
+  async mcpCallTool(
+    name: string,
+    args: any,
+    ctx: { actor: { id?: string; role?: string }; operationId: string; sellerScope: string | null; scope: ApiKeyScope; confirmar?: boolean },
+  ): Promise<any> {
+    const permitidas = new Set(this.mcpToolCatalog(ctx.actor.role, ctx.scope).map((t) => t.name));
+    if (!permitidas.has(name)) {
+      return { error: `La herramienta "${name}" no existe o no está disponible para esta llave.` };
+    }
+    const esAccion = ACTION_POLICIES.some((p) => p.tool === name);
+    if (!esAccion) return this.runCopilotTool(name, args || {}, ctx.operationId, ctx.sellerScope);
+    const settings = await this.agentSettings(ctx.operationId);
+    const pendientes: CopilotPendingAction[] = [];
+    const r = await this.copilotExecAction(name, args || {}, {
+      operationId: ctx.operationId,
+      sellerId: ctx.sellerScope,
+      mode: settings.actionMode,
+      canWrite: true,
+      question: `MCP: ${name}`,
+      actor: ctx.actor,
+      pendingActions: pendientes,
+      settings,
+      confirmed: !!ctx.confirmar,
+    });
+    if (r === undefined) return { error: 'Acción no reconocida.' };
+    if (pendientes.length) {
+      // `avanzar_estado_orden` arma su propuesta con otra forma (orden/acción/de→a)
+      // que el resto de las acciones ({tool,args}); se devuelven los dos campos y
+      // el resumen legible, que es lo único que siempre viene.
+      const p: any = pendientes[0];
+      return {
+        ejecutado: false,
+        propuesta: {
+          herramienta: p.tool || name,
+          args: p.args ?? undefined,
+          orden: p.orden || undefined,
+          accion: p.accion || undefined,
+          de: p.from || undefined,
+          a: p.to || undefined,
+          resumen: p.resumen || undefined,
+        },
+        mensaje: 'La política de la operación dejó esta acción PROPUESTA, no ejecutada. Vuelve a llamarla con confirmar=true para ejecutarla.',
+      };
+    }
+    return r;
+  }
 
   // ---- Destinatarios frecuentes del cliente ---------------------------------
   /**
@@ -1295,7 +1457,10 @@ export class WmsFacade {
 
       switch (name) {
         case 'clientes_operacion': {
-          const sellers = await this.sellers.list(operationId);
+          // Respeta el alcance: un usuario de un seller ve SU cliente y nada más.
+          // Sin este filtro, preguntar "qué clientes hay" le devolvía a un cliente
+          // los nombres de todos los demás clientes del 3PL.
+          const sellers = (await this.sellers.list(operationId)).filter((s) => scopeSellers.includes(s.id));
           return { clientes: sellers.map((s) => ({ id: s.id, nombre: s.name })) };
         }
         case 'stock_de_sku': {

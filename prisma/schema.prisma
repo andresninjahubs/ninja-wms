@@ -326,15 +326,33 @@ model Seller {
   consignees    Consignee[]
 }
 
-/**
- * Destinatario frecuente de un cliente (seller).
- *
- * Aislado por seller a propósito: dos clientes del mismo 3PL pueden despachar
- * al mismo retail y aun así no deben verse la libreta de direcciones.
- * `direcciones` es un arreglo JSON de puntos de entrega; la dirección comercial
- * (domicilio tributario) va aparte porque es la que se factura, no a la que se
- * despacha.
- */
+/// Llave de API: credencial larga de máquina (clientes MCP, integraciones).
+/// El secreto NO se guarda: solo su SHA-256 y un prefijo visible para reconocerla.
+/// Hereda los permisos del usuario dueño; `scope` puede recortarlos, nunca ampliarlos.
+model ApiKey {
+  id         String    @id
+  userId     String
+  label      String
+  prefix     String
+  hash       String    @unique
+  scope      String    @default("read") // read | write
+  operationId String   // tenant fijo de la llave: no se elige por llamada
+  createdAt  DateTime  @default(now())
+  createdBy  String?
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([userId])
+}
+
+/// Destinatario frecuente de un cliente (seller).
+///
+/// Aislado por seller a propósito: dos clientes del mismo 3PL pueden despachar
+/// al mismo retail y aun así no deben verse la libreta de direcciones.
+/// `direcciones` es un arreglo JSON de puntos de entrega; la dirección comercial
+/// (domicilio tributario) va aparte porque es la que se factura, no a la que se
+/// despacha.
 model Consignee {
   id                 String   @id
   sellerId           String

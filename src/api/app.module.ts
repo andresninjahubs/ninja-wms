@@ -16,6 +16,8 @@ import { WebhooksController } from './webhooks.controller';
 import { WebhooksAdminController } from './webhooks-admin.controller';
 import { OrdersController } from './orders.controller';
 import { ConsigneesController } from './consignees.controller';
+import { McpController } from './mcp.controller';
+import { ApiKeysController } from './api-keys.controller';
 import { OrdersImportController } from './orders-import.controller';
 import { ReturnsController } from './returns.controller';
 import { ProductsImportController } from './products-import.controller';
@@ -54,6 +56,8 @@ import type { WmsContext } from '../infra/context';
     InventoryController,
     OrdersController,
     ConsigneesController,
+    McpController,
+    ApiKeysController,
     OrdersImportController,
     ReturnsController,
     ProductsController,

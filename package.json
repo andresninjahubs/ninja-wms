@@ -16,9 +16,11 @@
     "start:showcase": "SEED_DEMO=true PERSISTENCE=memory SEED_VOLUME=50000 node --max-old-space-size=8192 dist/src/main.js",
     "start:showcase:quick": "SEED_DEMO=true PERSISTENCE=memory SEED_VOLUME=12000 node --max-old-space-size=4096 dist/src/main.js",
     "tutorials:prepare": "node scripts/prepare-demo-for-videos.js",
-    "tutorials:record": "node scripts/record-tutorials.js"
+    "tutorials:record": "node scripts/record-tutorials.js",
+    "check:schema": "node scripts/check-prisma-schema.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@nestjs/common": "^10.4.0",
     "@nestjs/core": "^10.4.0",
     "@nestjs/platform-express": "^10.4.0",

@@ -7,6 +7,7 @@ import { PlanConfig } from '../../domain/plans';
 import { toDomainEvents } from '../../domain/domain-events';
 import { AiDashboard } from '../../domain/ai-dashboard';
 import type { Consignee } from '../../domain/consignee';
+import type { ApiKey } from '../../domain/api-key';
 import {
   AiDashboardRepository,
   AuthTokenRepository,
@@ -30,6 +31,7 @@ import {
   PackagingRepository,
   BrandingRepository,
   ConsigneeRepository,
+  ApiKeyRepository,
   OpsChannelRepository,
   AiConfigRepository,
   AiCredential,
@@ -239,6 +241,23 @@ export class InMemoryLotRepository implements LotRepository {
       .filter((l) => l.sellerId === sellerId && l.sku === sku)
       .map((l) => ({ ...l }));
   }
+}
+
+export class InMemoryApiKeyRepository implements ApiKeyRepository {
+  private readonly store = new Map<string, ApiKey>();
+  async listByUser(userId: string): Promise<ApiKey[]> {
+    return [...this.store.values()].filter((k) => k.userId === userId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).map((k) => ({ ...k }));
+  }
+  async findByHash(hash: string): Promise<ApiKey | null> {
+    const k = [...this.store.values()].find((x) => x.hash === hash);
+    return k ? { ...k } : null;
+  }
+  async get(id: string): Promise<ApiKey | null> {
+    const k = this.store.get(id);
+    return k ? { ...k } : null;
+  }
+  async save(key: ApiKey): Promise<void> { this.store.set(key.id, { ...key }); }
 }
 
 export class InMemoryConsigneeRepository implements ConsigneeRepository {

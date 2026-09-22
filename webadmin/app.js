@@ -90,10 +90,10 @@
     }).join("");
   }
   var NAV_BY_ROLE={
-    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
-    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan","branding","clients","users"],
+    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
+    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","branding","clients","users"],
     // Sin "billing": la facturación es del administrador de la operación, no del supervisor.
-    SUPERVISOR:["dashboard","copilot","voz","inventory","products","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan"],
+    SUPERVISOR:["dashboard","copilot","voz","inventory","products","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","mcp","plan"],
     OPERATOR:["dashboard","copilot","inventory","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","voicechannel"],
     CLIENT:["dashboard","copilot","inventory","products","consignees","orders","inbound","returns","movements","billing","chat","webhooks"]
   };
@@ -3976,6 +3976,107 @@
 
   // ----- Crear / editar orden -----
   var CHANNELS=["web-propia","shopify","mercadolibre","falabella","jumpseller","ripley","walmart","b2b"];
+  // ===== Conexión MCP: llaves de API para agentes externos ===================
+  // Las 75 herramientas del copiloto se exponen por el protocolo MCP en /mcp.
+  // Acá se emiten y revocan las llaves con las que un agente se conecta. El
+  // secreto se muestra UNA vez: de la base solo se puede sacar su hash.
+  function mcpUrl(){ return (location.origin||'') + '/mcp'; }
+  function renderMcp(){
+    if(!$("#mcp-body"))return;
+    pintaMcpHowto();
+    api('/me/api-keys').then(pintaMcpKeys).catch(function(){ $("#mcp-body").innerHTML='<tr><td colspan="7" class="empty">No se pudieron cargar las llaves.</td></tr>'; });
+  }
+  function pintaMcpHowto(){
+    var host=$("#mcp-howto"); if(!host)return;
+    var url=mcpUrl();
+    var cfg='{\n'
+      +'  "mcpServers": {\n'
+      +'    "ninja-wms": {\n'
+      +'      "type": "http",\n'
+      +'      "url": "'+esc(url)+'",\n'
+      +'      "headers": { "Authorization": "Bearer TU_LLAVE" }\n'
+      +'    }\n'
+      +'  }\n'
+      +'}';
+    host.innerHTML=''
+      +'<div class="mcpsec"><b>1. Dirección del servidor</b>'
+      +'<div class="mcpcode">'+esc(url)+'</div>'
+      +'<span class="hint">Protocolo MCP sobre HTTP (streamable). La llave viaja en el encabezado <code>Authorization: Bearer …</code>.</span></div>'
+      +'<div class="mcpsec"><b>2. Crea una llave</b><span class="hint">Con el botón de arriba. Elige <b>solo lectura</b> si el agente únicamente va a consultar; <b>lectura y escritura</b> si además va a operar.</span></div>'
+      +'<div class="mcpsec"><b>3. Configura tu cliente</b>'
+      +'<div class="mcpcode">'+esc(cfg)+'</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="mcp-copycfg" style="padding:6px 12px;font-size:12.5px">Copiar configuración</button></div></div>'
+      +'<div class="mcpsec"><b>Qué puede hacer el agente</b><span class="hint">Exactamente lo que puedes tú: las herramientas se filtran por tu rol. Si la operación está en modo confirmación, una acción vuelve como <b>propuesta</b> y el agente tiene que repetir la llamada confirmándola — el mismo resguardo que el botón del panel.</span></div>';
+    var cp=$("#mcp-copycfg");
+    if(cp)cp.addEventListener('click',function(){
+      try{ navigator.clipboard.writeText(cfg); toast('Configuración copiada'); }
+      catch(e){ toast('Copia el bloque a mano'); }
+    });
+  }
+  function pintaMcpKeys(lista){
+    var body=$("#mcp-body"); if(!body)return;
+    lista=Array.isArray(lista)?lista:[];
+    var cnt=$("#mcp-count"); if(cnt)cnt.textContent=lista.length?(lista.filter(function(k){return k.vigente;}).length+' vigente(s) de '+lista.length):'Todavía no has creado ninguna';
+    body.innerHTML=lista.length?lista.map(function(k){
+      var estado=k.revokedAt?'<span class="pill">Revocada</span>':(k.vigente?'<span class="pill ok">Vigente</span>':'<span class="pill">Vencida</span>');
+      return '<tr><td><b>'+esc(k.label)+'</b></td>'
+        +'<td class="mono2">'+esc(k.prefix)+'…</td>'
+        +'<td>'+(k.scope==='write'?'Lectura y escritura':'Solo lectura')+'</td>'
+        +'<td class="muted">'+esc(fmtDate(k.createdAt))+'</td>'
+        +'<td class="muted">'+esc(k.lastUsedAt?fmtDate(k.lastUsedAt):'nunca')+'</td>'
+        +'<td>'+estado+'</td>'
+        +'<td><div class="card-actions" style="justify-content:flex-end">'+(k.revokedAt?'':'<button class="mini danger" data-mcprev="'+esc(k.id)+'">Revocar</button>')+'</div></td></tr>';
+    }).join(""):'<tr><td colspan="7" class="empty">Sin llaves todavía. Crea una para conectar un agente externo a este WMS.</td></tr>';
+    $$("#mcp-body [data-mcprev]").forEach(function(b){b.addEventListener('click',function(){
+      var k=lista.filter(function(x){return x.id===b.getAttribute('data-mcprev');})[0];
+      confirmBox('Revocar llave','La llave <b>'+esc(k.label)+'</b> dejará de funcionar de inmediato y no se puede reactivar. Cualquier agente conectado con ella perderá el acceso.','Revocar',function(){
+        api('/me/api-keys/'+encodeURIComponent(k.id),{method:'DELETE'}).then(function(){ toast('Llave revocada'); renderMcp(); }).catch(function(e){ toast(e.message); });
+      },true);
+    });});
+  }
+  function openMcpKeyForm(){
+    var esPlataforma = role==='PLATFORM_ADMIN';
+    var opts=(D.ops||[]).map(function(o){return '<option value="'+esc(o.id)+'"'+(o.id===op?' selected':'')+'>'+esc(o.name||o.id)+'</option>';}).join("");
+    var html='<div class="form">'
+      +'<p class="muted" style="margin:0 0 6px;max-width:66ch">La llave hereda <b>tus</b> permisos: un agente conectado con ella puede lo mismo que puedes tú en el panel, ni más ni menos.</p>'
+      +'<div class="fld"><label>Nombre de la llave</label><input id="mk-label" placeholder="Ej: Claude de escritorio de Rodrigo"><div class="hint">Para reconocerla después y saber cuál revocar.</div></div>'
+      +'<div class="fld"><label>Alcance</label><select id="mk-scope"><option value="read">Solo lectura — consultar la operación</option><option value="write">Lectura y escritura — además ejecutar acciones</option></select></div>'
+      +(esPlataforma?'<div class="fld"><label>Operación</label><select id="mk-op">'+opts+'</select><div class="hint">La llave queda amarrada a esta operación y no puede saltar a otra.</div></div>':'')
+      +'<div class="fld"><label>Vencimiento</label><select id="mk-dias"><option value="">No vence (se revoca a mano)</option><option value="30">30 días</option><option value="90">90 días</option><option value="365">1 año</option></select></div>'
+      +'<div class="ferr" id="mk-err"></div>'
+      +'<div class="acts"><span class="hint">El secreto se muestra una sola vez.</span><div style="display:flex;gap:10px"><button class="btn" id="mk-cancel">Cancelar</button><button class="btn pri" id="mk-save">Crear llave</button></div></div>'
+      +'</div>';
+    openModal('Nueva llave de API',html,'wide');
+    $("#mk-cancel").addEventListener('click',closeModal);
+    $("#mk-save").addEventListener('click',function(){
+      $("#mk-err").textContent="";
+      var label=$("#mk-label").value.trim();
+      if(!label){$("#mk-err").textContent="Ponle un nombre a la llave.";return;}
+      var body={label:label,scope:$("#mk-scope").value};
+      var dias=$("#mk-dias").value; if(dias)body.diasVigencia=parseInt(dias,10);
+      if($("#mk-op"))body.operationId=$("#mk-op").value;
+      var btn=this; btn.disabled=true;
+      api('/me/api-keys',{method:'POST',body:body})
+        .then(function(r){ mostrarSecreto(r); })
+        .catch(function(e){ btn.disabled=false; $("#mk-err").textContent=e.message; });
+    });
+  }
+  /** Pantalla de "cópiala ahora": es la única vez que el secreto existe en claro. */
+  function mostrarSecreto(r){
+    var html='<div class="form">'
+      +'<p class="muted" style="margin:0;max-width:66ch">Esta es la única vez que se muestra la llave completa. Cópiala y guárdala donde corresponda; si la pierdes, revócala y crea otra.</p>'
+      +'<div class="mcpkey" id="mk-secret">'+esc(r.secreto)+'</div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri" id="mk-copy">Copiar llave</button><button class="btn" id="mk-copycfg">Copiar configuración completa</button></div>'
+      +'<div class="acts"><span class="hint">'+esc(r.key.label)+' · '+(r.key.scope==='write'?'lectura y escritura':'solo lectura')+'</span><button class="btn" id="mk-done">Listo</button></div>'
+      +'</div>';
+    openModal('Guarda tu llave ahora',html,'wide');
+    var cfg='{\n  "mcpServers": {\n    "ninja-wms": {\n      "type": "http",\n      "url": "'+mcpUrl()+'",\n      "headers": { "Authorization": "Bearer '+r.secreto+'" }\n    }\n  }\n}';
+    $("#mk-copy").addEventListener('click',function(){ try{navigator.clipboard.writeText(r.secreto);toast('Llave copiada');}catch(e){toast('Cópiala a mano');} });
+    $("#mk-copycfg").addEventListener('click',function(){ try{navigator.clipboard.writeText(cfg);toast('Configuración copiada');}catch(e){toast('Cópiala a mano');} });
+    $("#mk-done").addEventListener('click',function(){ closeModal(); renderMcp(); });
+  }
+  if($("#mcp-new"))$("#mcp-new").addEventListener('click',openMcpKeyForm);
+
   // ===== Destinatarios frecuentes del cliente ================================
   // La libreta de direcciones de cada cliente: a quién le despacha seguido y a
   // qué puntos de entrega. Vive por seller, así que se recarga al cambiar de
@@ -7234,11 +7335,11 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],consignees:["Destinatarios","Libreta de direcciones frecuentes del cliente"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],consignees:["Destinatarios","Libreta de direcciones frecuentes del cliente"],mcp:["Conexión MCP","Llaves para que agentes externos operen este WMS"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
     if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="dashboard"){loadDash().then(dashTick);}else{clearTimeout(dashTimer);}
-    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="consignees")renderConsignees();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
+    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="consignees")renderConsignees();if(pg==="mcp")renderMcp();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});

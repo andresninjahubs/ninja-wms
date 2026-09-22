@@ -440,6 +440,12 @@
   /* Destinatarios: cada dirección de destino es un bloque propio dentro del formulario. */
   .cgdir{border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:10px;background:var(--surface-2);display:flex;flex-direction:column;gap:9px}
   .cgdir-f{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  /* Conexión MCP: bloque de configuración para copiar y pegar. */
+  .mcpcode{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.65;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:13px 15px;overflow-x:auto;white-space:pre;color:var(--ink-2)}
+  .mcpsec{display:flex;flex-direction:column;gap:9px;margin-bottom:16px}
+  .mcpsec:last-child{margin-bottom:0}
+  .mcpsec b{font-size:13.5px}
+  .mcpkey{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;background:var(--warn-wash);border:1px solid var(--warn);border-radius:9px;padding:12px 14px;word-break:break-all;color:var(--ink)}
   /* Pestañas de deadline: no son un estado más del ciclo de vida, son una alerta.
      Van separadas por una línea y con el color de la urgencia que representan. */
   .fchip.dlsep{margin-left:5px;padding-left:12px;border-left:2px solid var(--line-2,rgba(0,0,0,.12));border-top-left-radius:0;border-bottom-left-radius:0}
@@ -1132,6 +1138,7 @@
         <button class="nav sub" data-pg="torre"><span class="ic">📡</span> Torre en vivo</button>
         <button class="nav sub" data-pg="agalertas"><span class="ic">🔔</span> Alertas activas <span class="badge" id="nav-agente"></span></button>
         <button class="nav sub" data-pg="aiaudit"><span class="ic">🧠</span> Auditoría IA</button>
+        <button class="nav sub" data-pg="mcp"><span class="ic">🔌</span> Conexión MCP</button>
       </div>
     </div>
 
@@ -1883,6 +1890,31 @@
         <div class="card">
           <div class="h"><h3>Reglas del agente</h3><div class="sp" style="flex:1"></div><span class="muted">Enciende/apaga cada regla y ajusta su umbral y enfriamiento</span></div>
           <div class="b"><div id="agt-rules"></div></div>
+        </div>
+      </section>
+
+      <!-- Conexión MCP: expone las herramientas del WMS a agentes externos -->
+      <section class="page" data-pg="mcp">
+        <div class="toolbar">
+          <span class="muted">Deja que un agente externo —el Claude de escritorio de tu jefe de bodega, el agente del OMS de un cliente— consulte y opere este WMS por el protocolo MCP. Son las mismas herramientas del copiloto, con los mismos permisos.</span>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn pri" id="mcp-new" style="padding:8px 14px">＋ Nueva llave</button>
+        </div>
+
+        <div class="card">
+          <div class="h"><h3>Cómo conectarse</h3><div class="sp" style="flex:1"></div><span class="muted">Servidor MCP por HTTP</span></div>
+          <div class="b"><div id="mcp-howto"></div></div>
+        </div>
+
+        <div class="card">
+          <div class="h"><h3>Tus llaves</h3><div class="sp" style="flex:1"></div><span class="muted" id="mcp-count"></span></div>
+          <div class="b">
+            <div class="tablewrap"><table class="matrix">
+              <thead><tr><th>Nombre</th><th>Llave</th><th>Alcance</th><th>Creada</th><th>Último uso</th><th>Estado</th><th></th></tr></thead>
+              <tbody id="mcp-body"></tbody>
+            </table></div>
+            <p class="hint" style="margin-top:12px">Una llave hereda tus permisos y nunca los amplía. Si dejas de trabajar acá y tu usuario se desactiva, tus llaves dejan de servir en el acto.</p>
+          </div>
         </div>
       </section>
 

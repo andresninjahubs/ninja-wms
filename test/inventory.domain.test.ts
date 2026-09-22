@@ -8,6 +8,8 @@
  *  - aislamiento total entre sellers (incluida colisión de SKU)
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { InventoryService } from '../src/domain/inventory.service';
 import { OrderService } from '../src/domain/order.service';
 import { ReceiptOrderService } from '../src/domain/receipt.service';
@@ -76,6 +78,7 @@ import {
   InMemoryAuthTokenRepository,
   InMemoryAiConfigRepository,
   InMemoryConsigneeRepository,
+  InMemoryApiKeyRepository,
   InMemoryPlanConfigRepository,
   InMemoryCountAuditRepository,
   InMemoryEventRepository,
@@ -964,9 +967,10 @@ async function run() {
     const planConfig = new InMemoryPlanConfigRepository();
     const aiConfig = new InMemoryAiConfigRepository();
     const consignees = new InMemoryConsigneeRepository();
+    const apiKeys = new InMemoryApiKeyRepository();
     const facade = new WmsFacade(inventory, orderService, receiptService, productService, billingService, sellers, skus, locations, ids, advisor, cyc, userSvc, bc, opSvc, metricsService, chatService, platformUsageService, announcementService, webhookService, shippingLabels, returnService, serials, packagingService,
-      undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, undefined, consignees);
-    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig, consignees };
+      undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, undefined, consignees, apiKeys);
+    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig, consignees, apiKeys };
   }
 
   async function seedScan(facade: WmsFacade) {
@@ -6124,6 +6128,153 @@ async function run() {
     assert.equal(buscarDireccion(c, 'Local Costanera')!.direccion, 'Nueva Costanera 3500');
     assert.equal(buscarDireccion(c, null)!.alias, 'Bodega Quilicura', 'sin alias, la principal');
     assert.equal(buscarDireccion(c, 'Bodega que no existe'), null);
+  });
+
+  // ---- Llaves de API y servidor MCP (v126) ---------------------------------
+  async function escenarioMcp() {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const admin = await facade.createUser({ id: 'ana', name: 'Ana', email: 'ana@op1.cl', role: UserRole.ADMIN, operationId: 'op1' });
+    const oper = await facade.createUser({ id: 'pedro', name: 'Pedro', email: 'pedro@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    const cliente = await facade.createUser({ id: 'dani', name: 'Daniela', email: 'dani@acme.cl', role: UserRole.CLIENT, operationId: 'op1', sellerId: 'acme' });
+    return { facade, admin, oper, cliente };
+  }
+
+  await test('llaves de API: el secreto se ve una vez y se guarda hasheado', async () => {
+    const { facade, admin } = await escenarioMcp();
+    const r = await facade.createApiKey(admin.id, { label: 'Claude de escritorio', scope: 'write' }, 'ana');
+    assert.match(r.secreto, /^njw_[0-9a-f]{40}$/, 'el secreto lleva prefijo reconocible y 40 hex');
+    assert.equal(r.key.prefix, r.secreto.slice(0, 10));
+    assert.equal(r.key.scope, 'write');
+    assert.equal(r.key.operationId, 'op1', 'la llave queda amarrada a la operación del dueño');
+    assert.equal(r.key.vigente, true);
+    // La vista pública nunca expone el hash ni el secreto.
+    assert.equal((r.key as any).hash, undefined);
+    assert.equal((r.key as any).secreto, undefined);
+    const listada = (await facade.listApiKeys(admin.id))[0];
+    assert.equal((listada as any).hash, undefined);
+    assert.equal(listada.prefix, r.key.prefix);
+  });
+
+  await test('llaves de API: resuelve al dueño, y deja de servir al revocarla', async () => {
+    const { facade, admin } = await escenarioMcp();
+    const r = await facade.createApiKey(admin.id, { label: 'integración' });
+    const ok = await facade.resolveApiKey(r.secreto);
+    assert.ok(ok, 'la llave recién emitida resuelve');
+    assert.equal(ok!.user.id, admin.id);
+    assert.equal(ok!.key.operationId, 'op1');
+    // Un secreto inventado o alterado no sirve.
+    assert.equal(await facade.resolveApiKey('njw_' + 'a'.repeat(40)), null);
+    assert.equal(await facade.resolveApiKey(r.secreto + 'x'), null);
+    assert.equal(await facade.resolveApiKey(''), null);
+    // Revocada, se corta.
+    await facade.revokeApiKey(admin.id, r.key.id);
+    assert.equal(await facade.resolveApiKey(r.secreto), null, 'revocada no resuelve más');
+  });
+
+  await test('llaves de API: desactivar al usuario invalida sus llaves', async () => {
+    const { facade, oper } = await escenarioMcp();
+    const r = await facade.createApiKey(oper.id, { label: 'la del operario' });
+    assert.ok(await facade.resolveApiKey(r.secreto));
+    await facade.deactivateUser(oper.id);
+    assert.equal(await facade.resolveApiKey(r.secreto), null, 'sin usuario activo, la llave no vale');
+  });
+
+  await test('llaves de API: nadie administra las llaves de otro', async () => {
+    const { facade, admin, oper } = await escenarioMcp();
+    const r = await facade.createApiKey(oper.id, { label: 'del operario' });
+    await expectThrows(() => facade.revokeApiKey(admin.id, r.key.id), NotFoundError, 'el admin no revoca la del operario');
+    assert.equal((await facade.listApiKeys(admin.id)).length, 0, 'no ve las de otro en su lista');
+  });
+
+  await test('llaves de API: una llave nunca amplía los permisos de su dueño', async () => {
+    const { facade, cliente } = await escenarioMcp();
+    // Un usuario CLIENT no puede ejecutar acciones: aunque pida 'write', nace read.
+    const r = await facade.createApiKey(cliente.id, { label: 'del cliente', scope: 'write' });
+    assert.equal(r.key.scope, 'read', 'el cliente no obtiene escritura por pedirla');
+  });
+
+  await test('MCP: el catálogo de herramientas respeta rol y alcance de la llave', async () => {
+    const { facade } = await escenarioMcp();
+    const nombres = (role: string, scope: 'read' | 'write') => facade.mcpToolCatalog(role, scope).map((t) => t.name);
+
+    const adminW = nombres('ADMIN', 'write');
+    const adminR = nombres('ADMIN', 'read');
+    const operW = nombres('OPERATOR', 'write');
+    const clienteW = nombres('CLIENT', 'write');
+
+    // Lectura siempre; escritura solo con alcance write y permiso del rol.
+    assert.ok(adminR.length > 0);
+    assert.ok(adminW.length > adminR.length, 'write ofrece más que read');
+    assert.equal(adminR.some((n) => n === 'avanzar_estado_orden'), false, 'una llave read no ve escritura');
+    assert.equal(adminW.includes('avanzar_estado_orden'), true);
+    assert.equal(clienteW.length, adminR.length, 'el cliente queda en el catálogo de solo lectura');
+
+    // El operario ejecuta lo suyo, pero no reparte trabajo.
+    assert.equal(operW.includes('avanzar_estado_orden'), true, 'el operario sí avanza órdenes');
+    for (const mando of ['asignar_tarea', 'liberar_asignacion', 'vaciar_operario', 'balancear_carga', 'guardar_instruccion']) {
+      assert.equal(operW.includes(mando), false, `${mando} no debería ofrecerse a un operario`);
+      assert.equal(adminW.includes(mando), true, `${mando} sí va para el administrador`);
+    }
+  });
+
+  await test('MCP: una herramienta fuera del catálogo se rechaza sin ejecutarse', async () => {
+    const { facade, cliente } = await escenarioMcp();
+    const actor = { id: cliente.id, role: 'CLIENT' };
+    // El cliente tiene llave read: pedir una acción no la ejecuta ni la propone.
+    const r = await facade.mcpCallTool('vaciar_operario', { operario: 'pedro' }, { actor, operationId: 'op1', sellerScope: 'acme', scope: 'read' });
+    assert.match(String(r.error), /no existe o no está disponible/);
+    // Una herramienta inventada tampoco.
+    const r2 = await facade.mcpCallTool('formatear_la_bodega', {}, { actor, operationId: 'op1', sellerScope: 'acme', scope: 'read' });
+    assert.match(String(r2.error), /no existe o no está disponible/);
+  });
+
+  await test('MCP: en modo confirmación una acción queda propuesta hasta confirmarla', async () => {
+    const { facade, admin } = await escenarioMcp();
+    const stg = await facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 500 });
+    await facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await facade.receive('acme', { sku: 'CAM', qty: 50, locationId: stg.id });
+    const o = await facade.createOrder('acme', { externalOrderId: 'MCP-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 2 }] }, 'ana');
+    const actor = { id: admin.id, role: 'ADMIN' };
+    const ctx = { actor, operationId: 'op1', sellerScope: null, scope: 'write' as const };
+
+    const p = await facade.mcpCallTool('avanzar_estado_orden', { orden: 'MCP-1', accion: 'reservar', sellerId: 'acme' }, ctx);
+    assert.equal(p.ejecutado, false, 'sin confirmar no se ejecuta');
+    assert.equal(p.propuesta.orden, 'MCP-1');
+    assert.equal(p.propuesta.a, 'ALLOCATED');
+    assert.equal((await facade.listOrders('acme')).find((x) => x.id === o.id)!.status, 'RECEIVED', 'la orden no se movió');
+
+    const e = await facade.mcpCallTool('avanzar_estado_orden', { orden: 'MCP-1', accion: 'reservar', sellerId: 'acme' }, { ...ctx, confirmar: true });
+    assert.equal(e.ok, true, JSON.stringify(e));
+    assert.equal((await facade.listOrders('acme')).find((x) => x.id === o.id)!.status, 'ALLOCATED', 'confirmada, sí se movió');
+  });
+
+  await test('MCP: las lecturas quedan acotadas al seller de la llave', async () => {
+    const { facade } = await escenarioMcp();
+    await facade.createSeller({ id: 'globex', operationId: 'op1', name: 'Globex' });
+    // Staff: ve los dos clientes de su operación.
+    const staff = await facade.mcpCallTool('clientes_operacion', {}, { actor: { id: 'ana', role: 'ADMIN' }, operationId: 'op1', sellerScope: null, scope: 'read' });
+    assert.equal(staff.clientes.length, 2);
+    // Usuario de un cliente: ve solo el suyo, ni siquiera el NOMBRE de los demás.
+    const suyo = await facade.mcpCallTool('clientes_operacion', {}, { actor: { id: 'dani', role: 'CLIENT' }, operationId: 'op1', sellerScope: 'acme', scope: 'read' });
+    assert.equal(suyo.clientes.length, 1);
+    assert.equal(suyo.clientes[0].id, 'acme');
+  });
+
+  await test('esquema de Prisma: sintaxis válida (lo que tumbó el despliegue v125)', () => {
+    // Un comentario de bloque en schema.prisma es válido en TypeScript y NO en
+    // Prisma, y solo se descubre cuando el build del contenedor corre
+    // `prisma generate` — es decir, con el despliegue ya fallado. Este test lo
+    // atrapa antes de empujar.
+    const { revisar } = require('../scripts/check-prisma-schema.js');
+    const schema = readFileSync(join(__dirname, '..', 'prisma', 'schema.prisma'), 'utf8');
+    const problemas = revisar(schema);
+    assert.deepEqual(problemas, [], 'schema.prisma tiene problemas de sintaxis:\n' + problemas.join('\n'));
+
+    // Y que la revisión realmente detecte el caso, para que no sea un test vacío.
+    const conBloque = 'datasource db {\n  provider = "postgresql"\n}\n\n/**\n * comentario\n */\nmodel X {\n  id String @id\n}\n';
+    assert.ok(revisar(conBloque).length > 0, 'la revisión debe rechazar un comentario de bloque');
   });
 
   // ---- Resumen --------------------------------------------------------------

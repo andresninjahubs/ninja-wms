@@ -92,3 +92,15 @@ arranca (en los logs verás "data loss"). Tienes dos caminos:
 - Respaldos de la base (Railway ofrece backups del servicio Postgres — actívalos).
 - Considera una revisión de seguridad y tus obligaciones de datos personales
   (en Chile, Ley 19.628) antes de operar comercialmente.
+
+## Servidor MCP (v126)
+
+El WMS expone sus herramientas por el protocolo MCP en `POST /mcp`, con
+transporte Streamable HTTP **sin sesión** (cada petición es autosuficiente, así
+cualquier instancia detrás del balanceador puede responder cualquier llamada).
+
+- **Autenticación**: llave de API (`Authorization: Bearer njw_…`), NO el JWT del
+  panel. Se emiten y revocan en *Ninja IA → Conexión MCP*.
+- **Esquema**: agrega la tabla `ApiKey`. El `prisma db push` del arranque la crea.
+- **Nada que configurar por entorno**: la ruta se monta sola con la app.
+- La dirección que se le da a un cliente MCP es `https://<tu-dominio>/mcp`.
