@@ -6,6 +6,7 @@
 import { PlanConfig } from '../../domain/plans';
 import { toDomainEvents } from '../../domain/domain-events';
 import { AiDashboard } from '../../domain/ai-dashboard';
+import type { Consignee } from '../../domain/consignee';
 import {
   AiDashboardRepository,
   AuthTokenRepository,
@@ -28,6 +29,7 @@ import {
   SerialRepository,
   PackagingRepository,
   BrandingRepository,
+  ConsigneeRepository,
   OpsChannelRepository,
   AiConfigRepository,
   AiCredential,
@@ -236,6 +238,33 @@ export class InMemoryLotRepository implements LotRepository {
     return [...this.store.values()]
       .filter((l) => l.sellerId === sellerId && l.sku === sku)
       .map((l) => ({ ...l }));
+  }
+}
+
+export class InMemoryConsigneeRepository implements ConsigneeRepository {
+  private readonly store = new Map<string, Consignee>();
+  private clon(c: Consignee): Consignee {
+    return { ...c, direcciones: c.direcciones.map((d) => ({ ...d })) };
+  }
+  async list(sellerId: string, opts?: { includeInactive?: boolean }): Promise<Consignee[]> {
+    return [...this.store.values()]
+      .filter((c) => c.sellerId === sellerId && (opts?.includeInactive ? true : c.active))
+      .sort((a, b) => a.razonSocial.localeCompare(b.razonSocial, 'es'))
+      .map((c) => this.clon(c));
+  }
+  async get(id: string): Promise<Consignee | null> {
+    const c = this.store.get(id);
+    return c ? this.clon(c) : null;
+  }
+  async findByRut(sellerId: string, rut: string): Promise<Consignee | null> {
+    const c = [...this.store.values()].find((x) => x.sellerId === sellerId && x.rut === rut);
+    return c ? this.clon(c) : null;
+  }
+  async save(consignee: Consignee): Promise<void> {
+    this.store.set(consignee.id, this.clon(consignee));
+  }
+  async delete(id: string): Promise<void> {
+    this.store.delete(id);
   }
 }
 

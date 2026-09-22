@@ -15,6 +15,7 @@ import { RequirePermission } from './auth/permissions.decorator';
 import { ImportOrdersDto } from './dto';
 import { OrderType, Uom, User } from '../domain/types';
 import { WMS_FACADE } from './tokens';
+import { Consignee, buscarConsignee, buscarDireccion, normalizarRut, rutValido } from '../domain/consignee';
 
 /**
  * Carga masiva de órdenes por Excel.
@@ -37,6 +38,8 @@ const TEMPLATE_HEADERS = [
   'Tipo (b2c/b2b/devolucion)',
   'Prioridad (normal/alta)',
   'Destinatario',
+  'RUT destinatario (opcional)',
+  'Punto de entrega (alias guardado, opcional)',
   'Teléfono',
   'Comuna/Ciudad',
   'Dirección',
@@ -48,9 +51,12 @@ const TEMPLATE_HEADERS = [
 ];
 
 const EXAMPLE_ROWS = [
-  ['WEB-1001', 'web-propia', 'b2c', 'normal', 'María Pérez', '+56 9 1111 1111', 'Providencia', 'Av. Siempre Viva 123', 'SKU-EJEMPLO-1', 2, '', 'boleta', 'Chilexpress'],
-  ['WEB-1001', 'web-propia', 'b2c', 'normal', 'María Pérez', '+56 9 1111 1111', 'Providencia', 'Av. Siempre Viva 123', 'SKU-EJEMPLO-2', 1, '', 'boleta', 'Chilexpress'],
-  ['WEB-1002', 'web-propia', 'b2c', 'alta', 'Juan Soto', '+56 9 2222 2222', 'Las Condes', 'Calle Falsa 456', 'SKU-EJEMPLO-1', 5, '', 'factura', 'Rapiboy'],
+  // Destinatario escrito a mano: se completan nombre, comuna y dirección.
+  ['WEB-1001', 'web-propia', 'b2c', 'normal', 'María Pérez', '', '', '+56 9 1111 1111', 'Providencia', 'Av. Siempre Viva 123', 'SKU-EJEMPLO-1', 2, '', 'boleta', 'Chilexpress'],
+  ['WEB-1001', 'web-propia', 'b2c', 'normal', 'María Pérez', '', '', '+56 9 1111 1111', 'Providencia', 'Av. Siempre Viva 123', 'SKU-EJEMPLO-2', 1, '', 'boleta', 'Chilexpress'],
+  // Destinatario GUARDADO: basta el RUT (o la razón social) y, si quieres, el alias
+  // del punto de entrega. Dirección y comuna salen solas de la ficha.
+  ['WEB-1002', 'web-propia', 'b2b', 'alta', 'Comercial Los Andes SpA', '76.000.023-K', 'Bodega Quilicura', '', '', '', 'SKU-EJEMPLO-1', 5, '', 'factura', 'Rapiboy'],
 ];
 
 const INSTRUCTIONS = [
@@ -61,9 +67,15 @@ const INSTRUCTIONS = [
   ['   Los datos del destinatario y encabezado se toman de la primera fila de cada orden.'],
   ['3) Campos obligatorios: N° de orden, Destinatario, SKU y Cantidad.'],
   ['4) "Canal de venta" por defecto es web-propia. "Tipo" por defecto b2c. "Prioridad" por defecto normal.'],
-  ['5) No cambies los nombres de las columnas de la hoja "Órdenes".'],
-  ['6) Borra las filas de ejemplo antes de subir tu archivo.'],
-  ['7) Guarda el archivo como Excel (.xlsx) o CSV y súbelo en el panel.'],
+  ['5) DESTINATARIOS GUARDADOS: si el destinatario ya está en el mantenedor del cliente,'],
+  ['   basta con poner su RUT (o su razón social exacta) en la columna "RUT destinatario".'],
+  ['   La razón social, la dirección y la comuna se completan solas desde su ficha.'],
+  ['   Si tiene varias direcciones de destino, indica cuál en "Punto de entrega" usando el alias'],
+  ['   que le pusiste (ej: "Bodega Quilicura"). Si lo dejas vacío, se usa su dirección principal.'],
+  ['   Si escribes una dirección igual, esa manda por sobre la de la ficha (envío excepcional).'],
+  ['6) No cambies los nombres de las columnas de la hoja "Órdenes".'],
+  ['7) Borra las filas de ejemplo antes de subir tu archivo.'],
+  ['8) Guarda el archivo como Excel (.xlsx) o CSV y súbelo en el panel.'],
 ];
 
 function norm(s: unknown): string {
@@ -85,6 +97,9 @@ function headerToField(header: unknown): string | null {
   if (n.includes('courier') || n.includes('transporte') || n.includes('carrier')) return 'carrier';
   if (n.includes('tipo')) return 'tipo';
   if (n.includes('prioridad')) return 'prioridad';
+  if (n.includes('rut')) return 'rut';
+  if (n.includes('razonsocial')) return 'razon';
+  if (n.includes('entrega') || n.includes('alias')) return 'alias';
   if (n.includes('destinatario') || n.includes('nombre')) return 'name';
   if (n.includes('telefono')) return 'phone';
   if (n.includes('comuna') || n.includes('ciudad')) return 'comuna';
@@ -211,11 +226,24 @@ export class OrdersImportController {
 
     const created: { orden: string; id: string; lineas: number }[] = [];
     const failed: { orden: string; motivo: string }[] = [];
+    // Libreta del cliente: se lee UNA vez para todo el archivo. Un archivo de 500
+    // órdenes al mismo retail no puede significar 500 consultas al repositorio.
+    const libreta = await this.wms.listConsignees(sellerId).catch(() => [] as Consignee[]);
+    let desdeLibreta = 0;
 
     for (const [orden, g] of groups) {
       const name = cell(g.header, 'name');
-      if (!name) {
-        failed.push({ orden, motivo: 'Falta el Destinatario.' });
+      const rutCelda = cell(g.header, 'rut');
+      const razonCelda = cell(g.header, 'razon');
+      // El RUT identifica mejor que el nombre; si no viene, se prueba con la razón
+      // social y después con el destinatario tal como lo escribieron.
+      const ficha = buscarConsignee(libreta, rutCelda) || buscarConsignee(libreta, razonCelda) || buscarConsignee(libreta, name);
+      if (!name && !ficha) {
+        failed.push({ orden, motivo: 'Falta el Destinatario (o un RUT que coincida con un destinatario guardado).' });
+        continue;
+      }
+      if (rutCelda && !ficha && !rutValido(rutCelda)) {
+        failed.push({ orden, motivo: `El RUT "${rutCelda}" no es válido y no coincide con ningún destinatario guardado.` });
         continue;
       }
       const typeMapped = mapOrderType(cell(g.header, 'tipo'));
@@ -223,13 +251,47 @@ export class OrdersImportController {
         failed.push({ orden, motivo: `Tipo inválido ("${cell(g.header, 'tipo')}"). Usa b2c, b2b o devolucion.` });
         continue;
       }
-      const shipTo: Record<string, string> = { name };
       const phone = cell(g.header, 'phone');
-      if (phone) shipTo.phone = phone;
       const comuna = cell(g.header, 'comuna');
-      if (comuna) shipTo.comuna = comuna;
       const address = cell(g.header, 'address');
-      if (address) shipTo.address = address;
+      const alias = cell(g.header, 'alias');
+
+      let shipTo: Record<string, string>;
+      if (ficha) {
+        // Destinatario guardado: la ficha pone razón social, RUT y dirección.
+        // Lo que venga escrito en el archivo PISA a la ficha, porque un despacho
+        // excepcional a otra dirección es un caso real y no un error de tipeo.
+        const dir = buscarDireccion(ficha, alias);
+        if (alias && !dir) {
+          failed.push({ orden, motivo: `El destinatario ${ficha.razonSocial} no tiene un punto de entrega llamado "${alias}".` });
+          continue;
+        }
+        desdeLibreta++;
+        shipTo = { name: name || ficha.nombreFantasia || ficha.razonSocial };
+        shipTo.razonSocial = ficha.razonSocial;
+        if (ficha.rut) shipTo.rut = ficha.rut;
+        shipTo.consigneeId = ficha.id;
+        const tel = phone || dir?.telefono || '';
+        if (tel) shipTo.phone = tel;
+        const com = comuna || dir?.comuna || '';
+        if (com) shipTo.comuna = com;
+        const addr = address || dir?.direccion || ficha.direccionComercial || '';
+        if (addr) shipTo.address = addr;
+        if (dir && !address) {
+          shipTo.addressId = dir.id;
+          shipTo.addressAlias = dir.alias;
+          if (dir.region) shipTo.region = dir.region;
+          if (dir.contacto) shipTo.contacto = dir.contacto;
+        }
+      } else {
+        shipTo = { name };
+        const rutLibre = normalizarRut(rutCelda);
+        if (rutLibre) shipTo.rut = rutLibre;
+        if (razonCelda) shipTo.razonSocial = razonCelda;
+        if (phone) shipTo.phone = phone;
+        if (comuna) shipTo.comuna = comuna;
+        if (address) shipTo.address = address;
+      }
 
       const priorityRaw = cell(g.header, 'prioridad');
       const salesChannel = cell(g.header, 'canal') || 'web-propia';
@@ -267,6 +329,7 @@ export class OrdersImportController {
         creadas: created.length,
         conError: failed.length,
         lineasIgnoradas: lineErrors.length,
+        desdeLibreta,
       },
       created,
       failed,

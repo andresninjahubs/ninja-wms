@@ -323,6 +323,37 @@ model Seller {
   chatReadState ChatReadState?
   lots          Lot[]
   serials       Serial[] // FK Serial → Seller (G8)
+  consignees    Consignee[]
+}
+
+/**
+ * Destinatario frecuente de un cliente (seller).
+ *
+ * Aislado por seller a propósito: dos clientes del mismo 3PL pueden despachar
+ * al mismo retail y aun así no deben verse la libreta de direcciones.
+ * `direcciones` es un arreglo JSON de puntos de entrega; la dirección comercial
+ * (domicilio tributario) va aparte porque es la que se factura, no a la que se
+ * despacha.
+ */
+model Consignee {
+  id                 String   @id
+  sellerId           String
+  razonSocial        String
+  rut                String? // normalizado "12345678-9"; null si no tiene
+  nombreFantasia     String?
+  direccionComercial String?
+  direcciones        Json     @default("[]")
+  notas              String?
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  createdBy          String?
+  updatedAt          DateTime @default(now())
+
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  // Un mismo RUT no puede repetirse dentro del mismo cliente.
+  @@unique([sellerId, rut])
+  @@index([sellerId])
 }
 
 // Metadata de lote/serie por seller: habilita FIFO (receivedAt) y FEFO (expiryDate).

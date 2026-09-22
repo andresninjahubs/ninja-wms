@@ -931,6 +931,21 @@ export interface ShipTo {
   address?: string | null;
   comuna?: string | null;
   region?: string | null;
+  // ---- Datos del destinatario (v125) ----
+  // La orden guarda una COPIA de lo que se despachó, no solo el puntero: si
+  // después le cambian la dirección al destinatario, el historial sigue diciendo
+  // a dónde fue de verdad esa orden. `consigneeId` queda para poder reagrupar.
+  /** Razón social del destinatario, tal como iba en el documento. */
+  razonSocial?: string | null;
+  /** RUT normalizado "12345678-9". */
+  rut?: string | null;
+  /** Ficha del destinatario frecuente del cliente, si salió de la libreta. */
+  consigneeId?: string | null;
+  /** Dirección de destino elegida dentro de esa ficha. */
+  addressId?: string | null;
+  addressAlias?: string | null;
+  /** Quién recibe en el punto de entrega. */
+  contacto?: string | null;
 }
 
 /** Una reserva concreta de una línea contra una ubicación/lote. Guía el picking. */

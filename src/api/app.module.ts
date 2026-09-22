@@ -15,6 +15,7 @@ import { AnnouncementsController } from './announcements.controller';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksAdminController } from './webhooks-admin.controller';
 import { OrdersController } from './orders.controller';
+import { ConsigneesController } from './consignees.controller';
 import { OrdersImportController } from './orders-import.controller';
 import { ReturnsController } from './returns.controller';
 import { ProductsImportController } from './products-import.controller';
@@ -52,6 +53,7 @@ import type { WmsContext } from '../infra/context';
     LocationsController,
     InventoryController,
     OrdersController,
+    ConsigneesController,
     OrdersImportController,
     ReturnsController,
     ProductsController,

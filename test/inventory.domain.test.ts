@@ -50,6 +50,7 @@ import { OperationService } from '../src/domain/operation.service';
 import { PLATFORM_AI_SCOPE, WmsFacade } from '../src/app/wms.facade';
 import { AssignmentsController } from '../src/api/assignments.controller';
 import { AGENT_RULES } from '../src/domain/agent-rules';
+import { buscarConsignee, buscarDireccion, digitoVerificador, direccionPrincipal, formatearRut, normalizarRut, rutValido } from '../src/domain/consignee';
 import {
   FixedClock,
   InMemoryLocationRepository,
@@ -74,6 +75,7 @@ import {
   InMemoryWebhookRepository,
   InMemoryAuthTokenRepository,
   InMemoryAiConfigRepository,
+  InMemoryConsigneeRepository,
   InMemoryPlanConfigRepository,
   InMemoryCountAuditRepository,
   InMemoryEventRepository,
@@ -961,9 +963,10 @@ async function run() {
     const emailSender = new LogEmailSender();
     const planConfig = new InMemoryPlanConfigRepository();
     const aiConfig = new InMemoryAiConfigRepository();
+    const consignees = new InMemoryConsigneeRepository();
     const facade = new WmsFacade(inventory, orderService, receiptService, productService, billingService, sellers, skus, locations, ids, advisor, cyc, userSvc, bc, opSvc, metricsService, chatService, platformUsageService, announcementService, webhookService, shippingLabels, returnService, serials, packagingService,
-      undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal);
-    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig };
+      undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, undefined, consignees);
+    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig, consignees };
   }
 
   async function seedScan(facade: WmsFacade) {
@@ -5965,6 +5968,162 @@ async function run() {
     const quedan = (await facade.agentAlerts('op1')).abiertas;
     assert.equal(quedan.filter((a) => a.ruleKey === 'guardado_pendiente').length, 0);
     assert.equal(quedan.length, abiertas.length - guardado, 'las demás reglas quedan intactas');
+  });
+
+  // ---- Destinatarios frecuentes por cliente (v125) --------------------------
+  await test('RUT: normaliza lo que la gente escribe y valida el dígito verificador', () => {
+    assert.equal(normalizarRut('76.000.023-k'), '76000023-K');
+    assert.equal(normalizarRut('76000023K'), '76000023-K');
+    assert.equal(normalizarRut(' 76.000.023 - K '), '76000023-K');
+    assert.equal(normalizarRut('076000023-K'), '76000023-K', 'los ceros a la izquierda no hacen otro RUT');
+    assert.equal(normalizarRut(''), null);
+    assert.equal(normalizarRut('no-es-un-rut'), null);
+    // Dígito verificador real.
+    assert.equal(digitoVerificador('76000023'), 'K');
+    assert.equal(digitoVerificador('11111111'), '1', 'el RUT de ejemplo clásico');
+    assert.equal(digitoVerificador('12345678'), '5');
+    assert.equal(rutValido('76.000.023-K'), true);
+    assert.equal(rutValido('76.000.023-5'), false, 'mismo cuerpo, DV equivocado');
+    assert.equal(formatearRut('76000023K'), '76.000.023-K');
+  });
+
+  await test('destinatarios: se crean, se normalizan y quedan aislados por cliente', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await facade.createSeller({ id: 'globex', operationId: 'op1', name: 'Globex' });
+
+    const c = await facade.createConsignee('acme', {
+      razonSocial: 'Comercial Los Andes SpA',
+      rut: '76.000.023-k',
+      nombreFantasia: 'Los Andes',
+      direccionComercial: 'Apoquindo 4000, Las Condes',
+      direcciones: [
+        { alias: 'Bodega Quilicura', direccion: 'Av. Industrial 1200', comuna: 'Quilicura', contacto: 'Don Lucho' },
+        { alias: 'Local Costanera', direccion: 'Nueva Costanera 3500', comuna: 'Vitacura', principal: true },
+        { direccion: '   ' }, // fila vacía del formulario: se ignora sin reclamar
+      ],
+    }, 'ana');
+    assert.equal(c.rut, '76000023-K', 'el RUT se guarda normalizado');
+    assert.equal(c.direcciones.length, 2, 'la fila vacía no se guarda');
+    assert.equal(c.direcciones.filter((d) => d.principal).length, 1, 'exactamente una principal');
+    assert.equal(direccionPrincipal(c)!.alias, 'Local Costanera');
+    assert.ok(c.direcciones[0].id && c.direcciones[1].id, 'cada dirección tiene id propio');
+
+    // Aislamiento: Globex no ve la libreta de ACME.
+    assert.equal((await facade.listConsignees('globex')).length, 0);
+    assert.equal((await facade.listConsignees('acme')).length, 1);
+    await expectThrows(() => facade.getConsignee('globex', c.id), NotFoundError, 'id de otro cliente');
+  });
+
+  await test('destinatarios: RUT inválido y RUT repetido se rechazan', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await expectThrows(() => facade.createConsignee('acme', { razonSocial: 'Mala SpA', rut: '76.000.023-5' }), Error);
+    await expectThrows(() => facade.createConsignee('acme', { razonSocial: '' }), Error);
+    await facade.createConsignee('acme', { razonSocial: 'Los Andes SpA', rut: '76000023-K' });
+    await expectThrows(() => facade.createConsignee('acme', { razonSocial: 'Otro nombre', rut: '76.000.023-K' }), Error);
+    // Pero el MISMO RUT en otro cliente sí se puede: son libretas distintas.
+    await facade.createSeller({ id: 'globex', operationId: 'op1', name: 'Globex' });
+    const g = await facade.createConsignee('globex', { razonSocial: 'Los Andes SpA', rut: '76000023-K' });
+    assert.equal(g.rut, '76000023-K');
+  });
+
+  await test('destinatarios: editar conserva el id de las direcciones que ya existían', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const c = await facade.createConsignee('acme', {
+      razonSocial: 'Los Andes SpA',
+      direcciones: [{ alias: 'Bodega', direccion: 'Industrial 1200' }],
+    });
+    const idOriginal = c.direcciones[0].id;
+    const c2 = await facade.updateConsignee('acme', c.id, {
+      razonSocial: 'Los Andes SpA',
+      direcciones: [
+        { id: idOriginal, alias: 'Bodega Quilicura', direccion: 'Industrial 1200' },
+        { alias: 'Local nuevo', direccion: 'Costanera 3500' },
+      ],
+    });
+    assert.equal(c2.direcciones[0].id, idOriginal, 'la dirección existente mantiene su id');
+    assert.equal(c2.direcciones[0].alias, 'Bodega Quilicura');
+    assert.equal(c2.direcciones.length, 2);
+  });
+
+  await test('destinatarios: la orden guarda copia de los datos, no solo el puntero', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    const c = await facade.createConsignee('acme', {
+      razonSocial: 'Comercial Los Andes SpA', rut: '76000023-K', nombreFantasia: 'Los Andes',
+      direcciones: [{ alias: 'Bodega Quilicura', direccion: 'Industrial 1200', comuna: 'Quilicura', principal: true }],
+    });
+    const shipTo = await facade.shipToDeConsignee('acme', c.id);
+    assert.equal(shipTo.razonSocial, 'Comercial Los Andes SpA');
+    assert.equal(shipTo.rut, '76000023-K');
+    assert.equal(shipTo.address, 'Industrial 1200');
+    assert.equal(shipTo.comuna, 'Quilicura');
+    assert.equal(shipTo.consigneeId, c.id);
+    assert.equal(shipTo.addressAlias, 'Bodega Quilicura');
+
+    const o = await facade.createOrder('acme', { externalOrderId: 'PED-C1', salesChannel: 'web', shipTo, lines: [{ sku: 'CAM', qty: 1 }] }, 'ana');
+    // Le cambian la dirección al destinatario DESPUÉS de despachar.
+    await facade.updateConsignee('acme', c.id, {
+      razonSocial: 'Comercial Los Andes SpA', rut: '76000023-K',
+      direcciones: [{ alias: 'Bodega nueva', direccion: 'Otra dirección 999', principal: true }],
+    });
+    const guardada = (await facade.listOrders('acme')).find((x) => x.id === o.id)!;
+    assert.equal(guardada.shipTo.address, 'Industrial 1200', 'la orden recuerda a dónde fue de verdad');
+  });
+
+  await test('destinatarios: borrar desactiva si ya se usó, y borra si nunca se usó', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    const usado = await facade.createConsignee('acme', { razonSocial: 'Usado SpA', direcciones: [{ direccion: 'Calle 1' }] });
+    const virgen = await facade.createConsignee('acme', { razonSocial: 'Nunca usado SpA' });
+    await facade.createOrder('acme', {
+      externalOrderId: 'PED-C2', salesChannel: 'web',
+      shipTo: await facade.shipToDeConsignee('acme', usado.id), lines: [{ sku: 'CAM', qty: 1 }],
+    }, 'ana');
+
+    const r1 = await facade.deleteConsignee('acme', usado.id);
+    assert.equal(r1.desactivado, true, 'con historial se desactiva, no se borra');
+    assert.equal((await facade.listConsignees('acme')).find((x) => x.id === usado.id), undefined, 'ya no sale en la lista');
+    assert.ok((await facade.listConsignees('acme', { includeInactive: true })).some((x) => x.id === usado.id), 'pero sigue existiendo');
+
+    const r2 = await facade.deleteConsignee('acme', virgen.id);
+    assert.equal(r2.desactivado, false, 'sin historial se borra de verdad');
+    assert.equal(await facade.getConsignee('acme', virgen.id).catch(() => null), null);
+  });
+
+  await test('destinatarios: la búsqueda de la carga masiva encuentra por RUT, razón social y alias', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await facade.createConsignee('acme', {
+      razonSocial: 'Comercial Los Andes SpA', rut: '76000023-K', nombreFantasia: 'Los Andes',
+      direcciones: [
+        { alias: 'Bodega Quilicura', direccion: 'Industrial 1200', principal: true },
+        { alias: 'Local Costanera', direccion: 'Nueva Costanera 3500' },
+      ],
+    });
+    const libreta = await facade.listConsignees('acme');
+    // Por RUT, escrito de cualquier forma.
+    assert.ok(buscarConsignee(libreta, '76.000.023-K'));
+    assert.ok(buscarConsignee(libreta, '76000023k'));
+    // Por razón social y por fantasía, sin importar acentos ni mayúsculas.
+    assert.ok(buscarConsignee(libreta, 'comercial los andes spa'));
+    assert.ok(buscarConsignee(libreta, 'LOS ANDES'));
+    assert.equal(buscarConsignee(libreta, 'Otra empresa'), null);
+    // Direcciones por alias, y la principal cuando no se indica ninguna.
+    const c = buscarConsignee(libreta, '76000023-K')!;
+    assert.equal(buscarDireccion(c, 'Local Costanera')!.direccion, 'Nueva Costanera 3500');
+    assert.equal(buscarDireccion(c, null)!.alias, 'Bodega Quilicura', 'sin alias, la principal');
+    assert.equal(buscarDireccion(c, 'Bodega que no existe'), null);
   });
 
   // ---- Resumen --------------------------------------------------------------

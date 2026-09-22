@@ -90,12 +90,12 @@
     }).join("");
   }
   var NAV_BY_ROLE={
-    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
-    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan","branding","clients","users"],
+    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
+    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan","branding","clients","users"],
     // Sin "billing": la facturación es del administrador de la operación, no del supervisor.
-    SUPERVISOR:["dashboard","copilot","voz","inventory","products","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan"],
+    SUPERVISOR:["dashboard","copilot","voz","inventory","products","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","asignaciones","agente","agdiario","agalertas","torre","plan"],
     OPERATOR:["dashboard","copilot","inventory","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","voicechannel"],
-    CLIENT:["dashboard","copilot","inventory","products","orders","inbound","returns","movements","billing","chat","webhooks"]
+    CLIENT:["dashboard","copilot","inventory","products","consignees","orders","inbound","returns","movements","billing","chat","webhooks"]
   };
   function esc(s){return String(s==null?"":s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}
   function fill(el,opts){el.innerHTML=opts.map(function(o){return '<option value="'+esc(o.v)+'">'+esc(o.t)+'</option>';}).join("");}
@@ -147,11 +147,24 @@
   var ZONES=[["RECEIVING","Recepción"],["STORAGE","Almacenaje"],["PICKING","Picking"],["SHIPPING","Despacho"],["QUARANTINE","Cuarentena"]];
 
   // ---- API ------------------------------------------------------------------
+  /**
+   * La sesión venció (JWT de 12 h). Antes esto se veía como un error críptico en
+   * cualquier botón —"No se pudo generar la plantilla (401)"— mientras la pantalla
+   * seguía mostrando datos viejos cargados antes de vencer. Ahora se avisa una sola
+   * vez y se vuelve al login.
+   */
+  var sesionCaida=false;
+  function sesionExpirada(){
+    if(sesionCaida)return;
+    sesionCaida=true;
+    try{ toast('Tu sesión expiró. Vuelve a entrar.'); }catch(e){}
+    setTimeout(function(){ try{ cerrarSesion(); }catch(e){ location.reload(); } }, 1200);
+  }
   function api(path,opts){
     opts=opts||{};
     var h={'Content-Type':'application/json'}; if(token)h['Authorization']='Bearer '+token;
     return fetch(API+path,{method:opts.method||'GET',headers:h,body:opts.body?JSON.stringify(opts.body):undefined})
-      .then(function(r){return r.text().then(function(t){var d=t?JSON.parse(t):{};if(!r.ok){var m=(d&&(d.detail||d.message))||('Error '+r.status);if(typeof m==='object')m=JSON.stringify(m);var e=new Error(m);e.status=r.status;e.data=d&&d.data;throw e;}return d;});});
+      .then(function(r){return r.text().then(function(t){var d=t?JSON.parse(t):{};if(!r.ok){if(r.status===401&&token)sesionExpirada();var m=(d&&(d.detail||d.message))||('Error '+r.status);if(typeof m==='object')m=JSON.stringify(m);var e=new Error(m);e.status=r.status;e.data=d&&d.data;throw e;}return d;});});
   }
 
   // ---- Login ----------------------------------------------------------------
@@ -546,7 +559,7 @@
   if($("#live-btn"))$("#live-btn").addEventListener('click',function(){ liveRefresh(true); });
 
   // ---- Render ---------------------------------------------------------------
-  function renderAll(){ renderOpMetrics();renderAlerts();renderKpis();renderZone();renderActivity();renderMovements();renderInv();renderProducts();renderPackaging();renderOrdFilters();renderOrders();renderPickQueue();renderInbound();renderReturns();renderPutaway();renderAssembly();renderLocations();renderCounts();renderBilling();renderClients();renderUsers();renderOps();chatPoll();pollAnnouncement();syncWebhookNav();injectTableExporters();renderOnboarding(); }
+  function renderAll(){ CG.cargadoDe=null; renderConsignees(); renderOpMetrics();renderAlerts();renderKpis();renderZone();renderActivity();renderMovements();renderInv();renderProducts();renderPackaging();renderOrdFilters();renderOrders();renderPickQueue();renderInbound();renderReturns();renderPutaway();renderAssembly();renderLocations();renderCounts();renderBilling();renderClients();renderUsers();renderOps();chatPoll();pollAnnouncement();syncWebhookNav();injectTableExporters();renderOnboarding(); }
   // El CLIENT solo ve el nav "Webhooks" si su operador habilitó el panel (flag por seller).
   function syncWebhookNav(){ $$('.nav[data-pg="webhooks"]').forEach(function(n){ var allowed=(NAV_BY_ROLE[role]||[]).indexOf("webhooks")>=0; n.classList.toggle("hidden", !(allowed&&whManage())); }); }
   // Oculta una categoría del sidebar si el rol no tiene NINGÚN sub-ítem visible.
@@ -3963,6 +3976,150 @@
 
   // ----- Crear / editar orden -----
   var CHANNELS=["web-propia","shopify","mercadolibre","falabella","jumpseller","ripley","walmart","b2b"];
+  // ===== Destinatarios frecuentes del cliente ================================
+  // La libreta de direcciones de cada cliente: a quién le despacha seguido y a
+  // qué puntos de entrega. Vive por seller, así que se recarga al cambiar de
+  // cliente y nunca se mezcla entre clientes de la misma operación.
+  var CG={lista:[],q:'',cargadoDe:null};
+
+  /** RUT chileno: normaliza a 12345678-9 y valida el dígito verificador (módulo 11). */
+  function rutNorm(raw){
+    var limpio=String(raw==null?'':raw).trim().replace(/[.\s]/g,'').replace(/-/g,'').toUpperCase();
+    if(limpio.length<2)return null;
+    var cuerpo=limpio.slice(0,-1), dv=limpio.slice(-1);
+    if(!/^\d+$/.test(cuerpo)||!/^[0-9K]$/.test(dv))return null;
+    return String(Number(cuerpo))+'-'+dv;
+  }
+  function rutDV(cuerpo){
+    var suma=0, mult=2;
+    for(var i=cuerpo.length-1;i>=0;i--){ suma+=Number(cuerpo[i])*mult; mult=mult===7?2:mult+1; }
+    var r=11-(suma%11);
+    return r===11?'0':r===10?'K':String(r);
+  }
+  function rutOk(raw){ var n=rutNorm(raw); if(!n)return false; var p=n.split('-'); return rutDV(p[0])===p[1]; }
+  function rutFmt(raw){ var n=rutNorm(raw); if(!n)return ''; var p=n.split('-'); return p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+'-'+p[1]; }
+
+  /** Carga la libreta del cliente actual. Cachea por seller para no repetir la consulta. */
+  function cgLoad(forzar){
+    if(!seller)return Promise.resolve([]);
+    if(!forzar&&CG.cargadoDe===seller)return Promise.resolve(CG.lista);
+    return api('/sellers/'+encodeURIComponent(seller)+'/consignees').then(function(l){
+      CG.lista=Array.isArray(l)?l:[]; CG.cargadoDe=seller; return CG.lista;
+    }).catch(function(){ CG.lista=[]; CG.cargadoDe=seller; return CG.lista; });
+  }
+  function renderConsignees(){
+    if(!$("#cg-body"))return;
+    if(!seller){ $("#cg-body").innerHTML='<tr><td colspan="6" class="empty">Selecciona un cliente para ver su libreta de destinatarios.</td></tr>'; return; }
+    cgLoad(true).then(pintaConsignees);
+  }
+  function pintaConsignees(){
+    var body=$("#cg-body"); if(!body)return;
+    var q=CG.q.toLowerCase().trim();
+    var lista=CG.lista.filter(function(c){
+      if(!q)return true;
+      return [c.razonSocial,c.rut,c.nombreFantasia,c.direccionComercial].join(' ').toLowerCase().indexOf(q)>=0;
+    });
+    var puede=can('product');
+    var cnt=$("#cg-count"); if(cnt)cnt.textContent=CG.lista.length?(lista.length+' de '+CG.lista.length):'Sin destinatarios todavía';
+    body.innerHTML=lista.length?lista.map(function(c){
+      var destinos=(c.direcciones||[]).length;
+      var principal=(c.direcciones||[]).filter(function(d){return d.principal;})[0]||(c.direcciones||[])[0];
+      return '<tr><td><b>'+esc(c.razonSocial)+'</b></td>'
+        +'<td class="mono2">'+esc(c.rut?rutFmt(c.rut):'—')+'</td>'
+        +'<td>'+esc(c.nombreFantasia||'—')+'</td>'
+        +'<td class="muted">'+esc(c.direccionComercial||'—')+'</td>'
+        +'<td class="num" title="'+esc(principal?principal.alias+': '+principal.direccion:'')+'">'+destinos+'</td>'
+        +'<td><div class="card-actions" style="justify-content:flex-end">'
+        +(puede?'<button class="mini" data-cge="'+esc(c.id)+'">Editar</button><button class="mini danger" data-cgd="'+esc(c.id)+'">Eliminar</button>':'')
+        +'</div></td></tr>';
+    }).join(""):'<tr><td colspan="6" class="empty">'+(CG.lista.length?'Ningún destinatario coincide con la búsqueda.':'Este cliente todavía no tiene destinatarios guardados. Créalos una vez y después se eligen desde un menú al crear órdenes.')+'</td></tr>';
+    $$("#cg-body [data-cge]").forEach(function(b){b.addEventListener("click",function(){openConsigneeForm(byId(CG.lista,b.getAttribute("data-cge")));});});
+    $$("#cg-body [data-cgd]").forEach(function(b){b.addEventListener("click",function(){borrarConsignee(byId(CG.lista,b.getAttribute("data-cgd")));});});
+  }
+  function borrarConsignee(c){
+    if(!c)return;
+    confirmBox('Eliminar destinatario','Se eliminará <b>'+esc(c.razonSocial)+'</b> de la libreta de este cliente. Si ya tiene órdenes despachadas, en vez de borrarse se marcará inactivo para no romper el historial.','Eliminar',function(){
+      api('/sellers/'+encodeURIComponent(seller)+'/consignees/'+encodeURIComponent(c.id),{method:'DELETE'})
+        .then(function(r){ toast(r&&r.desactivado?'Destinatario desactivado (tenía órdenes)':'Destinatario eliminado'); renderConsignees(); })
+        .catch(function(e){ toast(e.message); });
+    },true);
+  }
+  /** Una fila de dirección de destino dentro del formulario. */
+  function cgFilaDir(d,i){
+    d=d||{};
+    return '<div class="cgdir" data-dir="'+i+'">'
+      +'<input type="hidden" data-d="id" value="'+esc(d.id||'')+'">'
+      +'<div class="row2"><div class="fld"><label>Alias del punto de entrega</label><input data-d="alias" value="'+esc(d.alias||'')+'" placeholder="Ej: Bodega Quilicura"></div>'
+      +'<div class="fld"><label>Dirección de destino</label><input data-d="direccion" value="'+esc(d.direccion||'')+'" placeholder="Calle y número"></div></div>'
+      +'<div class="row2"><div class="fld"><label>Comuna</label><input data-d="comuna" value="'+esc(d.comuna||'')+'"></div>'
+      +'<div class="fld"><label>Región (opcional)</label><input data-d="region" value="'+esc(d.region||'')+'"></div></div>'
+      +'<div class="row2"><div class="fld"><label>Contacto en destino</label><input data-d="contacto" value="'+esc(d.contacto||'')+'" placeholder="Quién recibe"></div>'
+      +'<div class="fld"><label>Teléfono</label><input data-d="telefono" value="'+esc(d.telefono||'')+'"></div></div>'
+      +'<div class="cgdir-f"><label style="display:flex;gap:7px;align-items:center;cursor:pointer;font-size:12.5px"><input type="radio" name="cg-princ" data-d="principal" '+(d.principal?'checked':'')+' style="width:auto"> Dirección principal</label>'
+      +'<button type="button" class="mini danger" data-dirdel="'+i+'">Quitar</button></div>'
+      +'</div>';
+  }
+  function openConsigneeForm(c){
+    if(!seller){toast("Selecciona un cliente primero");return;}
+    var isEdit=!!c; c=c||{};
+    var dirs=(c.direcciones&&c.direcciones.length)?c.direcciones.slice():[{}];
+    var n=dirs.length;
+    var html='<div class="form">'
+      +'<p class="muted" style="margin:0 0 4px;max-width:70ch">Los datos tributarios van arriba; abajo, todos los lugares a los que se le despacha. La <b>dirección comercial</b> es el domicilio de la factura; los <b>puntos de entrega</b> son a dónde llega la mercadería.</p>'
+      +'<div class="row2"><div class="fld"><label>Razón social *</label><input id="cg-rs" value="'+esc(c.razonSocial||'')+'" placeholder="Comercial Los Andes SpA"></div>'
+      +'<div class="fld"><label>RUT</label><input id="cg-rut" value="'+esc(c.rut?rutFmt(c.rut):'')+'" placeholder="76.000.023-K"><div class="hint" id="cg-rut-hint"></div></div></div>'
+      +'<div class="row2"><div class="fld"><label>Nombre de fantasía</label><input id="cg-nf" value="'+esc(c.nombreFantasia||'')+'" placeholder="Como lo conocen en bodega"></div>'
+      +'<div class="fld"><label>Dirección comercial (facturación)</label><input id="cg-dc" value="'+esc(c.direccionComercial||'')+'"></div></div>'
+      +'<p class="sec-t" style="margin:8px 0 2px">Direcciones de destino</p>'
+      +'<div id="cg-dirs">'+dirs.map(function(d,i){return cgFilaDir(d,i);}).join("")+'</div>'
+      +'<button class="btn" id="cg-adddir" style="align-self:flex-start">＋ Agregar dirección</button>'
+      +'<div class="fld"><label>Notas (opcional)</label><input id="cg-notas" value="'+esc(c.notas||'')+'" placeholder="Horario de recepción, restricciones de acceso…"></div>'
+      +'<div class="ferr" id="cg-err"></div>'
+      +'<div class="acts"><span class="hint">Cliente: '+esc((byId(D.sellers,seller)||{}).name||seller)+'</span><div style="display:flex;gap:10px"><button class="btn" id="cg-cancel">Cancelar</button><button class="btn pri" id="cg-save">'+(isEdit?'Guardar cambios':'Crear destinatario')+'</button></div></div>'
+      +'</div>';
+    openModal(isEdit?('Editar destinatario'):'Nuevo destinatario',html,'xl');
+    $("#cg-cancel").addEventListener("click",closeModal);
+    // Aviso de RUT en vivo: es el error más común y se ve antes de guardar.
+    var rutIn=$("#cg-rut"), hint=$("#cg-rut-hint");
+    function chequeaRut(){
+      var v=rutIn.value.trim();
+      if(!v){hint.textContent='Opcional. Si el destinatario es extranjero, déjalo vacío.';hint.style.color='';return;}
+      if(rutOk(v)){hint.textContent='✓ '+rutFmt(v);hint.style.color='var(--good,#127a3d)';}
+      else {hint.textContent='El dígito verificador no corresponde.';hint.style.color='var(--crit)';}
+    }
+    rutIn.addEventListener("input",chequeaRut); chequeaRut();
+    function bindDir(){
+      $$("#cg-dirs [data-dirdel]").forEach(function(b){b.addEventListener("click",function(){
+        var filas=$$("#cg-dirs .cgdir");
+        if(filas.length<=1){ b.closest('.cgdir').querySelectorAll('input[data-d]').forEach(function(x){ if(x.type!=='radio')x.value=''; }); return; }
+        b.closest('.cgdir').remove();
+      });});
+    }
+    bindDir();
+    $("#cg-adddir").addEventListener("click",function(){
+      $("#cg-dirs").insertAdjacentHTML('beforeend',cgFilaDir({},n++)); bindDir();
+    });
+    $("#cg-save").addEventListener("click",function(){
+      $("#cg-err").textContent="";
+      var rs=$("#cg-rs").value.trim();
+      if(!rs){$("#cg-err").textContent="La razón social es obligatoria.";return;}
+      var rv=rutIn.value.trim();
+      if(rv&&!rutOk(rv)){$("#cg-err").textContent="El RUT no es válido: revisa el dígito verificador.";return;}
+      var direcciones=$$("#cg-dirs .cgdir").map(function(f){
+        var g=function(k){var el=f.querySelector('[data-d="'+k+'"]');return el?el.value.trim():'';};
+        var pr=f.querySelector('[data-d="principal"]');
+        return {id:g('id')||undefined,alias:g('alias'),direccion:g('direccion'),comuna:g('comuna'),region:g('region'),contacto:g('contacto'),telefono:g('telefono'),principal:!!(pr&&pr.checked)};
+      }).filter(function(d){return d.direccion;});
+      var body={razonSocial:rs,rut:rv||null,nombreFantasia:$("#cg-nf").value.trim()||null,direccionComercial:$("#cg-dc").value.trim()||null,notas:$("#cg-notas").value.trim()||null,direcciones:direcciones};
+      var url='/sellers/'+encodeURIComponent(seller)+'/consignees'+(isEdit?('/'+encodeURIComponent(c.id)):'');
+      api(url,{method:isEdit?'PATCH':'POST',body:body})
+        .then(function(){ closeModal(); toast(isEdit?'Destinatario actualizado':'Destinatario creado'); CG.cargadoDe=null; renderConsignees(); })
+        .catch(function(e){ $("#cg-err").textContent=e.message; });
+    });
+  }
+  if($("#cg-new"))$("#cg-new").addEventListener("click",function(){openConsigneeForm(null);});
+  if($("#cg-q"))$("#cg-q").addEventListener("input",function(){CG.q=this.value;pintaConsignees();});
+
   function openOrderForm(order){
     if(!seller){toast("Selecciona un cliente primero");return;}
     var isEdit=!!order;
@@ -3981,7 +4138,14 @@
       +'<div class="fld"><label>Deadline de preparación (opcional)</label><input id="of-due" type="datetime-local" value="'+esc(order?isoToLocalInput(order.dueAt):'')+'">'
       +'<div class="hint">Si lo dejas vacío, se calcula solo: hora de corte del courier y, si ese courier no tiene corte, el SLA en horas del cliente.</div></div>'
       +'<datalist id="carrier-list"><option value="Chilexpress"></option><option value="BlueExpress"></option><option value="Starken"></option><option value="Correos de Chile"></option><option value="DHL"></option><option value="Rapiboy"></option><option value="Uber Flash"></option><option value="Samex"></option><option value="Retiro en tienda"></option></datalist>'
+      // Destinatario: se elige de la libreta del cliente o se escribe a mano.
+      // El selector va ARRIBA de los campos porque al elegir uno los rellena.
+      +'<div class="fld"><label>Destinatario guardado</label><select id="of-cg"><option value="">— Escribir a mano —</option></select>'
+      +'<div class="hint" id="of-cg-hint">Los destinatarios frecuentes se crean en <b>Destinatarios</b> y al elegir uno se completan razón social, RUT y dirección.</div></div>'
+      +'<div class="fld" id="of-cgdir-wrap" hidden><label>Punto de entrega</label><select id="of-cgdir"></select></div>'
       +'<div class="row2"><div class="fld"><label>Destinatario</label><input id="of-name" value="'+esc(st.name||'')+'" placeholder="Nombre de quien recibe"></div>'
+      +'<div class="fld"><label>RUT (opcional)</label><input id="of-rut" value="'+esc(st.rut?rutFmt(st.rut):'')+'" placeholder="76.000.023-K"></div></div>'
+      +'<div class="row2"><div class="fld"><label>Razón social (opcional)</label><input id="of-rs" value="'+esc(st.razonSocial||'')+'"></div>'
       +'<div class="fld"><label>Comuna / ciudad (opcional)</label><input id="of-comuna" value="'+esc(st.comuna||'')+'"></div></div>'
       +'<div class="fld"><label>Dirección (opcional)</label><input id="of-addr" value="'+esc(st.address||'')+'"></div>'
       +'<p class="sec-t" style="margin:6px 0 2px">Líneas de la orden</p>'
@@ -3993,6 +4157,51 @@
       +'<div class="acts"><span class="hint">Cliente: '+esc((byId(D.sellers,seller)||{}).name||seller)+'</span><div style="display:flex;gap:10px"><button class="btn" id="of-cancel">Cancelar</button><button class="btn pri" id="of-save">'+(isEdit?'Guardar cambios':'Crear orden')+'</button></div></div>'
       +'</div>';
     openModal(isEdit?("Editar orden "+(order.externalOrderId||"")):"Nueva orden",html,'xl');
+
+    // ---- Destinatario: libreta del cliente -------------------------------
+    // Elegir una ficha rellena los campos y los deja de solo lectura: si hay que
+    // despachar a otra parte por una vez, se vuelve a "escribir a mano" y quedan
+    // editables. Así la ficha no se corrompe por un envío excepcional.
+    (function destinatario(){
+      var sel=$("#of-cg"), selDir=$("#of-cgdir"), wrap=$("#of-cgdir-wrap");
+      if(!sel)return;
+      var campos=[$("#of-name"),$("#of-rut"),$("#of-rs"),$("#of-comuna"),$("#of-addr")];
+      function bloquea(on){ campos.forEach(function(c){ if(c){ c.readOnly=on; c.style.opacity=on?'.75':''; } }); }
+      function pintaDirs(c){
+        var dirs=(c&&c.direcciones)||[];
+        wrap.hidden=dirs.length<2;
+        selDir.innerHTML=dirs.map(function(d){return '<option value="'+esc(d.id)+'"'+(d.principal?' selected':'')+'>'+esc(d.alias)+' — '+esc(d.direccion)+'</option>';}).join("");
+      }
+      function aplica(c,dirId){
+        if(!c){ bloquea(false); wrap.hidden=true; return; }
+        var dirs=c.direcciones||[];
+        var d=(dirId?dirs.filter(function(x){return x.id===dirId;})[0]:null)||dirs.filter(function(x){return x.principal;})[0]||dirs[0]||null;
+        $("#of-name").value=c.nombreFantasia||c.razonSocial||'';
+        $("#of-rut").value=c.rut?rutFmt(c.rut):'';
+        $("#of-rs").value=c.razonSocial||'';
+        $("#of-comuna").value=(d&&d.comuna)||'';
+        $("#of-addr").value=(d&&d.direccion)||c.direccionComercial||'';
+        bloquea(true);
+      }
+      cgLoad().then(function(lista){
+        sel.innerHTML='<option value="">— Escribir a mano —</option>'+lista.map(function(c){
+          return '<option value="'+esc(c.id)+'">'+esc(c.razonSocial)+(c.rut?(' · '+rutFmt(c.rut)):'')+'</option>';
+        }).join("");
+        if(!lista.length)$("#of-cg-hint").innerHTML='Este cliente todavía no tiene destinatarios guardados. Créalos en <b>Destinatarios</b> y después se eligen acá.';
+        // Al editar una orden que salió de la libreta, el selector viene marcado.
+        if(st.consigneeId&&byId(lista,st.consigneeId)){ sel.value=st.consigneeId; pintaDirs(byId(lista,st.consigneeId)); if(st.addressId)selDir.value=st.addressId; bloquea(true); }
+      });
+      sel.addEventListener("change",function(){
+        var c=byId(CG.lista,sel.value);
+        pintaDirs(c); aplica(c,null);
+      });
+      selDir.addEventListener("change",function(){ aplica(byId(CG.lista,sel.value),selDir.value); });
+      window.__ofDestinatario=function(){
+        var id=sel.value;
+        if(!id)return null;
+        return {consigneeId:id,addressId:(wrap.hidden?null:selDir.value)||null};
+      };
+    })();
 
     // El producto se escribe o se PEGA (no es un desplegable): se acepta el SKU, el
     // NOMBRE del producto o el código de barras, sin distinguir mayúsculas ni espacios
@@ -4102,6 +4311,21 @@
       var shipTo={name:name};
       var comuna=$("#of-comuna").value.trim(); if(comuna)shipTo.comuna=comuna;
       var addr=$("#of-addr").value.trim(); if(addr)shipTo.address=addr;
+      var rutv=$("#of-rut")?$("#of-rut").value.trim():"";
+      if(rutv){
+        if(!rutOk(rutv)){$("#of-err").textContent="El RUT del destinatario no es válido: revisa el dígito verificador.";return;}
+        shipTo.rut=rutNorm(rutv);
+      }
+      var rsv=$("#of-rs")?$("#of-rs").value.trim():""; if(rsv)shipTo.razonSocial=rsv;
+      // Si salió de la libreta, se deja constancia de qué ficha y qué punto de entrega.
+      var elegido=window.__ofDestinatario?window.__ofDestinatario():null;
+      if(elegido){
+        shipTo.consigneeId=elegido.consigneeId;
+        if(elegido.addressId)shipTo.addressId=elegido.addressId;
+        var fichaSel=byId(CG.lista,elegido.consigneeId);
+        var dirSel=fichaSel&&(fichaSel.direcciones||[]).filter(function(d){return d.id===elegido.addressId;})[0];
+        if(dirSel){ shipTo.addressAlias=dirSel.alias; if(dirSel.region)shipTo.region=dirSel.region; if(dirSel.contacto)shipTo.contacto=dirSel.contacto; if(dirSel.telefono&&!shipTo.phone)shipTo.phone=dirSel.telefono; }
+      }
       var body={externalOrderId:ext,salesChannel:$("#of-ch").value,orderType:$("#of-type").value,priority:$("#of-prio").value,shipTo:shipTo,lines:lines};
       var docv=$("#of-doc")?$("#of-doc").value:""; if(docv)body.documentType=docv;
       var carv=$("#of-carrier")?$("#of-carrier").value.trim():""; if(carv)body.carrier=carv;
@@ -4140,11 +4364,7 @@
     $("#imp-cancel").addEventListener("click",closeModal);
     $("#imp-tpl").addEventListener("click",function(){
       $("#imp-err").textContent="";
-      var h={}; if(token)h['Authorization']='Bearer '+token;
-      fetch(API+'/sellers/'+seller+'/order-import/template',{headers:h})
-        .then(function(r){if(!r.ok)throw new Error('No se pudo generar la plantilla ('+r.status+').');return r.blob();})
-        .then(function(b){var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download='plantilla-ordenes-ninjawms.xlsx';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u);},1500);toast("Formato descargado");})
-        .catch(function(e){$("#imp-err").textContent=e.message;});
+      downloadAuth('/sellers/'+encodeURIComponent(seller)+'/order-import/template','plantilla-ordenes-ninjawms.xlsx',"Formato descargado",function(e){$("#imp-err").textContent=e.message;});
     });
     $("#imp-send").addEventListener("click",function(){
       $("#imp-err").textContent=""; $("#imp-result").innerHTML="";
@@ -4818,7 +5038,7 @@
     $("#pi-tpl").addEventListener("click",function(){
       $("#pi-err").textContent="";
       var h={}; if(token)h['Authorization']='Bearer '+token;
-      fetch(API+'/sellers/'+seller+'/product-import/template',{headers:h}).then(function(r){if(!r.ok)throw new Error('No se pudo generar la plantilla');return r.blob();}).then(function(b){var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download='plantilla-productos-ninjawms.xlsx';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u);},1500);toast("Formato descargado");}).catch(function(e){$("#pi-err").textContent=e.message;});
+      downloadAuth('/sellers/'+encodeURIComponent(seller)+'/product-import/template','plantilla-productos-ninjawms.xlsx',"Formato descargado",function(e){$("#pi-err").textContent=e.message;});
     });
     function renderPreview(j){
       var box=$("#pi-result");
@@ -6108,7 +6328,11 @@
   // ----- Carga masiva de ubicaciones (Excel) -----
   function downloadAuth(path,filename,okMsg,onErr){
     var h={}; if(token)h['Authorization']='Bearer '+token;
-    return fetch(API+path,{headers:h}).then(function(r){if(!r.ok)throw new Error('No se pudo generar el archivo');return r.blob();}).then(function(b){var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u);},1500);if(okMsg)toast(okMsg);}).catch(function(e){if(onErr)onErr(e);else err(e);});
+    return fetch(API+path,{headers:h}).then(function(r){
+      if(r.status===401){ sesionExpirada(); throw new Error('Tu sesión expiró. Vuelve a entrar y reintenta.'); }
+      if(!r.ok)throw new Error('No se pudo generar el archivo ('+r.status+').');
+      return r.blob();
+    }).then(function(b){var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u);},1500);if(okMsg)toast(okMsg);}).catch(function(e){if(onErr)onErr(e);else err(e);});
   }
   function openLocationImport(){
     var b64="";
@@ -7010,11 +7234,11 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],consignees:["Destinatarios","Libreta de direcciones frecuentes del cliente"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
     if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="dashboard"){loadDash().then(dashTick);}else{clearTimeout(dashTimer);}
-    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
+    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="consignees")renderConsignees();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});
@@ -7101,6 +7325,7 @@
   // Salir vive al final del sidebar (antes estaba en la barra superior).
   function cerrarSesion(){
     token=null;me=null;role=null;op=null;seller=null;
+    sesionCaida=false; // al volver a entrar, el aviso de sesión vencida se rearma
     $("#lg-email").value="";$("#lg-pass").value="";$("#lg-err").textContent="";
     // Al volver, la portada arranca de nuevo con la caja cerrada.
     // Primero se muestra la portada y recién después se reinicia: si el canvas

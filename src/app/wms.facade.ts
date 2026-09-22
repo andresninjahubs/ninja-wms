@@ -31,6 +31,7 @@ import { CreateUserInput, UpdateUserInput, UserService } from '../domain/user.se
 import { OperationService } from '../domain/operation.service';
 import { BarcodeService, RegisterPackInput } from '../domain/barcode.service';
 import { ForbiddenError, NotFoundError, PlanLimitError, ValidationError } from '../domain/errors';
+import { Consignee, ConsigneeInput, direccionPrincipal, formatearRut, normalizarConsignee } from '../domain/consignee';
 import { CORE_FEATURE, LIMIT_KEYS, MODULE_CATALOG, PLAN_CATALOG, PlanConfig, PlanDef, PlanFeature, PlanId, PlanLimits, defaultPlanConfig, effectivePlanId, mergeCatalog, planDef, trialStateOf } from '../domain/plans';
 import { looksLikeJwt, signToken, verifyToken } from './auth-token';
 import { toDomainEvents } from '../domain/domain-events';
@@ -55,6 +56,7 @@ import {
   SellerRepository,
   SerialRepository,
   BrandingRepository,
+  ConsigneeRepository,
   ShippingLabelProvider,
   SkuRepository,
   StockQuery,
@@ -93,6 +95,7 @@ import {
   ReceiptOrder,
   ReceiptOrderStatus,
   ReturnOrder,
+  ShipTo,
   SalesOrder,
   Serial,
   OperationBranding,
@@ -199,7 +202,113 @@ export class WmsFacade {
     private readonly agentJournal?: AgentJournalRepository,
     /** Tableros del Dashboard AI (opcional: si falta, la sección no está disponible). */
     private readonly aiDashboards?: AiDashboardRepository,
+    /** Destinatarios frecuentes por cliente (opcional). */
+    private readonly consignees?: ConsigneeRepository,
   ) {}
+
+  // ---- Destinatarios frecuentes del cliente ---------------------------------
+  /**
+   * La libreta de direcciones de un seller. Todo acá va por sellerId y nunca por
+   * operación: dos clientes del mismo 3PL no se ven los destinatarios entre ellos,
+   * aunque despachen al mismo retail.
+   */
+  /** El seller debe existir: si no, cualquier id inventado abriría una libreta vacía. */
+  private async mustSeller(sellerId: string): Promise<void> {
+    const s = await this.sellers.findById(sellerId);
+    if (!s) throw new NotFoundError(`Cliente no encontrado: ${sellerId}`);
+  }
+  private consigneeRepo(): ConsigneeRepository {
+    if (!this.consignees) throw new ValidationError('Los destinatarios no están disponibles en esta instalación');
+    return this.consignees;
+  }
+  /**
+   * El módulo de dominio es puro y lanza Error a secas; acá se traduce a
+   * ValidationError para que la API responda 422 con el motivo, y no un 500.
+   */
+  private normalizaConsignee(input: ConsigneeInput) {
+    try {
+      return normalizarConsignee(input, () => this.ids.next());
+    } catch (e: any) {
+      throw new ValidationError((e && e.message) || 'Destinatario inválido');
+    }
+  }
+  async listConsignees(sellerId: string, opts?: { includeInactive?: boolean }): Promise<Consignee[]> {
+    if (!this.consignees) return [];
+    await this.mustSeller(sellerId);
+    return this.consignees.list(sellerId, opts);
+  }
+  async getConsignee(sellerId: string, id: string): Promise<Consignee> {
+    const c = await this.consigneeRepo().get(id);
+    // La comprobación de seller es la frontera: un id adivinado de otro cliente no sirve.
+    if (!c || c.sellerId !== sellerId) throw new NotFoundError('Destinatario no encontrado');
+    return c;
+  }
+  async createConsignee(sellerId: string, input: ConsigneeInput, actor?: string): Promise<Consignee> {
+    await this.mustSeller(sellerId);
+    const repo = this.consigneeRepo();
+    const n = this.normalizaConsignee(input);
+    if (n.rut) {
+      const ya = await repo.findByRut(sellerId, n.rut);
+      if (ya) throw new ValidationError(`Ya existe un destinatario con el RUT ${formatearRut(n.rut)}: ${ya.razonSocial}`);
+    }
+    const now = this.clockNow();
+    const c: Consignee = { id: this.ids.next(), sellerId, ...n, createdAt: now, createdBy: actor ?? null, updatedAt: now };
+    await repo.save(c);
+    return c;
+  }
+  async updateConsignee(sellerId: string, id: string, input: ConsigneeInput, actor?: string): Promise<Consignee> {
+    const actual = await this.getConsignee(sellerId, id);
+    const repo = this.consigneeRepo();
+    const n = this.normalizaConsignee(input);
+    if (n.rut) {
+      const ya = await repo.findByRut(sellerId, n.rut);
+      if (ya && ya.id !== id) throw new ValidationError(`Ya existe otro destinatario con el RUT ${formatearRut(n.rut)}: ${ya.razonSocial}`);
+    }
+    const c: Consignee = { ...actual, ...n, updatedAt: this.clockNow() };
+    void actor;
+    await repo.save(c);
+    return c;
+  }
+  /**
+   * Desactiva un destinatario en vez de borrarlo cuando ya se usó.
+   *
+   * Las órdenes despachadas guardan a quién se le despachó; borrar la ficha
+   * dejaría ese historial cojo. Si nunca se usó, se borra de verdad.
+   */
+  async deleteConsignee(sellerId: string, id: string, actor?: string): Promise<{ ok: boolean; desactivado: boolean }> {
+    const c = await this.getConsignee(sellerId, id);
+    const repo = this.consigneeRepo();
+    const usado = (await this.orders.listOrders(sellerId)).some((o: SalesOrder) => (o.shipTo as any)?.consigneeId === id);
+    if (usado) {
+      await repo.save({ ...c, active: false, updatedAt: this.clockNow() });
+      void actor;
+      return { ok: true, desactivado: true };
+    }
+    await repo.delete(id);
+    return { ok: true, desactivado: false };
+  }
+  /**
+   * Arma el `shipTo` de una orden a partir de un destinatario guardado.
+   * Si `addressId` no viene o no existe, usa la dirección principal.
+   */
+  async shipToDeConsignee(sellerId: string, consigneeId: string, addressId?: string | null): Promise<ShipTo> {
+    const c = await this.getConsignee(sellerId, consigneeId);
+    const dir = (addressId ? c.direcciones.find((d) => d.id === addressId) : null) ?? direccionPrincipal(c);
+    return {
+      name: c.nombreFantasia || c.razonSocial,
+      phone: dir?.telefono ?? null,
+      email: null,
+      address: dir?.direccion ?? c.direccionComercial ?? null,
+      comuna: dir?.comuna ?? null,
+      region: dir?.region ?? null,
+      razonSocial: c.razonSocial,
+      rut: c.rut,
+      consigneeId: c.id,
+      addressId: dir?.id ?? null,
+      addressAlias: dir?.alias ?? null,
+      contacto: dir?.contacto ?? null,
+    };
+  }
 
   /** Ahora en ISO — usa el reloj inyectado (tests deterministas) o la hora real. */
   private clockNow(): string { return this.clock ? this.clock.now() : new Date().toISOString(); }

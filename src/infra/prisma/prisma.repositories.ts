@@ -6,6 +6,7 @@
 // build no dependa de la generación en entornos sin acceso a los binarios de Prisma.
 type PrismaClient = any;
 import { AiDashboard } from '../../domain/ai-dashboard';
+import type { Consignee } from '../../domain/consignee';
 import {
   LocationRepository,
   LoginEventRepository,
@@ -13,6 +14,7 @@ import {
   SerialRepository,
   PackagingRepository,
   BrandingRepository,
+  ConsigneeRepository,
   OpsChannelRepository,
   AiDashboardRepository,
   AiConfigRepository,
@@ -524,6 +526,88 @@ export class PrismaSerialRepository implements SerialRepository {
       locationId: s.locationId ?? null,
       receivedAt: (s.receivedAt as Date).toISOString(),
       actor: s.actor,
+    };
+  }
+}
+
+/** Fecha de Prisma → ISO, tolerando que ya venga como string. */
+function iso(v: any): string {
+  if (!v) return new Date(0).toISOString();
+  return v instanceof Date ? v.toISOString() : String(v);
+}
+
+export class PrismaConsigneeRepository implements ConsigneeRepository {
+  constructor(private readonly db: PrismaClient) {}
+  /**
+   * El acceso al modelo va por `(db as any).consignee` a propósito: el cliente de
+   * Prisma se regenera en el build del contenedor, no en este repositorio, así que
+   * tipar contra él acá rompería la compilación hasta que alguien corra `generate`.
+   */
+  private get tabla(): any { return (this.db as any).consignee; }
+
+  async list(sellerId: string, opts?: { includeInactive?: boolean }): Promise<Consignee[]> {
+    const rows = await this.tabla.findMany({
+      where: opts?.includeInactive ? { sellerId } : { sellerId, active: true },
+      orderBy: { razonSocial: 'asc' },
+    });
+    return rows.map((r: any) => this.toDomain(r));
+  }
+  async get(id: string): Promise<Consignee | null> {
+    const r = await this.tabla.findUnique({ where: { id } });
+    return r ? this.toDomain(r) : null;
+  }
+  async findByRut(sellerId: string, rut: string): Promise<Consignee | null> {
+    const r = await this.tabla.findFirst({ where: { sellerId, rut } });
+    return r ? this.toDomain(r) : null;
+  }
+  async save(c: Consignee): Promise<void> {
+    const cols = {
+      sellerId: c.sellerId,
+      razonSocial: c.razonSocial,
+      rut: c.rut,
+      nombreFantasia: c.nombreFantasia,
+      direccionComercial: c.direccionComercial,
+      direcciones: c.direcciones as any,
+      notas: c.notas,
+      active: c.active,
+      createdBy: c.createdBy,
+      updatedAt: new Date(c.updatedAt),
+    };
+    await this.tabla.upsert({
+      where: { id: c.id },
+      create: { id: c.id, ...cols, createdAt: new Date(c.createdAt) },
+      update: cols,
+    });
+  }
+  async delete(id: string): Promise<void> {
+    await this.tabla.delete({ where: { id } }).catch(() => undefined);
+  }
+  private toDomain(r: any): Consignee {
+    const dir = Array.isArray(r.direcciones) ? r.direcciones : [];
+    return {
+      id: r.id,
+      sellerId: r.sellerId,
+      razonSocial: r.razonSocial,
+      rut: r.rut ?? null,
+      nombreFantasia: r.nombreFantasia ?? null,
+      direccionComercial: r.direccionComercial ?? null,
+      direcciones: dir.map((d: any) => ({
+        id: String(d.id ?? ''),
+        alias: String(d.alias ?? ''),
+        direccion: String(d.direccion ?? ''),
+        comuna: d.comuna ?? null,
+        ciudad: d.ciudad ?? null,
+        region: d.region ?? null,
+        contacto: d.contacto ?? null,
+        telefono: d.telefono ?? null,
+        notas: d.notas ?? null,
+        principal: !!d.principal,
+      })),
+      notas: r.notas ?? null,
+      active: r.active !== false,
+      createdAt: iso(r.createdAt),
+      createdBy: r.createdBy ?? null,
+      updatedAt: iso(r.updatedAt ?? r.createdAt),
     };
   }
 }

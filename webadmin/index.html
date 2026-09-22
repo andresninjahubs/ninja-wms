@@ -437,6 +437,9 @@
   .fcount{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;padding:3px 6px;border-radius:999px;background:var(--line-2,rgba(0,0,0,.06));color:var(--ink-2);min-width:18px;text-align:center}
   .fchip.on .fcount{background:rgba(255,255,255,.26);color:#fff}
   .fchip.zero .fcount{opacity:.45}
+  /* Destinatarios: cada dirección de destino es un bloque propio dentro del formulario. */
+  .cgdir{border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:10px;background:var(--surface-2);display:flex;flex-direction:column;gap:9px}
+  .cgdir-f{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
   /* Pestañas de deadline: no son un estado más del ciclo de vida, son una alerta.
      Van separadas por una línea y con el color de la urgencia que representan. */
   .fchip.dlsep{margin-left:5px;padding-left:12px;border-left:2px solid var(--line-2,rgba(0,0,0,.12));border-top-left-radius:0;border-bottom-left-radius:0}
@@ -519,7 +522,12 @@
   .drawer{align-items:stretch;justify-content:flex-end}
   .drawer .panel{width:440px;max-width:94vw;background:var(--surface);border-left:1px solid var(--line);display:flex;flex-direction:column;box-shadow:-20px 0 60px -20px rgba(0,0,0,.5)}
   .modal{align-items:center;justify-content:center}
-  .modal .panel{width:460px;max-width:94vw;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px -20px rgba(0,0,0,.5)}
+  /* El panel nunca pasa del alto de la pantalla: el cuerpo scrollea por dentro y
+     los botones de acción quedan siempre alcanzables. Sin esto, un formulario
+     largo (varias direcciones, muchas líneas) dejaba "Guardar" fuera de la vista. */
+  .modal .panel{width:460px;max-width:94vw;max-height:92vh;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px -20px rgba(0,0,0,.5)}
+  .modal .panel > .dh{flex:0 0 auto}
+  .modal .panel > .db{flex:1 1 auto;min-height:0}
   .modal .panel.wide{width:780px}
   .modal .panel.xl{width:1100px;max-width:96vw}
   .ordline{display:grid;grid-template-columns:minmax(0,1fr) 120px 150px 40px;gap:10px;align-items:center;margin-bottom:8px}
@@ -1098,6 +1106,7 @@
       <div class="navcat-body">
         <button class="nav sub" data-pg="inventory"><span class="ic">▦</span> Inventario</button>
         <button class="nav sub" data-pg="products"><span class="ic">◲</span> Productos</button>
+        <button class="nav sub" data-pg="consignees"><span class="ic">🏷️</span> Destinatarios</button>
         <button class="nav sub" data-pg="packaging"><span class="ic">▧</span> Embalajes</button>
         <button class="nav sub" data-pg="locations"><span class="ic">▤</span> Ubicaciones</button>
       </div>
@@ -1449,6 +1458,25 @@
       </section>
 
       <!-- Productos (mantenedor de SKUs + kits) -->
+      <!-- Destinatarios frecuentes del cliente: su libreta de direcciones -->
+      <section class="page" data-pg="consignees">
+        <div class="toolbar">
+          <span class="muted">La libreta de destinatarios de este cliente: a quién le despacha seguido y a qué direcciones. Se usa al crear una orden y en la carga masiva. Cada cliente ve solo la suya.</span>
+          <div class="sp" style="flex:1"></div>
+          <div class="search"><span class="i">⌕</span><input id="cg-q" placeholder="Buscar por razón social, RUT o fantasía"></div>
+          <button class="btn pri" id="cg-new" style="padding:8px 14px">＋ Nuevo destinatario</button>
+        </div>
+        <div class="card">
+          <div class="h"><h3>Destinatarios</h3><div class="sp" style="flex:1"></div><span class="muted" id="cg-count"></span></div>
+          <div class="b">
+            <div class="tablewrap"><table class="matrix">
+              <thead><tr><th>Razón social</th><th>RUT</th><th>Nombre de fantasía</th><th>Dirección comercial</th><th class="num">Destinos</th><th></th></tr></thead>
+              <tbody id="cg-body"></tbody>
+            </table></div>
+          </div>
+        </div>
+      </section>
+
       <section class="page" data-pg="products">
         <div class="toolbar">
           <div class="search"><span class="i">⌕</span><input id="pr-q" placeholder="Buscar SKU o descripción…"></div>

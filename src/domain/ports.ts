@@ -2,6 +2,7 @@
  * Puertos (interfaces) que el dominio necesita del mundo exterior.
  * Las implementaciones concretas (Prisma, en-memoria) viven en /infra.
  */
+import type { Consignee } from './consignee';
 import type { AgentSchedule } from './agent-schedule';
 import { AiDashboard } from './ai-dashboard';
 import {
@@ -363,6 +364,19 @@ export interface AgentJournalRepository {
 }
 
 /** Marca (white-label) por operación. */
+/**
+ * Destinatarios frecuentes de un seller. El aislamiento por cliente es la razón
+ * de ser de este repositorio: todo se consulta por sellerId, nunca por operación.
+ */
+export interface ConsigneeRepository {
+  list(sellerId: string, opts?: { includeInactive?: boolean }): Promise<Consignee[]>;
+  get(id: string): Promise<Consignee | null>;
+  /** Busca por RUT normalizado dentro del seller (para evitar duplicados). */
+  findByRut(sellerId: string, rut: string): Promise<Consignee | null>;
+  save(consignee: Consignee): Promise<void>;
+  delete(id: string): Promise<void>;
+}
+
 export interface BrandingRepository {
   get(operationId: string): Promise<OperationBranding | null>;
   save(branding: OperationBranding): Promise<void>;
