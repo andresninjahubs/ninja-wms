@@ -5922,6 +5922,51 @@ async function run() {
     assert.match(a[0].title, /PED-DUP está 2 veces/);
   });
 
+  await test('alertas: descartar todas vacía la bandeja sin borrar el histórico', async () => {
+    const { facade, clock, recv } = await escenarioBodega();
+    await facade.receive('acme', { sku: 'CAM', qty: 40, locationId: recv.id });
+    await facade.createReceipt('acme', { locationId: recv.id, supplier: 'Prov', reference: 'OC-9', lines: [{ sku: 'CAM', qty: 10 }] }, 'ana');
+    clock.set('2026-01-01T12:00:00.000Z');
+    await facade.runAgentSweep('op1');
+    const antes = (await facade.agentAlerts('op1')).abiertas;
+    assert.ok(antes.length >= 2, `esperaba varias alertas abiertas, vinieron ${antes.length}`);
+
+    const r = await facade.ackAllAgentAlerts('op1', 'ana');
+    assert.equal(r.ok, true);
+    assert.equal(r.descartadas, antes.length, 'descarta todas las que estaban abiertas');
+    assert.equal((await facade.agentAlerts('op1')).abiertas.length, 0, 'la bandeja queda vacía');
+
+    // No se borró nada: siguen en el histórico, marcadas y con autor.
+    const recientes = (await facade.agentAlerts('op1', { includeRecent: 50 })).recientes || [];
+    assert.ok(recientes.length >= antes.length, 'el histórico conserva las alertas');
+    assert.ok(recientes.every((a) => a.status !== 'open'), 'ninguna quedó abierta');
+    assert.ok(recientes.some((a) => a.ackBy === 'ana'), 'queda registrado quién las descartó');
+
+    // Idempotente: volver a llamarla no descarta nada más.
+    assert.equal((await facade.ackAllAgentAlerts('op1', 'ana')).descartadas, 0);
+
+    // Y el agente las vuelve a levantar si el problema sigue (pasado el enfriamiento).
+    clock.set('2026-01-03T12:00:00.000Z');
+    await facade.runAgentSweep('op1');
+    assert.ok((await facade.agentAlerts('op1')).abiertas.length > 0, 'el problema sigue → vuelven a aparecer');
+  });
+
+  await test('alertas: descartar todas puede acotarse a una regla', async () => {
+    const { facade, clock, recv } = await escenarioBodega();
+    await facade.receive('acme', { sku: 'CAM', qty: 40, locationId: recv.id });
+    await facade.createReceipt('acme', { locationId: recv.id, supplier: 'Prov', reference: 'OC-9', lines: [{ sku: 'CAM', qty: 10 }] }, 'ana');
+    clock.set('2026-01-01T12:00:00.000Z');
+    await facade.runAgentSweep('op1');
+    const abiertas = (await facade.agentAlerts('op1')).abiertas;
+    const guardado = abiertas.filter((a) => a.ruleKey === 'guardado_pendiente').length;
+    assert.ok(guardado > 0);
+    const r = await facade.ackAllAgentAlerts('op1', 'ana', { ruleKey: 'guardado_pendiente' });
+    assert.equal(r.descartadas, guardado);
+    const quedan = (await facade.agentAlerts('op1')).abiertas;
+    assert.equal(quedan.filter((a) => a.ruleKey === 'guardado_pendiente').length, 0);
+    assert.equal(quedan.length, abiertas.length - guardado, 'las demás reglas quedan intactas');
+  });
+
   // ---- Resumen --------------------------------------------------------------
   console.log(`\n${passed} pasaron, ${failures.length} fallaron\n`);
   if (failures.length > 0) process.exit(1);

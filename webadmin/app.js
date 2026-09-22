@@ -6595,7 +6595,31 @@
     if(!op)return;
     var ev=$('#aga-eval');
     if(ev)ev.onclick=function(){ agtCiclo(ev, renderAgAlertas); };
+    var todas=$('#aga-ackall');
+    if(todas)todas.onclick=descartarTodasLasAlertas;
     api('/agent/alerts?'+agtScope()).then(paintAgentAlerts).catch(function(){});
+  }
+  /**
+   * Vacía la bandeja de alertas de una vez.
+   *
+   * Pide confirmación con el número a la vista porque es un botón de los que uno
+   * aprieta sin mirar. No borra: marca vistas, igual que el botón de cada alerta,
+   * así que el agente las vuelve a levantar si el problema sigue ahí.
+   */
+  function descartarTodasLasAlertas(){
+    if(!op)return;
+    var b=$('#aga-ackall'); if(!b)return;
+    var n=parseInt(b.getAttribute('data-n')||'0',10);
+    if(!n)return;
+    confirmBox('Descartar todas las alertas',
+      'Se marcarán como vistas las <b>'+n+'</b> alerta(s) abiertas. No se borra nada: si el problema sigue, el agente las vuelve a levantar en un próximo ciclo.',
+      'Descartar '+n,
+      function(){
+        b.disabled=true;
+        api('/agent/alerts/ack-all',{method:'POST',body:{operationId:op}})
+          .then(function(r){ b.disabled=false; toast((r&&r.descartadas||0)+' alerta(s) descartada(s)'); renderAgAlertas(); })
+          .catch(function(e){ b.disabled=false; toast(e.message); });
+      }, true);
   }
   /** Pestaña DIARIO DEL AGENTE. */
   function renderAgDiario(){
@@ -6921,6 +6945,10 @@
     var box=$('#agt-alerts');var al=(d&&d.abiertas)||[];
     agtBadge(al.length);
     var sub=$('#agt-alerts-sub');if(sub)sub.textContent=al.length?(al.length+' activa(s)'):'Sin alertas — todo en orden';
+    // "Descartar todas" solo existe cuando hay algo que descartar, y lleva el número
+    // encima para que la confirmación diga exactamente cuántas se van.
+    var todas=$('#aga-ackall');
+    if(todas){ todas.hidden=!al.length; todas.setAttribute('data-n',String(al.length)); todas.textContent='Descartar todas ('+al.length+')'; }
     if(!box)return;
     if(!al.length){box.innerHTML='<div class="muted" style="padding:6px 2px">No hay alertas activas. El agente avisará aquí cuando una regla se cumpla.</div>';return;}
     box.innerHTML=al.map(function(a){

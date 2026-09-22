@@ -103,6 +103,13 @@ export class AgentController {
     return this.wms.ackAgentAlert(actorOperation(user, body?.operationId), id, actorOf(user));
   }
 
+  /** Descarta TODAS las alertas abiertas de la operación (o las de una regla). */
+  @Post('alerts/ack-all')
+  @RequirePermission('stock:read')
+  ackAll(@CurrentUser() user: User | null, @Body() body: { operationId?: string; ruleKey?: string }) {
+    return this.wms.ackAllAgentAlerts(actorOperation(user, body?.operationId), actorOf(user), { ruleKey: body?.ruleKey || null });
+  }
+
   /** Ejecuta la acción propuesta de una alerta (confirmar y ejecutar). Requiere permiso operativo. */
   @Post('alerts/:id/execute')
   @RequirePermission('order:fulfill')

@@ -4876,6 +4876,29 @@ export class WmsFacade {
     return { abiertas, recientes, barrido };
   }
 
+  /**
+   * Descarta de una vez TODAS las alertas abiertas (o las de una regla).
+   *
+   * Un barrido puede dejar decenas de alertas de la misma cosa; cerrarlas de a una
+   * es trabajo tonto. No borra nada: las marca vistas igual que el botón individual,
+   * quedan en el histórico y el agente las vuelve a levantar en el próximo ciclo si
+   * el problema sigue ahí (respetando el enfriamiento de su regla).
+   */
+  async ackAllAgentAlerts(operationId: string, actor?: string, opts?: { ruleKey?: string | null }): Promise<{ ok: boolean; descartadas: number }> {
+    if (!this.agentAlertRepo) return { ok: false, descartadas: 0 };
+    const abiertas = await this.agentAlertRepo.listOpen(operationId);
+    const filtradas = opts?.ruleKey ? abiertas.filter((a) => a.ruleKey === opts.ruleKey) : abiertas;
+    const at = this.clockNow();
+    let descartadas = 0;
+    for (const a of filtradas) {
+      if (a.status !== 'open') continue;
+      await this.agentAlertRepo.save({ ...a, status: 'ack', ackAt: at, ackBy: actor ?? null });
+      descartadas++;
+    }
+    if (descartadas) await this.journal(operationId, 'note', actor || 'admin', `Se descartaron ${descartadas} alerta(s) abiertas${opts?.ruleKey ? ' de la regla ' + opts.ruleKey : ''}.`, null).catch(() => null);
+    return { ok: true, descartadas };
+  }
+
   /** Marca una alerta como vista/descartada. */
   async ackAgentAlert(operationId: string, id: string, actor?: string): Promise<{ ok: boolean }> {
     if (!this.agentAlertRepo) return { ok: false };
