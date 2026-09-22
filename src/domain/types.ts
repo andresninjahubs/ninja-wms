@@ -1109,6 +1109,13 @@ export interface WorkAssignment {
   unitsEstimate: number; // unidades estimadas de trabajo (para balancear por tiempo)
   assignedBy: string;
   assignedAt: string;
+  /**
+   * Cuándo el operario EMPEZÓ a trabajarla (paso a 'in_progress'), no cuándo se la
+   * dieron. La diferencia con `assignedAt` es el tiempo que la tarea pasó en su
+   * bandeja sin que la tocara: la mitad del tiempo de ciclo de una orden vive ahí y
+   * sin este campo era invisible. null = todavía no la empieza.
+   */
+  startedAt: string | null;
   completedAt: string | null;
   completedBy: string | null;
   note: string | null;
@@ -1230,6 +1237,15 @@ export interface LaborTask {
   orderRef: string | null;
   locationId: string | null;
   source: 'ledger' | 'captured';
+  /**
+   * Segundos de desfase entre el reloj del dispositivo y el del servidor al momento
+   * de capturar (positivo = el teléfono va adelantado). El tiempo lo declara el
+   * aparato del operario y nadie garantiza su hora: un teléfono corrido diez minutos
+   * produce tareas de duración imposible que envenenan el promedio. No se rechaza la
+   * muestra —el trabajo ocurrió— pero queda marcada para descartarla del análisis.
+   * null = no se pudo determinar (tarea derivada del ledger).
+   */
+  clockSkewSec?: number | null;
 }
 
 // ---- Costos y rentabilidad (costeo por actividad + estándar/real) -------------

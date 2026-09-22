@@ -11,6 +11,7 @@
  * Almacenaje, embalaje y overhead completan el costo total. Ingreso (facturación) menos
  * costo = margen; se entrega margen ESTÁNDAR (objetivo) y REAL (efectivo) por cliente.
  */
+import { duracionConfiable } from './labor.service';
 import { BillingService } from './billing.service';
 import { PackagingService } from './packaging.service';
 import {
@@ -68,7 +69,9 @@ function hoursFor(tasks: LaborTask[]): number {
   }
   let hours = 0;
   for (const arr of byDay.values()) {
-    const captured = arr.filter((t) => Date.parse(t.endAt) > Date.parse(t.startAt));
+    // El mismo criterio que LaborService: una duración con el reloj corrido no puede
+    // entrar en la varianza de eficiencia, que es lo que después se factura.
+    const captured = arr.filter(duracionConfiable);
     if (captured.length) {
       hours += captured.reduce((s, t) => s + (Date.parse(t.endAt) - Date.parse(t.startAt)) / H, 0);
     } else {

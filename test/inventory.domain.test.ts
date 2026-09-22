@@ -3302,6 +3302,70 @@ async function run() {
     assert.ok(pedro.byType.some((t: any) => t.type === 'PICK'), 'incluye PICK derivado del ledger');
   });
 
+  await test('labor: una muestra con el reloj corrido no envenena el promedio', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    // Dos muestras del mismo operario: una sana (12 u en 1 h) y otra que declara haber
+    // sido enviada 10 minutos en el futuro — un teléfono desfasado. La segunda dice
+    // 600 u en 1 h; si entrara, la productividad de pedro se iría por las nubes.
+    await f.facade.captureLaborTask({
+      operationId: 'op1', sellerId: 'acme', operator: 'pedro', type: 'PACK',
+      startAt: '2026-03-01T13:00:00.000Z', endAt: '2026-03-01T14:00:00.000Z', units: 12,
+      clientNow: f.clock.now(),
+    });
+    await f.facade.captureLaborTask({
+      operationId: 'op1', sellerId: 'acme', operator: 'pedro', type: 'PACK',
+      startAt: '2026-03-01T15:00:00.000Z', endAt: '2026-03-01T16:00:00.000Z', units: 600,
+      clientNow: new Date(Date.parse(f.clock.now()) + 10 * 60000).toISOString(),
+    });
+    const prod = await f.facade.laborProductivity('op1');
+    const pack: any = prod.operators.find((o: any) => o.operator === 'pedro')!.byType.find((t: any) => t.type === 'PACK');
+    // El trabajo hecho se cuenta completo: las 612 unidades ocurrieron de verdad.
+    assert.equal(pack.units, 612, 'las unidades de la muestra sospechosa SÍ se cuentan');
+    assert.equal(pack.descartadas, 1, 'la muestra con el reloj corrido queda marcada');
+    // Pero la TASA sale solo del par confiable: 12 un en 1 h, no 612 en 1 h.
+    assert.equal(pack.hoursWorked, 1, 'solo la hora confiable cuenta como tiempo');
+    assert.equal(pack.unitsPerHour, 12, 'la tasa no se contamina con las unidades de la muestra mala');
+  });
+
+  await test('labor: una muestra que esperó offline en la cola NO se descarta', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    // El caso que la cola de reintento de la app hace común: el operario trabajó a las
+    // 13:00 en una zona sin señal y la muestra recién sale a las 18:00. El `endAt` es
+    // viejo, pero su reloj está perfecto. Medir el desfase contra `endAt` la habría
+    // botado por un problema que no tiene.
+    await f.facade.captureLaborTask({
+      operationId: 'op1', sellerId: 'acme', operator: 'ana', type: 'PICK',
+      startAt: '2026-03-01T13:00:00.000Z', endAt: '2026-03-01T14:00:00.000Z', units: 30,
+      clientNow: f.clock.now(),   // reloj sano, envío tardío
+    });
+    const prod = await f.facade.laborProductivity('op1');
+    const pick: any = prod.operators.find((o: any) => o.operator === 'ana')!.byType.find((t: any) => t.type === 'PICK');
+    assert.equal(pick.descartadas, 0, 'no se descarta nada');
+    assert.equal(pick.unitsPerHour, 30, 'la muestra demorada se usa igual');
+  });
+
+  await test('picking dirigido: el movimiento queda a nombre del operario, no de system', async () => {
+    const f = buildFacade();
+    await seedScan(f.facade);
+    await f.facade.scanInbound('acme', { barcode: 'EAN-1', packCount: 10, locationCode: 'A-01-1-A' } as any);
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-ACTOR-1', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 2 }],
+    });
+    await f.facade.allocateOrder('acme', o.id);
+    const alloc = (await f.facade.getOrder('acme', o.id))!.lines[0].allocations[0];
+    // Este es el camino que usa la app del operario (pick por ubicación), no el
+    // "confirmar todo". Era el único de los dos que perdía el actor.
+    await f.facade.pickTask('acme', o.id, { sku: 'CAM', locationId: alloc.locationId, qty: 2 }, 'pedro');
+    const movs = (await f.movements.find({ sellerId: 'acme' })).filter((m: any) => m.type === 'PICK');
+    assert.ok(movs.length > 0, 'hubo movimiento de picking');
+    assert.ok(movs.every((m: any) => m.actor === 'pedro'), 'el picking dirigido se atribuye al operario: ' + JSON.stringify(movs.map((m: any) => m.actor)));
+  });
+
   await test('labor (G4): serie diaria lista como input del forecast de personal', async () => {
     const f = buildFacade();
     await seedLedger(f);

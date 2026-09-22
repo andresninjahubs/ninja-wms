@@ -9,6 +9,7 @@
   var user = null;            // usuario autenticado
   var opId = null;            // operación del seller (para capturar productividad G4)
   var taskStartAt = null;     // inicio real de la tarea en curso (G4)
+  var quickStartAt = null;   // inicio real de una tarea de empaque o despacho
   var op = null;              // receive | putaway | pick | stock
   var task = null;            // tarea de la bandeja en ejecución (contexto del flujo), o null en operación libre
   var board = null;           // último tablero cargado
@@ -26,6 +27,72 @@
   function save() { try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) {} }
 
   // ---- API ------------------------------------------------------------------
+  /**
+   * La ubicación donde ocurrió el trabajo, como id (no como código escaneado).
+   * Cada operación la guarda en un paso distinto: el picking en `loc`, el guardado en
+   * su destino `to`, la recepción en el andén `bin`. Es lo que después permite medir
+   * cuánto cuesta cada pasillo, que es la razón de tener esta columna.
+   */
+  function laborLocationId(which) {
+    var code = which === 'pick' ? captured.loc : which === 'putaway' ? captured.to : which === 'receive' ? captured.bin : null;
+    if (!code) return null;
+    var l = findLocByCode(code);
+    return l ? l.id : null;   // sin ubicación conocida es mejor null que un código suelto
+  }
+
+  // ---- Cola de captura de tiempos -------------------------------------------
+  // La medición de tiempo se hacía con un fetch suelto y un `.catch(){}`: un operario
+  // en una zona sin señal perdía su turno completo y nadie se enteraba. Como el tiempo
+  // es el insumo del que después salen los estándares de la bodega, no puede depender
+  // de que la antena llegue al fondo del pasillo.
+  //
+  // La muestra se guarda en el aparato ANTES de intentar mandarla, y la cola se vacía
+  // sola cuando vuelve la conexión. Si el operario cierra la app, la cola sobrevive.
+  var LABOR_Q = 'njw_labor_q';
+  var laborFlushing = false;
+
+  function laborQueue() {
+    try { return JSON.parse(localStorage.getItem(LABOR_Q) || '[]'); } catch (e) { return []; }
+  }
+  function laborQueueSave(q) {
+    // Tope de seguridad: 500 muestras es más de un turno completo. Si se llega ahí es
+    // que el aparato lleva días sin conexión; se botan las más viejas, no las nuevas.
+    try { localStorage.setItem(LABOR_Q, JSON.stringify(q.slice(-500))); } catch (e) { /* almacenamiento lleno o bloqueado */ }
+  }
+  /** Encola una medición y dispara el envío. Nunca lanza: medir no puede romper el flujo. */
+  function laborCapture(body) {
+    try {
+      var q = laborQueue();
+      q.push(body);
+      laborQueueSave(q);
+    } catch (e) { return; }
+    laborFlush();
+  }
+  /** Vacía la cola de a una muestra, en orden. Un fallo de red la deja para después. */
+  function laborFlush() {
+    if (laborFlushing) return;
+    var q = laborQueue();
+    if (!q.length || !cfg.token) return;
+    laborFlushing = true;
+    // `clientNow` se sella acá, al enviar, no al encolar: así el servidor puede
+    // distinguir un reloj corrido de una muestra que esperó por falta de señal.
+    var muestra = q[0]; muestra.clientNow = new Date().toISOString();
+    api('/labor/capture', { method: 'POST', body: muestra }).then(function () {
+      var rest = laborQueue(); rest.shift(); laborQueueSave(rest);
+      laborFlushing = false;
+      if (rest.length) laborFlush();   // sigue con la siguiente
+    }).catch(function (e) {
+      laborFlushing = false;
+      // Un 4xx es una muestra que el servidor nunca va a aceptar (tarea mal formada,
+      // sesión vencida): se descarta para que no bloquee a las que vienen detrás.
+      // Un fallo de red se deja en la cola y se reintenta.
+      if (/Error 4\d\d/.test(e && e.message)) { var rest = laborQueue(); rest.shift(); laborQueueSave(rest); }
+    });
+  }
+  // Reintenta al volver la conexión y cada minuto mientras la app esté abierta.
+  window.addEventListener('online', laborFlush);
+  setInterval(laborFlush, 60000);
+
   function api(path, opts) {
     opts = opts || {};
     var headers = { 'Content-Type': 'application/json' };
@@ -84,6 +151,10 @@
         if (user.operationId) opId = user.operationId;
         loadLocations();
         loadPwaBranding();
+        // Un turno pudo terminar sin señal y la app cerrarse con muestras pendientes.
+        // Apenas hay sesión válida se vacían: esperar el minuto del intervalo dejaría
+        // el tiempo del turno anterior colgando en el aparato más de lo necesario.
+        laborFlush();
         show('home');
       })
       .catch(function (e) { toast('No se pudo conectar: ' + e.message, false); });
@@ -299,6 +370,10 @@
   // ---- Acción rápida: empacar / despachar (sin escaneo) ----------------------
   function openQuick(t) {
     task = t;
+    // Empaque y despacho no pasan por el flujo de escaneo, así que nunca marcaban
+    // inicio: su duración era la única del ciclo que no se podía medir. El reloj
+    // parte cuando el operario abre la pantalla, que es cuando empieza el trabajo.
+    quickStartAt = new Date().toISOString();
     $('q-title').textContent = taskTitle(t);
     $('q-sub').textContent = (t.entityRef || t.entityId) + (t.cliente ? ' · ' + t.cliente : '');
     $('q-card').innerHTML = '<div class="kv"><span>Orden</span><b class="code">' + esc(t.entityRef || t.entityId) + '</b></div><div class="kv"><span>Unidades</span><b>' + (t.unitsEstimate || '—') + '</b></div>' + (t.priorityReason ? '<div class="kv"><span>Prioridad</span><b>' + esc(t.priorityReason) + '</b></div>' : '');
@@ -328,8 +403,19 @@
       call = api(base + '/ship', { method: 'POST', body: trk ? { carrier: carrier, trackingNumber: trk } : { carrier: carrier } });
     }
     $('btn-qconfirm').disabled = true;
-    call.then(function () { toast(task.type === 'PACK' ? 'Orden empacada' : 'Orden despachada', true); task = null; show('home'); })
-      .catch(function (e) { toast(e.message, false); $('btn-qconfirm').disabled = false; });
+    var tipo = task.type, refOrden = task.entityRef || task.entityId, unidades = task.unitsEstimate || 0, sellerDeTarea = task.sellerId;
+    call.then(function () {
+      if (opId && quickStartAt) {
+        laborCapture({
+          operationId: opId, sellerId: sellerDeTarea, operator: (user && user.id) || cfg.email,
+          type: tipo === 'PACK' ? 'PACK' : 'OTHER',   // el dominio no tiene tipo SHIP; despacho entra como OTHER
+          startAt: quickStartAt, endAt: new Date().toISOString(), units: unidades,
+          orderRef: refOrden, locationId: null,
+        });
+      }
+      quickStartAt = null;
+      toast(tipo === 'PACK' ? 'Orden empacada' : 'Orden despachada', true); task = null; show('home');
+    }).catch(function (e) { toast(e.message, false); $('btn-qconfirm').disabled = false; });
   });
   $('btn-qback').addEventListener('click', function () { task = null; show('home'); });
   $('btn-qcancel').addEventListener('click', function () { task = null; show('home'); });
@@ -583,13 +669,19 @@
         finishTask('Tarea completada: salió de tu bandeja.');
       } else $('btn-again').style.display = task ? '' : 'none';
       toast(OP_META[op].title + ' registrada', true);
-      // G4: captura de productividad con inicio/fin reales (best-effort, no bloquea).
+      // Captura de productividad con inicio/fin reales. Va por la cola: si no hay red,
+      // la muestra espera en el aparato en vez de perderse.
       var LABOR_TYPE = { pick: 'PICK', putaway: 'PUTAWAY', receive: 'RECEIVE' };
       if (opId && LABOR_TYPE[op] && taskStartAt) {
-        api('/labor/capture', { method: 'POST', body: {
+        laborCapture({
           operationId: opId, sellerId: cfg.seller, operator: (user && user.id) || cfg.email,
           type: LABOR_TYPE[op], startAt: taskStartAt, endAt: new Date().toISOString(), units: q,
-        } }).catch(function () {});
+          // La orden y la ubicación ya se conocen acá y el endpoint las acepta desde
+          // siempre; no mandarlas dejaba esas columnas en null y con ellas se cae la
+          // posibilidad de medir tiempo por ubicación.
+          orderRef: (task && (task.entityRef || task.entityId)) || null,
+          locationId: laborLocationId(op),
+        });
         taskStartAt = new Date().toISOString(); // reinicia para la próxima tarea
       }
     }).catch(function (e) {
@@ -716,5 +808,6 @@
   }
 
   // Arranque
+  laborFlush();   // por si quedaron mediciones del turno anterior en este aparato
   show(cfg.api && cfg.token ? 'login' : 'login');
 })();

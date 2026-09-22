@@ -46,6 +46,9 @@ model WorkAssignment {
   unitsEstimate Int       @default(0)
   assignedBy    String
   assignedAt    DateTime
+  /// Cuándo el operario EMPEZÓ a trabajarla, no cuándo se la dieron. La diferencia
+  /// con assignedAt es el tiempo que la tarea pasó en su bandeja sin que la tocara.
+  startedAt     DateTime?
   completedAt   DateTime?
   completedBy   String?
   note          String?
@@ -241,6 +244,9 @@ model LaborTask {
   orderRef    String?
   locationId  String?
   source      String // ledger | captured
+  /// Segundos de desfase entre el reloj del dispositivo y el del servidor al capturar.
+  /// Más de ±120 s y la duración no se usa para medir (la tarea sí se guarda igual).
+  clockSkewSec Int?
 
   @@index([operationId, startAt])
   @@index([operationId, operator, startAt])

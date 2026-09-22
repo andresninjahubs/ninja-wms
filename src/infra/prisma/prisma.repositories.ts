@@ -1082,6 +1082,7 @@ export class PrismaLaborTaskRepository implements LaborTaskRepository {
       id: r.id, operationId: r.operationId, sellerId: r.sellerId ?? null, operator: r.operator,
       type: r.type as LaborTaskType, startAt: (r.startAt as Date).toISOString(), endAt: (r.endAt as Date).toISOString(),
       units: r.units, orderRef: r.orderRef ?? null, locationId: r.locationId ?? null, source: r.source,
+      clockSkewSec: r.clockSkewSec ?? null,
     };
   }
   async append(tasks: LaborTask[]): Promise<void> {
@@ -1090,6 +1091,7 @@ export class PrismaLaborTaskRepository implements LaborTaskRepository {
       data: tasks.map((t) => ({
         id: t.id, operationId: t.operationId, sellerId: t.sellerId, operator: t.operator, type: t.type,
         startAt: new Date(t.startAt), endAt: new Date(t.endAt), units: t.units, orderRef: t.orderRef, locationId: t.locationId, source: t.source,
+        clockSkewSec: t.clockSkewSec ?? null,
       })),
       skipDuplicates: true, // idempotente por id
     });
@@ -1157,12 +1159,13 @@ export class PrismaWorkAssignmentRepository implements WorkAssignmentRepository 
       id: r.id, operationId: r.operationId, sellerId: r.sellerId ?? null, type: r.type as WorkTaskType,
       entityId: r.entityId, entityRef: r.entityRef ?? null, operator: r.operator, status: r.status as WorkAssignmentStatus,
       unitsEstimate: r.unitsEstimate, assignedBy: r.assignedBy, assignedAt: (r.assignedAt as Date).toISOString(),
+      startedAt: r.startedAt ? (r.startedAt as Date).toISOString() : null,
       completedAt: r.completedAt ? (r.completedAt as Date).toISOString() : null, completedBy: r.completedBy ?? null, note: r.note ?? null,
       priority: r.priority ?? 0, priorityReason: r.priorityReason ?? null,
     };
   }
   async save(a: WorkAssignment): Promise<void> {
-    const data = { ...a, assignedAt: new Date(a.assignedAt), completedAt: a.completedAt ? new Date(a.completedAt) : null, priority: a.priority ?? 0, priorityReason: a.priorityReason ?? null };
+    const data = { ...a, assignedAt: new Date(a.assignedAt), startedAt: a.startedAt ? new Date(a.startedAt) : null, completedAt: a.completedAt ? new Date(a.completedAt) : null, priority: a.priority ?? 0, priorityReason: a.priorityReason ?? null };
     await this.db.workAssignment.upsert({ where: { id: a.id }, create: data, update: data });
   }
   async get(id: string): Promise<WorkAssignment | null> {

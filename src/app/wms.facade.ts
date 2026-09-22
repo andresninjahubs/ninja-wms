@@ -3729,7 +3729,7 @@ export class WmsFacade {
   }
 
   /** Registra una tarea de trabajo capturada por la PWA (inicio/fin reales). */
-  async captureLaborTask(input: { operationId: string; sellerId?: string | null; operator: string; type: LaborTaskType; startAt: string; endAt: string; units: number; orderRef?: string | null; locationId?: string | null }) {
+  async captureLaborTask(input: { operationId: string; sellerId?: string | null; operator: string; type: LaborTaskType; startAt: string; endAt: string; units: number; orderRef?: string | null; locationId?: string | null; clientNow?: string | null }) {
     if (!this.laborService) throw new ValidationError('Módulo de productividad no disponible');
     return this.laborService.capture(input);
   }
@@ -4245,7 +4245,7 @@ export class WmsFacade {
       id, operationId, sellerId: input.sellerId ?? null, type: input.type, entityId: input.entityId,
       entityRef: input.entityRef ?? null, operator: input.operator, status: 'assigned',
       unitsEstimate: Math.max(0, Math.round(input.unitsEstimate || 0)), assignedBy: input.by,
-      assignedAt: this.clockNow(), completedAt: null, completedBy: null, note: input.note ?? null,
+      assignedAt: this.clockNow(), startedAt: null, completedAt: null, completedBy: null, note: input.note ?? null,
     };
     await this.assignments.save(a);
     this.prioritiesAt.delete(operationId); // la bandeja se reordena en la próxima lectura
@@ -5306,9 +5306,13 @@ export class WmsFacade {
     if (!this.assignments) return { ok: true, assignment: null };
     const a = await this.assignments.get(`${input.type}:${input.entityId}`);
     if (a && a.operator !== operator && (await this.getAssignmentMode(operationId)) === 'strict') throw new ForbiddenError('Tarea asignada a otro operario (modo estricto).');
-    if (a && (a.status === 'assigned')) await this.assignments.save({ ...a, status: 'in_progress' });
+    // `startedAt` se escribe una sola vez: si el operario vuelve a entrar a una tarea
+    // que ya había empezado, la marca original manda. Si no, un reingreso borraría
+    // justamente el rato que se quiere medir.
+    const startedAt = a && a.startedAt ? a.startedAt : this.clockNow();
+    if (a && (a.status === 'assigned')) await this.assignments.save({ ...a, status: 'in_progress', startedAt });
     await this.advanceTask(operationId, input.type as WorkTaskStage, input.entityId, { state: 'in_progress', operator, assignmentId: a ? a.id : undefined });
-    return { ok: true, assignment: a ? { ...a, status: 'in_progress' } : null };
+    return { ok: true, assignment: a ? { ...a, status: 'in_progress', startedAt } : null };
   }
 
   private prioritiesAt = new Map<string, number>();

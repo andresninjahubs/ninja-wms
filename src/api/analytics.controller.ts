@@ -63,7 +63,7 @@ export class AnalyticsController {
   /** Captura una tarea con inicio/fin reales (desde la PWA del operario). */
   @Post('labor/capture')
   @RequirePermission('order:fulfill')
-  captureLabor(@CurrentUser() user: User | null, @Body() body: { operationId: string; sellerId?: string | null; operator?: string; type: LaborTaskType; startAt: string; endAt: string; units: number; orderRef?: string | null; locationId?: string | null }) {
+  captureLabor(@CurrentUser() user: User | null, @Body() body: { operationId: string; sellerId?: string | null; operator?: string; type: LaborTaskType; startAt: string; endAt: string; units: number; orderRef?: string | null; locationId?: string | null; clientNow?: string | null }) {
     return this.wms.captureLaborTask({
       operationId: actorOperation(user, body?.operationId),
       sellerId: body?.sellerId ?? null,
@@ -74,6 +74,7 @@ export class AnalyticsController {
       units: body?.units,
       orderRef: body?.orderRef ?? null,
       locationId: body?.locationId ?? null,
+      clientNow: body?.clientNow ?? null,
     });
   }
 

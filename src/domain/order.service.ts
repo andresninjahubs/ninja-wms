@@ -543,6 +543,12 @@ export class OrderService {
       locationId: alloc.locationId,
       lot: alloc.lot,
       reference: `PICK:${order.id}`,
+      // El movimiento queda atribuido a quien lo hizo. Faltaba acá (y sí estaba en
+      // `confirmPick`), así que TODO el picking dirigido —el flujo principal del
+      // operario en la app— caía al `?? 'system'` del inventario. Resultado: la
+      // productividad derivada del ledger no se le podía atribuir a nadie y
+      // "system" aparecía como el operario más rápido de la bodega.
+      actor,
     });
     alloc.pickedQty = (alloc.pickedQty ?? 0) + take;
 

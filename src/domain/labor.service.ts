@@ -12,6 +12,32 @@ import { LaborTask, LaborTaskType, MovementType } from './types';
 const H = 3600000;
 function day(iso: string): string { return new Date(iso).toISOString().slice(0, 10); }
 
+/**
+ * Tolerancia del reloj del dispositivo, en segundos. Más que esto y la muestra no se
+ * usa para medir tiempo: la tarea existió, pero su duración no es creíble.
+ */
+export const MAX_CLOCK_SKEW_SEC = 120;
+/** Duraciones fuera de este rango son ruido: un toque accidental o una app olvidada abierta. */
+const MIN_DUR_MS = 5000;          // 5 s
+const MAX_DUR_MS = 4 * 3600000;   // 4 h
+
+/**
+ * ¿Esta muestra sirve para medir tiempo?
+ *
+ * Filtrar acá y no al guardar es deliberado: la tarea se registra igual (el trabajo
+ * ocurrió y las unidades cuentan), pero su DURACIÓN no entra en ningún promedio si el
+ * reloj del aparato estaba corrido o el intervalo es absurdo. Sin esto, un teléfono
+ * desfasado diez minutos arrastra la productividad de todo un turno.
+ */
+export function duracionConfiable(t: LaborTask): boolean {
+  const dur = Date.parse(t.endAt) - Date.parse(t.startAt);
+  if (!(dur > 0)) return false;
+  if (dur < MIN_DUR_MS || dur > MAX_DUR_MS) return false;
+  const skew = t.clockSkewSec;
+  if (skew != null && Math.abs(skew) > MAX_CLOCK_SKEW_SEC) return false;
+  return true;
+}
+
 /** Horas trabajadas de un conjunto de tareas, agrupando por día: usa la duración real
  *  (tareas capturadas) o, en su defecto, el span de la sesión (tareas derivadas). */
 function hoursFor(tasks: LaborTask[]): number {
@@ -26,7 +52,7 @@ function hoursFor(tasks: LaborTask[]): number {
   for (const arr of byDay.values()) {
     // Tareas CAPTURADAS (con inicio/fin reales): la hora trabajada es la suma de sus
     // duraciones — así unidades/hora refleja la velocidad real del operario.
-    const captured = arr.filter((t) => Date.parse(t.endAt) > Date.parse(t.startAt));
+    const captured = arr.filter(duracionConfiable);
     if (captured.length) {
       hours += captured.reduce((s, t) => s + (Date.parse(t.endAt) - Date.parse(t.startAt)) / H, 0);
     } else {
@@ -83,7 +109,18 @@ export class LaborService {
   async capture(input: {
     operationId: string; sellerId?: string | null; operator: string; type: LaborTaskType;
     startAt: string; endAt: string; units: number; orderRef?: string | null; locationId?: string | null;
+    /** Hora que marcaba el aparato al ENVIAR esta muestra. Es lo que permite medir su desfase. */
+    clientNow?: string | null;
   }): Promise<LaborTask> {
+    // El desfase se mide contra `clientNow` —la hora del aparato al momento de enviar—
+    // y NO contra `endAt`. La diferencia importa: una muestra que esperó media hora en
+    // la cola del teléfono por falta de señal tiene un `endAt` viejo y un reloj perfecto.
+    // Compararla contra `endAt` la descartaría por un problema que no tiene, y sería
+    // castigar justamente al operario que trabaja donde no llega la antena.
+    const ahora = Date.parse(this.clock.now());
+    const declarada = input.clientNow ? Date.parse(input.clientNow) : NaN;
+    const clockSkewSec = Number.isNaN(declarada) || Number.isNaN(ahora) ? null : Math.round((declarada - ahora) / 1000);
+
     const task: LaborTask = {
       id: `labor:${this.ids.next()}`,
       operationId: input.operationId,
@@ -96,6 +133,7 @@ export class LaborService {
       orderRef: input.orderRef ?? null,
       locationId: input.locationId ?? null,
       source: 'captured',
+      clockSkewSec,
     };
     await this.laborTasks.append([task]);
     return task;
@@ -103,8 +141,13 @@ export class LaborService {
 
   /**
    * Reporte de productividad por operador (y por tipo de tarea) en una ventana.
-   * unidades/hora usa la duración real cuando existe (capturado) y el span de sesión
-   * diaria cuando la tarea viene derivada del ledger.
+   *
+   * Dos cifras distintas que conviene no confundir:
+   *   - `units` y `tasks` cuentan TODO lo que la persona hizo. El trabajo ocurrió.
+   *   - `unitsPerHour` sale SOLO de las muestras cuya duración es creíble, y
+   *     `hoursWorked` son las horas de esas mismas muestras.
+   * Mezclarlas da una tasa sin sentido: las unidades de diez tareas divididas por las
+   * horas de tres. Una muestra con el reloj corrido queda fuera del par completo.
    */
   async productivityByOperator(
     operationId: string,
@@ -117,7 +160,9 @@ export class LaborService {
       units: number;
       hoursWorked: number;
       unitsPerHour: number | null;
-      byType: Array<{ type: string; tasks: number; units: number; hoursWorked: number; unitsPerHour: number | null }>;
+      /** Muestras dejadas fuera del cálculo de la tasa por duración no creíble. */
+      descartadas: number;
+      byType: Array<{ type: string; tasks: number; units: number; hoursWorked: number; unitsPerHour: number | null; descartadas: number }>;
     }>;
   }> {
     const tasks = await this.laborTasks.list(operationId, { from: opts?.from, to: opts?.to, operator: opts?.operator ?? null });
@@ -127,24 +172,29 @@ export class LaborService {
       a.push(t);
       byOperator.set(t.operator, a);
     }
-    const operators = [...byOperator.entries()].map(([operator, list]) => {
+    const resumen = (list: LaborTask[]) => {
       const units = list.reduce((s, t) => s + t.units, 0);
-      const hoursWorked = hoursFor(list);
-      const byTypeMap = new Map<string, LaborTask[]>();
-      for (const t of list) { const a = byTypeMap.get(t.type) || []; a.push(t); byTypeMap.set(t.type, a); }
-      const byType = [...byTypeMap.entries()].map(([type, tl]) => {
-        const u = tl.reduce((s, t) => s + t.units, 0);
-        const h = hoursFor(tl);
-        return { type, tasks: tl.length, units: u, hoursWorked: r1(h), unitsPerHour: h > 0 ? r1(u / h) : null };
-      }).sort((a, b) => b.units - a.units);
+      // El par (unidades, horas) con el que se calcula la tasa sale de las MISMAS
+      // muestras. Las derivadas del ledger no traen duración propia y las cubre
+      // `hoursFor` con el span del día; las capturadas entran solo si son creíbles.
+      const medibles = list.filter((t) => t.source !== 'captured' || duracionConfiable(t));
+      const horas = hoursFor(medibles);
+      const unidadesMedibles = medibles.reduce((s, t) => s + t.units, 0);
       return {
-        operator,
         tasks: list.length,
         units,
-        hoursWorked: r1(hoursWorked),
-        unitsPerHour: hoursWorked > 0 ? r1(units / hoursWorked) : null,
-        byType,
+        hoursWorked: r1(horas),
+        unitsPerHour: horas > 0 ? r1(unidadesMedibles / horas) : null,
+        descartadas: list.length - medibles.length,
       };
+    };
+    const operators = [...byOperator.entries()].map(([operator, list]) => {
+      const byTypeMap = new Map<string, LaborTask[]>();
+      for (const t of list) { const a = byTypeMap.get(t.type) || []; a.push(t); byTypeMap.set(t.type, a); }
+      const byType = [...byTypeMap.entries()]
+        .map(([type, tl]) => ({ type, ...resumen(tl) }))
+        .sort((a, b) => b.units - a.units);
+      return { operator, ...resumen(list), byType };
     }).sort((a, b) => b.units - a.units);
     return { window: { from: opts?.from ?? null, to: opts?.to ?? null }, operators };
   }
