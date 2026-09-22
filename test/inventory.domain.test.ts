@@ -79,6 +79,7 @@ import {
   InMemoryAiConfigRepository,
   InMemoryConsigneeRepository,
   InMemoryApiKeyRepository,
+  InMemoryTaskEventRepository,
   InMemoryPlanConfigRepository,
   InMemoryCountAuditRepository,
   InMemoryEventRepository,
@@ -968,9 +969,10 @@ async function run() {
     const aiConfig = new InMemoryAiConfigRepository();
     const consignees = new InMemoryConsigneeRepository();
     const apiKeys = new InMemoryApiKeyRepository();
+    const taskEvents = new InMemoryTaskEventRepository();
     const facade = new WmsFacade(inventory, orderService, receiptService, productService, billingService, sellers, skus, locations, ids, advisor, cyc, userSvc, bc, opSvc, metricsService, chatService, platformUsageService, announcementService, webhookService, shippingLabels, returnService, serials, packagingService,
-      undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, undefined, consignees, apiKeys);
-    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig, consignees, apiKeys };
+      undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, undefined, consignees, apiKeys, taskEvents);
+    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig, consignees, apiKeys, taskEvents };
   }
 
   async function seedScan(facade: WmsFacade) {
@@ -6356,6 +6358,178 @@ async function run() {
     // nunca las órdenes del otro cliente.
     const ajenas = await facade.listOperationOrders('op1', { sellerId: 'globex', sellerScope: 'acme' });
     assert.equal(ajenas.length, 0, 'un filtro de la interfaz jamás debe ampliar el alcance');
+  });
+
+  console.log('\nLibro de eventos de tarea (auditoría fina)\n');
+
+  /** Operación con una orden reservada y lista para asignarse. */
+  async function escenarioTarea() {
+    const f = buildFacade();
+    await seedScan(f.facade);
+    await f.facade.scanInbound('acme', { barcode: 'EAN-1', packCount: 10, locationCode: 'A-01-1-A' } as any);
+    for (const [id, name] of [['pedro', 'Pedro'], ['carla', 'Carla'], ['ana', 'Ana']] as const) {
+      await f.facade.createUser({ id, name, email: `${id}@op1.cl`, role: id === 'ana' ? UserRole.ADMIN : UserRole.OPERATOR, operationId: 'op1' });
+    }
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-EV-1', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 4 }],
+    });
+    await f.facade.allocateOrder('acme', o.id);
+    return { f, o };
+  }
+
+  await test('eventos: la historia de una tarea sobrevive a que la fila se sobrescriba', async () => {
+    const { f, o } = await escenarioTarea();
+    // Pedro la recibe, Carla se la queda, Carla la trabaja. La FILA solo va a saber
+    // de Carla: el dueño se pisa en cada reasignación. La historia debe saber de los dos.
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, sellerId: 'acme', entityRef: o.externalOrderId, operator: 'pedro', by: 'ana', unitsEstimate: 4 });
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, sellerId: 'acme', entityRef: o.externalOrderId, operator: 'carla', by: 'ana', unitsEstimate: 4 });
+    await f.facade.startTask('op1', 'carla', { type: 'PICK', entityId: o.id });
+
+    const tareas = await f.facade.orderTasks('acme', o.id);
+    const tarea = tareas.find((t: any) => t.type === 'PICK')!;
+    const h = await f.facade.taskHistory('op1', tarea.id);
+    assert.ok(h.proyeccion, 'la tarea tiene historia');
+    assert.deepEqual(h.proyeccion!.duenos, ['pedro', 'carla'], 'quedan los DOS dueños, no solo el último');
+    assert.equal(h.proyeccion!.rebotes, 1, 'el cambio de manos queda contado');
+    assert.equal(h.proyeccion!.operator, 'carla', 'el dueño actual es el último');
+    assert.equal(h.proyeccion!.estado, 'in_progress');
+    // La fila, en cambio, solo conoce a Carla: por eso hacía falta el libro.
+    assert.equal((await f.taskLedger.get(tarea.id))!.operator, 'carla');
+    const tipos = h.eventos.map((e: any) => e.type);
+    assert.deepEqual(tipos, ['CREATED', 'ASSIGNED', 'REASSIGNED', 'STARTED'], 'la secuencia completa: ' + tipos.join(','));
+  });
+
+  await test('eventos: separa el tiempo en cola del tiempo de ejecución', async () => {
+    const { f, o } = await escenarioTarea();
+    const t0 = Date.parse(f.clock.now());
+    f.clock.set(new Date(t0 + 30 * 60000).toISOString());        // 30 min en el pool
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, sellerId: 'acme', entityRef: o.externalOrderId, operator: 'pedro', by: 'ana', unitsEstimate: 4 });
+    f.clock.set(new Date(t0 + 45 * 60000).toISOString());        // 15 min en su bandeja
+    await f.facade.startTask('op1', 'pedro', { type: 'PICK', entityId: o.id });
+    f.clock.set(new Date(t0 + 50 * 60000).toISOString());        // 5 min de ejecución
+    await f.facade.confirmPick('acme', o.id, 'pedro');
+
+    const tarea = (await f.facade.orderTasks('acme', o.id)).find((t: any) => t.type === 'PICK')!;
+    const { tiempos, proyeccion } = await f.facade.taskHistory('op1', tarea.id);
+    assert.equal(tiempos!.esperaMin, 30, 'esperó 30 min a que alguien la tomara');
+    assert.equal(tiempos!.arranqueMin, 15, 'estuvo 15 min en la bandeja de pedro');
+    assert.equal(tiempos!.ejecucionMin, 5, 'el trabajo de verdad fueron 5 min');
+    assert.equal(tiempos!.totalMin, 50);
+    // Este es el punto: el total son 50 min, pero solo 5 fueron trabajo. El cálculo
+    // viejo (diferencia entre eventos de la ORDEN) habría reportado 50 min de picking.
+    assert.equal(proyeccion!.estado, 'done');
+  });
+
+  await test('eventos: liberar no es completar, aunque la fila use la misma columna', async () => {
+    const { f, o } = await escenarioTarea();
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, sellerId: 'acme', entityRef: o.externalOrderId, operator: 'pedro', by: 'ana', unitsEstimate: 4 });
+    await f.facade.releaseAssignment('op1', o.id, 'PICK', 'ana', 'se fue a colación');
+    const tarea = (await f.facade.orderTasks('acme', o.id)).find((t: any) => t.type === 'PICK')!;
+    const h = await f.facade.taskHistory('op1', tarea.id);
+    assert.equal(h.proyeccion!.estado, 'pending', 'vuelve al pool, no queda como hecha');
+    assert.equal(h.proyeccion!.operator, null, 'sin dueño');
+    assert.equal(h.proyeccion!.completedAt, null, 'no se completó nunca');
+    const rel = h.eventos.find((e: any) => e.type === 'RELEASED')!;
+    assert.equal(rel.subject, 'pedro', 'queda a quién se le quitó');
+    assert.equal(rel.reason, 'se fue a colación', 'y por qué');
+    // La fila, en cambio, marcó `completedAt` al liberar: indistinguible de terminar.
+    const a = await f.assignments.get('PICK:' + o.id);
+    assert.equal(a!.status, 'released');
+    assert.ok(a!.completedAt, 'la fila reusa completedAt — por eso hace falta el evento');
+  });
+
+  await test('eventos: cada ubicación pickeada deja su propio avance, con hora y lugar', async () => {
+    const { f, o } = await escenarioTarea();
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, sellerId: 'acme', entityRef: o.externalOrderId, operator: 'pedro', by: 'ana', unitsEstimate: 4 });
+    await f.facade.startTask('op1', 'pedro', { type: 'PICK', entityId: o.id });
+    const alloc = (await f.facade.getOrder('acme', o.id))!.lines[0].allocations[0];
+    await f.facade.pickTask('acme', o.id, { sku: 'CAM', locationId: alloc.locationId, qty: 1 }, 'pedro');
+    await f.facade.pickTask('acme', o.id, { sku: 'CAM', locationId: alloc.locationId, qty: 3 }, 'pedro');
+
+    const tarea = (await f.facade.orderTasks('acme', o.id)).find((t: any) => t.type === 'PICK')!;
+    const h = await f.facade.taskHistory('op1', tarea.id);
+    const avances = h.eventos.filter((e: any) => e.type === 'PROGRESS');
+    assert.equal(avances.length, 2, 'un avance por ubicación confirmada');
+    assert.equal(avances[0].locationId, alloc.locationId, 'el avance sabe DÓNDE');
+    assert.equal(avances[0].sku, 'CAM');
+    assert.equal(avances[0].units, 1);
+    assert.ok(avances[0].at, 'y CUÁNDO');
+    assert.equal(avances[0].actor, 'pedro', 'y QUIÉN');
+    // Unidades realmente ejecutadas, no la estimación previa.
+    assert.equal((await f.taskLedger.get(tarea.id))!.unitsDone, 4, 'unitsDone refleja lo hecho');
+  });
+
+  await test('eventos: el turno de una persona se puede reconstruir minuto a minuto', async () => {
+    const { f, o } = await escenarioTarea();
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, sellerId: 'acme', entityRef: o.externalOrderId, operator: 'pedro', by: 'ana', unitsEstimate: 4 });
+    await f.facade.startTask('op1', 'pedro', { type: 'PICK', entityId: o.id });
+    await f.facade.confirmPick('acme', o.id, 'pedro');
+    const linea = await f.facade.operatorTimeline('op1', 'pedro');
+    const tipos = linea.map((e: any) => e.type);
+    // Incluye lo que HIZO y lo que le HICIERON: sin la asignación que recibió, su
+    // turno empieza a la mitad y no se ve cuánto esperó antes de arrancar.
+    assert.ok(tipos.includes('ASSIGNED'), 'la tarea que le dieron');
+    assert.ok(tipos.includes('STARTED'), 'cuándo arrancó');
+    assert.ok(tipos.includes('DONE'), 'cuándo terminó');
+    const ordenado = linea.every((e: any, i: number) => i === 0 || linea[i - 1].at <= e.at);
+    assert.ok(ordenado, 'en orden cronológico');
+  });
+
+  await test('eventos: el libro es append-only y no se puede reescribir', async () => {
+    const { f, o } = await escenarioTarea();
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: o.id, sellerId: 'acme', entityRef: o.externalOrderId, operator: 'pedro', by: 'ana', unitsEstimate: 4 });
+    const tarea = (await f.facade.orderTasks('acme', o.id)).find((t: any) => t.type === 'PICK')!;
+    const antes = (await f.facade.taskHistory('op1', tarea.id)).eventos;
+    // El puerto no expone update ni delete: lo único que se puede hacer es agregar.
+    const metodos = Object.getOwnPropertyNames(Object.getPrototypeOf(f.taskEvents));
+    assert.ok(!metodos.includes('update') && !metodos.includes('delete') && !metodos.includes('save'),
+      'el repositorio no ofrece forma de corregir el pasado: ' + metodos.join(','));
+    // Y reenviar un evento ya escrito no lo duplica.
+    await f.taskEvents.append([antes[0]]);
+    assert.equal((await f.facade.taskHistory('op1', tarea.id)).eventos.length, antes.length, 'idempotente por id');
+  });
+
+  await test('actividad: el super admin de plataforma se nombra, no sale como un id crudo', async () => {
+    const f = buildFacade();
+    await seedScan(f.facade);
+    await f.facade.scanInbound('acme', { barcode: 'EAN-1', packCount: 10, locationCode: 'A-01-1-A' } as any);
+    await f.facade.createUser({ id: 'ana', name: 'Ana', email: 'ana@op1.cl', role: UserRole.ADMIN, operationId: 'op1' });
+    // El root de plataforma NO tiene operación: por eso nunca entraba en el roster.
+    const root = await f.facade.createUser({
+      id: '666553a4-4ca6-40dd-83ab-050bf694cec0', name: 'Andrés',
+      email: 'admin@ninjahubs.cl', role: UserRole.PLATFORM_ADMIN, operationId: null as any,
+    });
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-ROOT-1', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 2 }],
+    });
+    // Actúa sobre la bodega, como hace de verdad al revisar una operación.
+    await f.facade.allocateOrder('acme', o.id, root.id);
+
+    const act = await f.facade.userActivity('op1');
+    const mio = act.feed.filter((e: any) => e.actor === root.id);
+    assert.ok(mio.length, 'sus acciones aparecen en el feed');
+    assert.equal(mio[0].actorName, 'Super Administrador Ninja', 'y con nombre, no con el UUID: ' + mio[0].actorName);
+    assert.equal(mio[0].role, 'PLATFORM_ADMIN');
+    // También sale en la productividad y en el filtro, para poder aislar lo que hizo.
+    assert.ok(act.productivity.some((p: any) => p.name === 'Super Administrador Ninja'), 'aparece en la tabla de productividad');
+    assert.ok(act.users.some((u: any) => u.id === root.id && u.name === 'Super Administrador Ninja'), 'y en el filtro de operadores');
+  });
+
+  await test('actividad: un actor que no existe se marca, no se muestra como nombre', async () => {
+    const f = buildFacade();
+    await seedScan(f.facade);
+    await f.facade.scanInbound('acme', { barcode: 'EAN-1', packCount: 10, locationCode: 'A-01-1-A' } as any);
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-GHOST-1', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 1 }],
+    });
+    // Un id que ya no corresponde a ningún usuario (se eliminó, o viene de otra base).
+    await f.facade.allocateOrder('acme', o.id, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    const act = await f.facade.userActivity('op1');
+    const e = act.feed.find((x: any) => x.actor === 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')!;
+    assert.equal(e.actorName, 'Usuario no encontrado (aaaaaaaa…)', 'se nota que falta el usuario: ' + e.actorName);
   });
 
   await test('esquema de Prisma: sintaxis válida (lo que tumbó el despliegue v125)', () => {

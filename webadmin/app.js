@@ -4778,7 +4778,26 @@
 
   var EVN={CREATED:"Creada",UPDATED:"Editada",ALLOCATED:"Reservada",PICKING:"En picking",PICKED:"Pickeada",PACKED:"Empacada",LABELED:"Etiquetada",SHIPPED:"Despachada",CANCELLED:"Cancelada",REACTIVATED:"Reactivada"};
   function fmtDate(s){try{return new Date(s).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});}catch(e){return s;}}
-  function actorName(id){var u=byId(D.users,id);return u?u.name+" ("+u.email+")":(id==="system"?"Sistema":id);}
+  /**
+   * Nombre legible de quien hizo algo.
+   *
+   * `D.users` trae los usuarios de la OPERACIÓN, y el super administrador de
+   * plataforma no pertenece a ninguna: sus acciones caían al id crudo. Un UUID de 36
+   * caracteres en una bitácora no le dice nada a nadie, así que cualquier id que no se
+   * resuelva se acorta y se marca, en vez de parecer un nombre.
+   */
+  function actorName(id){
+    if(!id)return "Sistema";
+    var u=byId(D.users,id);
+    if(u)return u.name+" ("+u.email+")";
+    if(id==="system")return "Sistema";
+    if(id==="copiloto")return "Copiloto IA";
+    if(id==="agente")return "Agente Ninja IA";
+    if(me&&id===me.id)return me.name+(me.email?" ("+me.email+")":"");
+    if(role==='PLATFORM_ADMIN'&&me&&id===me.id)return "Super Administrador Ninja";
+    if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return "Usuario no encontrado ("+id.slice(0,8)+"…)";
+    return id;
+  }
   function openOrder(o){
     if(!o)return;
     $("#dr-title").textContent="Orden "+(o.externalOrderId||o.id.slice(0,8));
@@ -4874,10 +4893,54 @@
       el.classList.remove("muted");
       el.innerHTML=tasks.slice().reverse().map(function(t){
         var who=t.operator?(" · "+actorName(t.operator)):"";
-        return '<div class="kv"><span><b style="font-family:\'IBM Plex Mono\',monospace">'+esc(t.id)+'</b> · '+esc(TASK_TYPE[t.type]||t.type)+who+'</span><b>'+esc(TASK_STATE[t.state]||t.state)+'</b></div>';
+        var hechas=(t.unitsDone||0)>0?(' · '+t.unitsDone+' un'):'';
+        return '<div class="kv"><span><b style="font-family:\'IBM Plex Mono\',monospace">'+esc(t.id)+'</b> · '+esc(TASK_TYPE[t.type]||t.type)+who+hechas+'</span>'
+          +'<span><b>'+esc(TASK_STATE[t.state]||t.state)+'</b>'+(can('master')?' <button class="mini" data-thist="'+esc(t.id)+'">Historia</button>':'')+'</span></div>'
+          +'<div class="thist hidden" data-thist-for="'+esc(t.id)+'"></div>';
       }).join("");
+      $$("#dr-tasks [data-thist]").forEach(function(b){b.addEventListener("click",function(){ verHistoriaTarea(b.getAttribute("data-thist")); });});
     }).catch(function(){var el=$("#dr-tasks");if(el)el.innerHTML='<span class="muted">No se pudieron cargar las tareas.</span>';});
   }
+  /**
+   * La historia de una tarea: quién la tuvo, cuánto esperó y cuánto duró de verdad.
+   *
+   * Los tres tiempos van separados a propósito. Una orden que estuvo 50 minutos en el
+   * sistema pero solo 5 de trabajo no tiene un problema de productividad: tiene un
+   * problema de asignación, y son decisiones distintas. El número único que se mostraba
+   * antes (la diferencia entre estados de la orden) mezclaba las dos y no permitía
+   * distinguirlas.
+   */
+  function verHistoriaTarea(taskId){
+    var caja=document.querySelector('[data-thist-for="'+taskId+'"]'); if(!caja)return;
+    if(!caja.classList.contains('hidden')){ caja.classList.add('hidden'); return; }
+    caja.classList.remove('hidden');
+    caja.innerHTML='<span class="muted">Cargando…</span>';
+    api('/assignments/history?operationId='+encodeURIComponent(op)+'&taskId='+encodeURIComponent(taskId)).then(function(h){
+      var p=h&&h.proyeccion, t=h&&h.tiempos;
+      if(!p){ caja.innerHTML='<span class="muted">Esta tarea es anterior al registro de eventos.</span>'; return; }
+      var dur=function(m){ return m==null?'—':(m<60?(m+' min'):(Math.floor(m/60)+' h '+Math.round(m%60)+' min')); };
+      var EV={CREATED:'creada',ASSIGNED:'asignada',TAKEN:'tomada',REASSIGNED:'reasignada',STARTED:'iniciada',RESUMED:'retomada',PROGRESS:'avance',PAUSED:'pausada',RELEASED:'liberada',DONE:'terminada',CANCELLED:'cancelada'};
+      var filas=(h.eventos||[]).map(function(e){
+        var quien=actorName(e.actor)+(e.subject&&e.subject!==e.actor?(' → '+actorName(e.subject)):'');
+        var det=[]; if(e.units!=null)det.push(e.units+' un'); if(e.sku)det.push(e.sku);
+        if(e.locationId)det.push((locById[e.locationId]||{}).code||e.locationId);
+        if(e.reason)det.push(e.reason);
+        return '<div class="thist-ev"><span class="thist-t">'+esc(fmtDate(e.at))+'</span>'
+          +'<b>'+esc(EV[e.type]||e.type)+'</b> <span class="muted">'+esc(quien)+'</span>'
+          +(det.length?' <span class="muted">· '+esc(det.join(' · '))+'</span>':'')+'</div>';
+      }).join('');
+      caja.innerHTML=''
+        +'<div class="thist-tiempos">'
+        +'<div><span>En cola</span><b>'+dur(t&&t.esperaMin)+'</b></div>'
+        +'<div><span>En bandeja</span><b>'+dur(t&&t.arranqueMin)+'</b></div>'
+        +'<div><span>Ejecución</span><b>'+dur(t&&t.ejecucionMin)+'</b></div>'
+        +'<div><span>Total</span><b>'+dur(t&&t.totalMin)+'</b></div>'
+        +'</div>'
+        +(p.duenos&&p.duenos.length>1?'<p class="muted" style="margin:8px 0 0;font-size:12.5px">Cambió de manos '+p.rebotes+' vez(ces): '+esc(p.duenos.map(actorName).join(' → '))+'</p>':'')
+        +'<div class="thist-log">'+filas+'</div>';
+    }).catch(function(e){ caja.innerHTML='<span class="muted">'+esc(e.message)+'</span>'; });
+  }
+
   function cancelOrder(id){
     var o=byId(D.ord,id)||{};
     // Se calcula desde las reservas de la orden qué está solo comprometido y qué ya

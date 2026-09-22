@@ -41,6 +41,7 @@ import {
   BrandingRepository,
   ConsigneeRepository,
   ApiKeyRepository,
+  TaskEventRepository,
   OpsChannelRepository,
   AiConfigRepository,
   CopilotSettingsRepository,
@@ -86,6 +87,7 @@ import {
   InMemoryBrandingRepository,
   InMemoryConsigneeRepository,
   InMemoryApiKeyRepository,
+  InMemoryTaskEventRepository,
   InMemoryOpsChannelRepository,
   InMemoryAiConfigRepository,
   InMemoryCopilotSettingsRepository,
@@ -151,6 +153,7 @@ export async function createWmsContext(): Promise<WmsContext> {
   let branding: BrandingRepository;
   let consignees: ConsigneeRepository;
   let apiKeys: ApiKeyRepository;
+  let taskEvents: TaskEventRepository;
   let opsChannel: OpsChannelRepository;
   let aiConfig: AiConfigRepository;
   let copilotSettings: CopilotSettingsRepository;
@@ -196,6 +199,7 @@ export async function createWmsContext(): Promise<WmsContext> {
       PrismaBrandingRepository,
       PrismaConsigneeRepository,
       PrismaApiKeyRepository,
+  PrismaTaskEventRepository,
       PrismaOpsChannelRepository,
       PrismaAiConfigRepository,
       PrismaCopilotSettingsRepository,
@@ -250,6 +254,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     branding = new PrismaBrandingRepository(db);
     consignees = new PrismaConsigneeRepository(db);
     apiKeys = new PrismaApiKeyRepository(db);
+    taskEvents = new PrismaTaskEventRepository(db);
     opsChannel = new PrismaOpsChannelRepository(db);
     aiConfig = new PrismaAiConfigRepository(db);
     copilotSettings = new PrismaCopilotSettingsRepository(db);
@@ -294,6 +299,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     branding = new InMemoryBrandingRepository();
     consignees = new InMemoryConsigneeRepository();
     apiKeys = new InMemoryApiKeyRepository();
+    taskEvents = new InMemoryTaskEventRepository();
     opsChannel = new InMemoryOpsChannelRepository();
     aiConfig = new InMemoryAiConfigRepository();
     copilotSettings = new InMemoryCopilotSettingsRepository();
@@ -392,6 +398,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     aiDashboards,
     consignees,
     apiKeys,
+    taskEvents,
   );
 
   // Bootstrap del super-admin de plataforma (Ninja Hubs).

@@ -439,6 +439,16 @@
   .fchip.zero .fcount{opacity:.45}
   /* Destinatarios: cada dirección de destino es un bloque propio dentro del formulario. */
   /* Filtro por cliente de la tabla de órdenes (solo aparece con más de un cliente). */
+  /* Historia de una tarea (libro de eventos): tiempos separados + bitácora. */
+  .thist{margin:2px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
+  .thist-tiempos{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .thist-tiempos>div{display:flex;flex-direction:column;gap:2px}
+  .thist-tiempos span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .thist-tiempos b{font-size:14px}
+  .thist-log{margin-top:10px;border-top:1px dotted var(--line);padding-top:8px;max-height:220px;overflow:auto}
+  .thist-ev{font-size:12.5px;padding:3px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
+  .thist-t{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--muted);white-space:nowrap}
+  @media (max-width:640px){ .thist-tiempos{grid-template-columns:repeat(2,1fr)} }
   .ordcli-f{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);white-space:nowrap}
   .ordcli-f select{padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--text);font-size:13px;max-width:250px}
   .ordcli-n{font-weight:600}

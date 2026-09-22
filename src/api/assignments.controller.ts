@@ -149,9 +149,57 @@ export class AssignmentsController {
   /** El operario inicia una tarea de su bandeja. */
   @Post('start')
   @RequirePermission('stock:read')
-  start(@CurrentUser() user: User | null, @Body() body: { operationId?: string; type: WorkTaskType; entityId: string }) {
+  start(@CurrentUser() user: User | null, @Body() body: { operationId?: string; type: WorkTaskType; entityId: string; clientAt?: string | null }) {
     this.soloPersonal(user);
-    return this.wms.startTask(actorOperation(user, body?.operationId), actorOf(user), { type: body.type, entityId: body.entityId });
+    return this.wms.startTask(actorOperation(user, body?.operationId), actorOf(user), { type: body.type, entityId: body.entityId, clientAt: body?.clientAt ?? null });
+  }
+
+  // ---- Auditoría de ejecución (libro de eventos de tarea) --------------------
+  /**
+   * La historia completa de una tarea, con sus tres tiempos separados: cuánto esperó
+   * en cola, cuánto tardó el operario en arrancarla, y cuánto duró la ejecución.
+   *
+   * Es una vista de supervisión: mirar cuánto se demoró cada persona no es algo que
+   * deba poder hacer cualquiera con acceso de lectura.
+   */
+  @Get('history')
+  @RequirePermission('master:manage')
+  taskHistory(@CurrentUser() user: User | null, @Query('taskId') taskId: string, @Query('operationId') operationId?: string) {
+    return this.wms.taskHistory(actorOperation(user, operationId), taskId);
+  }
+
+  /** La historia de una entidad (una orden y todas sus etapas), etapa por etapa. */
+  @Get('history/entity')
+  @RequirePermission('master:manage')
+  entityHistory(@CurrentUser() user: User | null, @Query('entityId') entityId: string, @Query('stage') stage?: string, @Query('operationId') operationId?: string) {
+    return this.wms.entityHistory(actorOperation(user, operationId), entityId, { stage: stage || null });
+  }
+
+  /**
+   * Qué hizo una persona en una ventana de tiempo.
+   *
+   * Cada uno puede ver la suya; mirar la de otro exige supervisión, igual que la
+   * bandeja ajena. La diferencia importa: esto es un registro minuto a minuto del
+   * turno de alguien, no un contador.
+   */
+  @Get('timeline')
+  @RequirePermission('stock:read')
+  timeline(@CurrentUser() user: User | null, @Query('operator') operator?: string, @Query('from') from?: string, @Query('to') to?: string, @Query('limit') limit?: string, @Query('operationId') operationId?: string) {
+    this.soloPersonal(user);
+    const quien = this.operarioConsultado(user, operator);
+    const n = limit ? parseInt(limit, 10) : undefined;
+    return this.wms.operatorTimeline(actorOperation(user, operationId), quien, { from, to, limit: n && !Number.isNaN(n) ? n : undefined });
+  }
+
+  /** Eventos de tarea en crudo, para auditoría y exportación. */
+  @Get('events')
+  @RequirePermission('master:manage')
+  events(@CurrentUser() user: User | null, @Query('actor') actor?: string, @Query('stage') stage?: string, @Query('type') type?: string, @Query('from') from?: string, @Query('to') to?: string, @Query('limit') limit?: string, @Query('operationId') operationId?: string) {
+    const n = limit ? parseInt(limit, 10) : undefined;
+    return this.wms.taskEventLog(actorOperation(user, operationId), {
+      actor: actor || null, stage: stage || null, type: (type as any) || null,
+      from, to, limit: n && !Number.isNaN(n) ? n : undefined,
+    });
   }
   /** ¿Pueden los operarios tomar tareas disponibles desde la app? (configurable por el admin) */
   @Get('self-pickup')

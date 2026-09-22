@@ -115,7 +115,8 @@ import {
   User,
   ZoneType,
 } from '../domain/types';
-import { AiConfigRepository, AiCredential, AuthTokenRepository, Clock, CopilotSettingsRepository, CountAuditRepository, EmailSender, EventRepository, IdGenerator, LotRepository, PlanConfigRepository, AiAuditRepository, WorkAssignmentRepository, WorkTaskRepository, AgentRuleConfigRepository, AgentAlertRepository, AgentJournalRepository, AgentJournalEntry, CopilotSettings, AiDashboardRepository } from '../domain/ports';
+import { TaskEvent, TaskEventType, proyectarTarea, tiemposDeTarea, TaskProjection } from '../domain/task-event';
+import { AiConfigRepository, AiCredential, AuthTokenRepository, Clock, CopilotSettingsRepository, CountAuditRepository, EmailSender, EventRepository, IdGenerator, LotRepository, PlanConfigRepository, AiAuditRepository, WorkAssignmentRepository, WorkTaskRepository, AgentRuleConfigRepository, AgentAlertRepository, AgentJournalRepository, AgentJournalEntry, CopilotSettings, AiDashboardRepository, TaskEventRepository } from '../domain/ports';
 import { AgentSchedule, EstadoVentana, SCHEDULE_DEFAULT, estadoVentana, normalizarSchedule, resumenSchedule } from '../domain/agent-schedule';
 import { ACTION_POLICIES, decidePolicy, describePolicy, effectiveAgentSettings } from '../domain/agent-policy';
 import { AGENT_RULES, AgentRuleDef, agentRuleDef } from '../domain/agent-rules';
@@ -214,6 +215,12 @@ export class WmsFacade {
     private readonly consignees?: ConsigneeRepository,
     /** Llaves de API para clientes MCP e integraciones (opcional). */
     private readonly apiKeys?: ApiKeyRepository,
+    /**
+     * Libro de eventos de tarea (opcional). Si falta, el sistema funciona igual: las
+     * tareas se siguen registrando en el ledger. Lo que se pierde es la historia —
+     * quién la tuvo antes, cuánto esperó, cuántas veces rebotó.
+     */
+    private readonly taskEvents?: TaskEventRepository,
   ) {}
 
   // ---- Llaves de API y servidor MCP -----------------------------------------
@@ -4229,7 +4236,7 @@ export class WmsFacade {
   }
 
   /** Asigna (o reasigna) una tarea a un operario. Idempotente por (type:entityId). */
-  async assignTask(operationId: string, input: { type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; operator: string; unitsEstimate?: number; by: string; note?: string | null; skipOperatorCheck?: boolean }): Promise<WorkAssignment> {
+  async assignTask(operationId: string, input: { type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; operator: string; unitsEstimate?: number; by: string; note?: string | null; skipOperatorCheck?: boolean; /** El operario se la tomó él mismo del pool (no se la repartieron). */ tomadaPorElMismo?: boolean; motivo?: string | null }): Promise<WorkAssignment> {
     if (!this.assignments) throw new ValidationError('Módulo de asignación no disponible');
     await this.assertFeature(operationId, 'task_assignment', 'La asignación de tareas');
     // Solo se asigna a un operario ACTIVO de la operación. El auto-balanceo ya parte del
@@ -4241,6 +4248,9 @@ export class WmsFacade {
       if (u.active === false) throw new ValidationError(`El operario ${u.name} está inactivo; no se le pueden asignar tareas.`);
     }
     const id = `${input.type}:${input.entityId}`;
+    // Quién la tenía antes, para saber si esto es una primera entrega o un rebote.
+    const previa = await this.assignments.get(id).catch(() => null);
+    const dueñoAnterior = previa && (previa.status === 'assigned' || previa.status === 'in_progress') ? previa.operator : null;
     const a: WorkAssignment = {
       id, operationId, sellerId: input.sellerId ?? null, type: input.type, entityId: input.entityId,
       entityRef: input.entityRef ?? null, operator: input.operator, status: 'assigned',
@@ -4249,13 +4259,30 @@ export class WmsFacade {
     };
     await this.assignments.save(a);
     this.prioritiesAt.delete(operationId); // la bandeja se reordena en la próxima lectura
+    // Tres cosas distintas que antes se guardaban igual y se pisaban entre sí:
+    // que un supervisor reparta, que un operario tome del pool, y que la tarea cambie
+    // de manos. Una tarea que rebotó tres veces es una señal operativa, no ruido.
+    {
+      const info = await this.taskIdDe(operationId, input.type as WorkTaskStage, input.entityId);
+      const tipo: TaskEventType = dueñoAnterior && dueñoAnterior !== input.operator
+        ? 'REASSIGNED'
+        : (input.tomadaPorElMismo ? 'TAKEN' : 'ASSIGNED');
+      await this.emitTaskEvent(operationId, {
+        type: tipo, stage: input.type as WorkTaskStage, entityId: input.entityId,
+        entityRef: input.entityRef ?? info.entityRef, taskId: info.id, assignmentId: id,
+        sellerId: input.sellerId ?? info.sellerId,
+        actor: input.by, subject: input.operator,
+        units: Math.max(0, Math.round(input.unitsEstimate || 0)) || null,
+        reason: input.motivo ?? (dueñoAnterior && dueñoAnterior !== input.operator ? `venía de ${dueñoAnterior}` : null),
+      });
+    }
     // Ledger: vincula la asignación con la tarea abierta de esa etapa; si no existe
     // (ej. PUTAWAY/COUNT/RESLOT sin tarea pre-creada), la crea en estado 'assigned'.
     if (this.taskLedger) {
       const stage = input.type as WorkTaskStage;
       const existing = await this.taskLedger.findOpen(operationId, stage, input.entityId).catch(() => null);
       if (existing) {
-        await this.advanceTask(operationId, stage, input.entityId, { state: 'assigned', assignmentId: id, operator: input.operator, by: input.by });
+        await this.advanceTask(operationId, stage, input.entityId, { state: 'assigned', assignmentId: id, operator: input.operator, by: input.by, evento: null });
       } else {
         const orderId = (stage === 'PICK' || stage === 'PACK' || stage === 'SHIP') ? input.entityId : null;
         const t = await this.openTask(operationId, { type: stage, sellerId: input.sellerId ?? null, orderId, orderRef: orderId ? (input.entityRef ?? null) : null, entityId: input.entityId, entityRef: input.entityRef ?? null, unitsEstimate: input.unitsEstimate, by: input.by, state: 'assigned', note: input.note ?? null });
@@ -4266,11 +4293,20 @@ export class WmsFacade {
   }
 
   /** Libera una asignación (vuelve al pool sin asignatario). */
-  async releaseAssignment(operationId: string, entityId: string, type: WorkTaskType, by: string): Promise<{ ok: boolean }> {
+  async releaseAssignment(operationId: string, entityId: string, type: WorkTaskType, by: string, motivo?: string | null): Promise<{ ok: boolean }> {
     if (!this.assignments) return { ok: false };
     const a = await this.assignments.get(`${type}:${entityId}`);
     if (!a || a.operationId !== operationId) return { ok: false };
+    // La fila reusa `completedAt` para marcar la liberación —una tarea liberada no se
+    // completó nunca— y ese detalle se vuelve indistinguible al leerla. El evento sí
+    // distingue: RELEASED no es DONE.
     await this.assignments.save({ ...a, status: 'released', completedBy: by, completedAt: this.clockNow() });
+    const info = await this.taskIdDe(operationId, type as WorkTaskStage, entityId);
+    await this.emitTaskEvent(operationId, {
+      type: 'RELEASED', stage: type as WorkTaskStage, entityId, entityRef: a.entityRef ?? info.entityRef,
+      taskId: info.id, assignmentId: a.id, sellerId: a.sellerId ?? info.sellerId,
+      actor: by, subject: a.operator, reason: motivo ?? null,
+    });
     return { ok: true };
   }
 
@@ -5281,7 +5317,7 @@ export class WmsFacade {
     const pool = await this.getTaskPool(operationId, input.type, { limit: 5000 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
     const item = pool.find((p) => p.entityId === input.entityId);
     if (!item) throw new NotFoundError('La tarea ya no está disponible.');
-    const a = await this.assignTask(operationId, { type: input.type, entityId: item.entityId, entityRef: item.entityRef, sellerId: item.sellerId, operator, unitsEstimate: item.unidades, by: operator, note: (item as any).note || 'tomada desde la app', skipOperatorCheck: true });
+    const a = await this.assignTask(operationId, { type: input.type, entityId: item.entityId, entityRef: item.entityRef, sellerId: item.sellerId, operator, unitsEstimate: item.unidades, by: operator, note: (item as any).note || 'tomada desde la app', skipOperatorCheck: true, tomadaPorElMismo: true });
     return a;
   }
   /**
@@ -5302,7 +5338,7 @@ export class WmsFacade {
     if (u.active === false) throw new ForbiddenError('Tu cuenta está inactiva; pide que la reactiven antes de tomar tareas.');
   }
   /** El operario INICIA una tarea de su bandeja: pasa a in_progress en el ledger (y en la asignación). */
-  async startTask(operationId: string, operator: string, input: { type: WorkTaskType; entityId: string }): Promise<{ ok: true; assignment: WorkAssignment | null }> {
+  async startTask(operationId: string, operator: string, input: { type: WorkTaskType; entityId: string; /** Hora del aparato del operario, si la app la manda. */ clientAt?: string | null }): Promise<{ ok: true; assignment: WorkAssignment | null }> {
     if (!this.assignments) return { ok: true, assignment: null };
     const a = await this.assignments.get(`${input.type}:${input.entityId}`);
     if (a && a.operator !== operator && (await this.getAssignmentMode(operationId)) === 'strict') throw new ForbiddenError('Tarea asignada a otro operario (modo estricto).');
@@ -5310,8 +5346,19 @@ export class WmsFacade {
     // que ya había empezado, la marca original manda. Si no, un reingreso borraría
     // justamente el rato que se quiere medir.
     const startedAt = a && a.startedAt ? a.startedAt : this.clockNow();
+    const yaHabiaEmpezado = !!(a && a.startedAt);
     if (a && (a.status === 'assigned')) await this.assignments.save({ ...a, status: 'in_progress', startedAt });
-    await this.advanceTask(operationId, input.type as WorkTaskStage, input.entityId, { state: 'in_progress', operator, assignmentId: a ? a.id : undefined });
+    // Un reingreso a una tarea ya empezada no es un STARTED nuevo: es volver a ella.
+    // Distinguirlo importa porque STARTED marca el fin del tiempo en cola, y repetirlo
+    // haría parecer que la tarea arrancó recién cada vez que el operario la abre.
+    await this.advanceTask(operationId, input.type as WorkTaskStage, input.entityId, { state: 'in_progress', operator, assignmentId: a ? a.id : undefined, evento: null });
+    const info = await this.taskIdDe(operationId, input.type as WorkTaskStage, input.entityId);
+    await this.emitTaskEvent(operationId, {
+      type: yaHabiaEmpezado ? 'RESUMED' : 'STARTED', stage: input.type as WorkTaskStage,
+      entityId: input.entityId, entityRef: info.entityRef, taskId: info.id,
+      assignmentId: a ? a.id : null, sellerId: (a && a.sellerId) ?? info.sellerId,
+      actor: operator, clientAt: input.clientAt ?? null,
+    });
     return { ok: true, assignment: a ? { ...a, status: 'in_progress', startedAt } : null };
   }
 
@@ -5436,6 +5483,55 @@ export class WmsFacade {
     }
   }
 
+  // ---- Libro de eventos de tarea (append-only) ------------------------------
+  /**
+   * Escribe una transición en el libro de eventos.
+   *
+   * Best-effort a propósito: si el libro falla, la operación de bodega NO se cae. Un
+   * problema de auditoría no puede impedir que un operario despache un pedido. Lo que
+   * se pierde en ese caso es una fila de historia, no el trabajo.
+   */
+  private async emitTaskEvent(operationId: string, input: {
+    type: TaskEventType; stage: WorkTaskStage; entityId: string; entityRef?: string | null;
+    taskId?: string | null; assignmentId?: string | null; sellerId?: string | null;
+    actor?: string | null; subject?: string | null; clientAt?: string | null;
+    units?: number | null; lines?: number | null; locationId?: string | null; sku?: string | null; reason?: string | null;
+  }): Promise<void> {
+    if (!this.taskEvents) return;
+    try {
+      const e: TaskEvent = {
+        id: `te-${this.ids.next()}`,
+        operationId,
+        sellerId: input.sellerId ?? null,
+        taskId: input.taskId ?? null,
+        assignmentId: input.assignmentId ?? null,
+        stage: String(input.stage),
+        entityId: input.entityId,
+        entityRef: input.entityRef ?? null,
+        type: input.type,
+        at: this.clockNow(),
+        clientAt: input.clientAt ?? null,
+        actor: input.actor || 'system',
+        subject: input.subject ?? null,
+        units: input.units ?? null,
+        lines: input.lines ?? null,
+        locationId: input.locationId ?? null,
+        sku: input.sku ?? null,
+        reason: input.reason ?? null,
+      };
+      await this.taskEvents.append([e]);
+    } catch { /* la auditoría nunca bloquea la operación */ }
+  }
+
+  /** La tarea abierta de una etapa/entidad, solo para colgarle el id al evento. */
+  private async taskIdDe(operationId: string, stage: WorkTaskStage, entityId: string): Promise<{ id: string | null; sellerId: string | null; entityRef: string | null }> {
+    if (!this.taskLedger) return { id: null, sellerId: null, entityRef: null };
+    try {
+      const t = await this.taskLedger.findOpen(operationId, stage, entityId);
+      return t ? { id: t.id, sellerId: t.sellerId, entityRef: t.entityRef } : { id: null, sellerId: null, entityRef: null };
+    } catch { return { id: null, sellerId: null, entityRef: null }; }
+  }
+
   // ---- Registro de tareas (task ledger) -------------------------------------
   /** Abre (o reutiliza) una tarea del ledger para una etapa/entidad. Best-effort. */
   private async openTask(operationId: string, input: { type: WorkTaskStage; sellerId?: string | null; orderId?: string | null; orderRef?: string | null; entityId: string; entityRef?: string | null; unitsEstimate?: number; by: string; state?: WorkTaskState; note?: string | null }): Promise<WorkTask | null> {
@@ -5443,18 +5539,27 @@ export class WmsFacade {
     try {
       const existing = await this.taskLedger.findOpen(operationId, input.type, input.entityId);
       if (existing) return existing;
-      return await this.taskLedger.create({
+      const t = await this.taskLedger.create({
         operationId, sellerId: input.sellerId ?? null, type: input.type,
         orderId: input.orderId ?? null, orderRef: input.orderRef ?? null,
         entityId: input.entityId, entityRef: input.entityRef ?? null,
         state: input.state ?? 'pending', unitsEstimate: Math.max(0, Math.round(input.unitsEstimate || 0)),
+        unitsDone: 0,
         assignmentId: null, operator: null, createdAt: this.clockNow(), createdBy: input.by,
         startedAt: null, completedAt: null, completedBy: null, note: input.note ?? null,
       });
+      // El nacimiento de la tarea es el punto cero del tiempo en cola: sin este evento
+      // no hay contra qué medir cuánto esperó antes de que alguien la tomara.
+      await this.emitTaskEvent(operationId, {
+        type: 'CREATED', stage: input.type, entityId: input.entityId, entityRef: input.entityRef ?? null,
+        taskId: t.id, sellerId: input.sellerId ?? null, actor: input.by,
+        units: Math.max(0, Math.round(input.unitsEstimate || 0)) || null,
+      });
+      return t;
     } catch { return null; }
   }
   /** Avanza el estado de la tarea abierta de una etapa/entidad (best-effort). */
-  private async advanceTask(operationId: string, type: WorkTaskStage, entityId: string, patch: { state: WorkTaskState; by?: string; assignmentId?: string | null; operator?: string | null }): Promise<void> {
+  private async advanceTask(operationId: string, type: WorkTaskStage, entityId: string, patch: { state: WorkTaskState; by?: string; assignmentId?: string | null; operator?: string | null; unitsDone?: number; /** `null` = no emitir (quien llama ya emitió uno más rico). */ evento?: TaskEventType | null }): Promise<void> {
     if (!this.taskLedger) return;
     try {
       const t = await this.taskLedger.findOpen(operationId, type, entityId);
@@ -5463,9 +5568,30 @@ export class WmsFacade {
       const next: WorkTask = { ...t, state: patch.state };
       if (patch.assignmentId !== undefined) next.assignmentId = patch.assignmentId;
       if (patch.operator !== undefined) next.operator = patch.operator;
+      if (patch.unitsDone != null) next.unitsDone = Math.max(0, Math.round(patch.unitsDone));
+      // Solo la PRIMERA vez: un reingreso no puede borrar el rato que ya llevaba.
       if (patch.state === 'in_progress' && !next.startedAt) next.startedAt = now;
       if (patch.state === 'done' || patch.state === 'cancelled') { next.completedAt = now; next.completedBy = patch.by ?? next.operator ?? 'system'; }
+      const cambioDeEstado = t.state !== next.state;
       await this.taskLedger.update(next);
+      // La fila de arriba se sobrescribe; esta línea es la que queda para siempre.
+      if (patch.evento !== null) {
+        const tipo: TaskEventType | null = patch.evento
+          ?? (patch.state === 'in_progress' && cambioDeEstado ? 'STARTED'
+            : patch.state === 'done' ? 'DONE'
+            : patch.state === 'cancelled' ? 'CANCELLED'
+            : patch.state === 'assigned' && cambioDeEstado ? 'ASSIGNED'
+            : null);
+        if (tipo) {
+          await this.emitTaskEvent(operationId, {
+            type: tipo, stage: type, entityId, entityRef: t.entityRef, taskId: t.id,
+            assignmentId: next.assignmentId, sellerId: t.sellerId,
+            actor: patch.by || next.operator || 'system',
+            subject: tipo === 'ASSIGNED' ? (patch.operator ?? next.operator ?? null) : null,
+            units: tipo === 'DONE' ? (next.unitsDone || next.unitsEstimate || null) : null,
+          });
+        }
+      }
     } catch { /* best-effort */ }
   }
   /** Registra una tarea instantánea ya completada (ej. la reserva de stock). */
@@ -5488,6 +5614,68 @@ export class WmsFacade {
       if (hit) oid = hit.id;
     }
     return this.taskLedger.listByOrder(opId, oid);
+  }
+
+  // ---- Auditoría fina: las preguntas que el libro de eventos hace responsables ----
+  /**
+   * La historia completa de una tarea: quién la tuvo, cuándo, cuánto estuvo en cada
+   * estado y cuántas veces rebotó.
+   *
+   * Los tres tiempos que devuelve responden lo que antes no se podía distinguir:
+   * si una orden se atrasó ESPERANDO que alguien la tomara o EJECUTÁNDOSE lento. El
+   * cálculo anterior (`tiempos_preparacion`) medía la diferencia entre eventos de la
+   * orden y llamaba a eso "tiempo de preparación": una orden que esperó seis horas en
+   * cola y se pickeó en cuatro minutos reportaba 6,07 h de picking.
+   */
+  async taskHistory(operationId: string, taskId: string): Promise<{ proyeccion: TaskProjection | null; tiempos: ReturnType<typeof tiemposDeTarea> | null; eventos: TaskEvent[] }> {
+    if (!this.taskEvents) return { proyeccion: null, tiempos: null, eventos: [] };
+    const eventos = await this.taskEvents.listByTask(operationId, taskId);
+    const proyeccion = proyectarTarea(eventos);
+    return { proyeccion, tiempos: proyeccion ? tiemposDeTarea(proyeccion) : null, eventos };
+  }
+
+  /** Lo mismo para una entidad (una orden y todas sus etapas, o un sku@ubicación). */
+  async entityHistory(operationId: string, entityId: string, opts?: { stage?: string | null }): Promise<Array<{ stage: string; proyeccion: TaskProjection; tiempos: ReturnType<typeof tiemposDeTarea> }>> {
+    if (!this.taskEvents) return [];
+    const eventos = await this.taskEvents.listByEntity(operationId, entityId, opts);
+    // Una entidad pasa por varias etapas (PICK, PACK, SHIP) y cada una es su propia
+    // tarea: se agrupan por etapa para no mezclar sus tiempos.
+    const porEtapa = new Map<string, TaskEvent[]>();
+    for (const e of eventos) {
+      const a = porEtapa.get(e.stage) || [];
+      a.push(e);
+      porEtapa.set(e.stage, a);
+    }
+    const out: Array<{ stage: string; proyeccion: TaskProjection; tiempos: ReturnType<typeof tiemposDeTarea> }> = [];
+    for (const [stage, evs] of porEtapa) {
+      const p = proyectarTarea(evs);
+      if (p) out.push({ stage, proyeccion: p, tiempos: tiemposDeTarea(p) });
+    }
+    return out;
+  }
+
+  /**
+   * Qué hizo una persona en una ventana: la pregunta 5 de la auditoría fina.
+   * Devuelve los eventos crudos, en orden, con ubicación y cantidad donde aplique.
+   */
+  async operatorTimeline(operationId: string, operator: string, opts?: { from?: string; to?: string; limit?: number }): Promise<TaskEvent[]> {
+    if (!this.taskEvents) return [];
+    // Lo que hizo él (actor) y lo que le hicieron a él (subject: se la asignaron,
+    // se la quitaron). Las dos mitades hacen falta para entender su turno.
+    const [hechos, recibidos] = await Promise.all([
+      this.taskEvents.query(operationId, { actor: operator, from: opts?.from, to: opts?.to, limit: opts?.limit }),
+      this.taskEvents.query(operationId, { subject: operator, from: opts?.from, to: opts?.to, limit: opts?.limit }),
+    ]);
+    const vistos = new Set<string>();
+    return [...hechos, ...recibidos]
+      .filter((e) => (vistos.has(e.id) ? false : (vistos.add(e.id), true)))
+      .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  }
+
+  /** Eventos de tarea en crudo (auditoría), filtrables. */
+  async taskEventLog(operationId: string, opts?: { actor?: string | null; stage?: string | null; type?: TaskEventType | null; from?: string; to?: string; limit?: number }): Promise<TaskEvent[]> {
+    if (!this.taskEvents) return [];
+    return this.taskEvents.query(operationId, { ...opts, limit: opts?.limit ?? 500 });
   }
 
   /** Historial de tareas del ledger (panel/auditoría), filtrable por tipo/estado/cliente. */
@@ -5999,13 +6187,38 @@ export class WmsFacade {
     for (const u of roster) nameOf.set(u.id, { name: u.name, role: String(u.role) });
     // Alias comunes por email (algunos actores históricos se guardaron como email).
     for (const u of roster) if (u.email) nameOf.set(u.email.toLowerCase(), { name: u.name, role: String(u.role) });
+
+    // El super administrador de plataforma NO pertenece a ninguna operación
+    // (operationId null), así que nunca entraba en el roster: cuando tocaba algo,
+    // el panel mostraba su id crudo en vez de un nombre. Actúa sobre todas las
+    // operaciones, así que tiene que poder nombrarse en todas.
+    //
+    // Se muestra con un rótulo genérico y no con su nombre propio: al administrador
+    // de una operación le importa saber que intervino la plataforma, no qué persona
+    // de Ninja Hubs fue. Si hubiera más de uno, se desambigua para que dos filas
+    // distintas no se vean iguales.
+    const plataforma = (await this.listUsers(null).catch(() => [] as User[]))
+      .filter((u) => String(u.role) === UserRole.PLATFORM_ADMIN);
+    const ROTULO_PLATAFORMA = 'Super Administrador Ninja';
+    for (const u of plataforma) {
+      const etiqueta = plataforma.length > 1 ? `${ROTULO_PLATAFORMA} · ${u.name}` : ROTULO_PLATAFORMA;
+      const entrada = { name: etiqueta, role: String(u.role) };
+      if (!nameOf.has(u.id)) nameOf.set(u.id, entrada);
+      if (u.email && !nameOf.has(u.email.toLowerCase())) nameOf.set(u.email.toLowerCase(), entrada);
+    }
+
     const resolveActor = (a: string | null | undefined): { id: string; name: string; role: string } => {
       const key = (a || 'system').toString();
       const hit = nameOf.get(key) || nameOf.get(key.toLowerCase());
       if (hit) return { id: key, name: hit.name, role: hit.role };
       if (key === 'system') return { id: 'system', name: 'Sistema', role: 'SYSTEM' };
       if (key === 'copiloto') return { id: 'copiloto', name: 'Copiloto IA', role: 'AI' };
-      return { id: key, name: key, role: '' };
+      if (key === 'agente') return { id: 'agente', name: 'Agente Ninja IA', role: 'AI' };
+      // Un id que no se pudo resolver: mostrarlo entero no le dice nada a nadie.
+      // Se acorta y se marca como no encontrado, para que se note que falta el
+      // usuario en vez de parecer un nombre raro.
+      const esUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key);
+      return { id: key, name: esUuid ? `Usuario no encontrado (${key.slice(0, 8)}…)` : key, role: '' };
     };
 
     // Mapa ubicaciones → código legible.
@@ -6108,7 +6321,12 @@ export class WmsFacade {
 
     return {
       window: { fromIso: from != null ? new Date(from).toISOString() : null, toIso: to != null ? new Date(to).toISOString() : null },
-      users: roster.map((u) => ({ id: u.id, name: u.name, role: String(u.role) })),
+      // El filtro incluye a la plataforma: si intervino en esta bodega, se tiene que
+      // poder aislar lo que hizo, igual que con cualquier otro actor.
+      users: [
+        ...roster.map((u) => ({ id: u.id, name: u.name, role: String(u.role) })),
+        ...plataforma.map((u) => ({ id: u.id, name: (nameOf.get(u.id) || { name: u.name }).name, role: String(u.role) })),
+      ],
       productivity,
       feed: feed.slice(0, limit),
       totalEvents,
@@ -6427,13 +6645,15 @@ export class WmsFacade {
     const order = await this.orders.confirmPick(sellerId, orderId, actor);
     this.fireOrderWebhook(sellerId, order); // order.picked (o en picking según estado)
     if (opId) {
+      // Lo REALMENTE recolectado, que es lo que la tarea debe registrar como hecho.
+      const hechas = (order.lines || []).reduce((s, l) => s + (l.allocations || []).reduce((x, a) => x + (a.pickedQty ?? 0), 0), 0);
       await this.completeAssignments('PICK', [orderId], actor || 'system'); await this.continuousHook(opId, 'PICK', null);
       // Ledger: PICK completo → cierra PICK y abre PACK.
       if (order.status === OrderStatus.PICKED) {
-        await this.advanceTask(opId, 'PICK', order.id, { state: 'done', by: actor || 'system' });
+        await this.advanceTask(opId, 'PICK', order.id, { state: 'done', by: actor || 'system', unitsDone: hechas });
         await this.openTask(opId, { type: 'PACK', sellerId, orderId: order.id, orderRef: order.externalOrderId || order.id, entityId: order.id, entityRef: order.externalOrderId || order.id, unitsEstimate: (order.lines || []).reduce((s, l) => s + l.qty, 0), by: actor || 'system' });
       } else {
-        await this.advanceTask(opId, 'PICK', order.id, { state: 'in_progress', by: actor || 'system' });
+        await this.advanceTask(opId, 'PICK', order.id, { state: 'in_progress', by: actor || 'system', unitsDone: hechas });
       }
     }
     return order;
@@ -6464,12 +6684,24 @@ export class WmsFacade {
     // PICK cuando la orden queda PICKED y abre la tarea PACK. Antes solo lo hacía confirmPick,
     // por lo que la tarea seguía apareciendo en "Mis tareas" tras terminar el picking.
     if (opId) {
+      // Cada ubicación confirmada deja su propio evento, con hora, sku, ubicación y
+      // cantidad. Antes el detalle intermedio vivía repartido entre un contador sin
+      // hora (`allocation.pickedQty`) y el ledger de stock: no había forma de saber en
+      // qué orden recorrió los pasillos ni cuánto le costó cada uno.
+      const unidades = input.qty != null ? input.qty : null;
+      const infoPick = await this.taskIdDe(opId, 'PICK', order.id);
+      const hechas = (order.lines || []).reduce((s, l) => s + (l.allocations || []).reduce((x, a) => x + (a.pickedQty ?? 0), 0), 0);
+      await this.emitTaskEvent(opId, {
+        type: 'PROGRESS', stage: 'PICK', entityId: order.id, entityRef: order.externalOrderId || order.id,
+        taskId: infoPick.id, sellerId, actor: actor || 'system',
+        units: unidades, locationId: input.locationId, sku: input.sku, lines: 1,
+      });
       if (order.status === OrderStatus.PICKED) {
         await this.completeAssignments('PICK', [orderId], actor || 'system'); await this.continuousHook(opId, 'PICK', null);
-        await this.advanceTask(opId, 'PICK', order.id, { state: 'done', by: actor || 'system' });
+        await this.advanceTask(opId, 'PICK', order.id, { state: 'done', by: actor || 'system', unitsDone: hechas });
         await this.openTask(opId, { type: 'PACK', sellerId, orderId: order.id, orderRef: order.externalOrderId || order.id, entityId: order.id, entityRef: order.externalOrderId || order.id, unitsEstimate: (order.lines || []).reduce((s, l) => s + l.qty, 0), by: actor || 'system' });
       } else {
-        await this.advanceTask(opId, 'PICK', order.id, { state: 'in_progress', by: actor || 'system' });
+        await this.advanceTask(opId, 'PICK', order.id, { state: 'in_progress', by: actor || 'system', unitsDone: hechas });
       }
     }
     return order;

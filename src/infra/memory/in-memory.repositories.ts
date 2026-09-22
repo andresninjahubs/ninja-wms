@@ -19,6 +19,7 @@ import {
   AiAuditRepository,
   WorkAssignmentRepository,
   WorkTaskRepository,
+  TaskEventRepository,
   AgentRuleConfigRepository,
   AgentAlertRepository,
   PlanConfigRepository,
@@ -57,6 +58,7 @@ import {
   UserRepository,
   WebhookRepository,
 } from '../../domain/ports';
+import type { TaskEvent, TaskEventType } from '../../domain/task-event';
 import {
   Announcement,
   AnnouncementClick,
@@ -697,6 +699,42 @@ export class InMemoryWorkAssignmentRepository implements WorkAssignmentRepositor
       .sort((a, b) => (a.assignedAt < b.assignedAt ? 1 : -1));
     if (opts?.limit) out = out.slice(0, opts.limit);
     return out.map((a) => ({ ...a }));
+  }
+}
+
+/**
+ * Libro de eventos de tarea en memoria. Append-only de verdad: no hay forma de
+ * modificar ni borrar una fila una vez escrita, igual que en la versión Prisma.
+ */
+export class InMemoryTaskEventRepository implements TaskEventRepository {
+  private store: TaskEvent[] = [];
+  async append(events: TaskEvent[]): Promise<void> {
+    for (const e of events) {
+      // Idempotente por id: reintentar un envío no duplica la historia.
+      if (this.store.some((x) => x.id === e.id)) continue;
+      this.store.push({ ...e });
+    }
+  }
+  private orden(a: TaskEvent, b: TaskEvent) { return a.at < b.at ? -1 : a.at > b.at ? 1 : 0; }
+  async listByTask(operationId: string, taskId: string): Promise<TaskEvent[]> {
+    return this.store.filter((e) => e.operationId === operationId && e.taskId === taskId).sort(this.orden).map((e) => ({ ...e }));
+  }
+  async listByEntity(operationId: string, entityId: string, opts?: { stage?: string | null }): Promise<TaskEvent[]> {
+    return this.store
+      .filter((e) => e.operationId === operationId && e.entityId === entityId && (!opts?.stage || e.stage === opts.stage))
+      .sort(this.orden).map((e) => ({ ...e }));
+  }
+  async query(operationId: string, opts?: { actor?: string | null; subject?: string | null; stage?: string | null; type?: TaskEventType | null; from?: string; to?: string; limit?: number }): Promise<TaskEvent[]> {
+    let out = this.store.filter((e) => e.operationId === operationId
+      && (!opts?.actor || e.actor === opts.actor)
+      && (!opts?.subject || e.subject === opts.subject)
+      && (!opts?.stage || e.stage === opts.stage)
+      && (!opts?.type || e.type === opts.type)
+      && (!opts?.from || e.at >= opts.from)
+      && (!opts?.to || e.at <= opts.to))
+      .sort(this.orden);
+    if (opts?.limit) out = out.slice(-opts.limit);
+    return out.map((e) => ({ ...e }));
   }
 }
 

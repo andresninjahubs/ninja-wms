@@ -4,6 +4,7 @@
  */
 import type { Consignee } from './consignee';
 import type { ApiKey } from './api-key';
+import type { TaskEvent, TaskEventType } from './task-event';
 import type { AgentSchedule } from './agent-schedule';
 import { AiDashboard } from './ai-dashboard';
 import {
@@ -185,6 +186,20 @@ export interface WorkTaskRepository {
   findOpen(operationId: string, type: WorkTaskStage, entityId: string): Promise<WorkTask | null>;
   /** Historial general filtrable (paneles/auditoría). */
   list(operationId: string, opts?: { type?: WorkTaskStage; state?: WorkTaskState; sellerId?: string | null; limit?: number }): Promise<WorkTask[]>;
+}
+
+/**
+ * Libro de eventos de tarea (append-only). Nunca actualiza ni borra: por eso no hay
+ * `save` ni `update` en este puerto. Lo que entra, queda.
+ */
+export interface TaskEventRepository {
+  append(events: TaskEvent[]): Promise<void>;
+  /** La historia completa de una tarea, más antigua primero. */
+  listByTask(operationId: string, taskId: string): Promise<TaskEvent[]>;
+  /** La historia de una entidad (una orden, un sku@ubicación) a través de sus etapas. */
+  listByEntity(operationId: string, entityId: string, opts?: { stage?: string | null }): Promise<TaskEvent[]>;
+  /** Consulta general: qué pasó, quién lo hizo y cuándo, dentro de una ventana. */
+  query(operationId: string, opts?: { actor?: string | null; subject?: string | null; stage?: string | null; type?: TaskEventType | null; from?: string; to?: string; limit?: number }): Promise<TaskEvent[]>;
 }
 
 /** Configuración por operación de las reglas del agente proactivo. */

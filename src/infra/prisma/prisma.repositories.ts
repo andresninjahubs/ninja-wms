@@ -8,6 +8,7 @@ type PrismaClient = any;
 import { AiDashboard } from '../../domain/ai-dashboard';
 import type { Consignee } from '../../domain/consignee';
 import type { ApiKey, ApiKeyScope } from '../../domain/api-key';
+import type { TaskEvent, TaskEventType } from '../../domain/task-event';
 import {
   LocationRepository,
   LoginEventRepository,
@@ -48,6 +49,7 @@ import {
   AiAuditRepository,
   WorkAssignmentRepository,
   WorkTaskRepository,
+  TaskEventRepository,
   AgentRuleConfigRepository,
   AgentAlertRepository,
   AgentJournalRepository,
@@ -1186,6 +1188,58 @@ export class PrismaWorkAssignmentRepository implements WorkAssignmentRepository 
   }
 }
 
+/**
+ * Libro de eventos de tarea. Solo escribe y lee: no expone update ni delete, porque
+ * un registro que se puede corregir sin dejar rastro no es una auditoría.
+ */
+export class PrismaTaskEventRepository implements TaskEventRepository {
+  constructor(private readonly db: PrismaClient) {}
+  private get t(): any { return (this.db as any).taskEvent; }
+  private toDomain(r: any): TaskEvent {
+    return {
+      id: r.id, operationId: r.operationId, sellerId: r.sellerId ?? null,
+      taskId: r.taskId ?? null, assignmentId: r.assignmentId ?? null,
+      stage: r.stage, entityId: r.entityId, entityRef: r.entityRef ?? null,
+      type: r.type as TaskEventType, at: (r.at as Date).toISOString(),
+      clientAt: r.clientAt ? (r.clientAt as Date).toISOString() : null,
+      actor: r.actor, subject: r.subject ?? null,
+      units: r.units ?? null, lines: r.lines ?? null,
+      locationId: r.locationId ?? null, sku: r.sku ?? null, reason: r.reason ?? null,
+    };
+  }
+  async append(events: TaskEvent[]): Promise<void> {
+    if (!events.length) return;
+    await this.t.createMany({
+      data: events.map((e) => ({
+        id: e.id, operationId: e.operationId, sellerId: e.sellerId, taskId: e.taskId,
+        assignmentId: e.assignmentId, stage: e.stage, entityId: e.entityId, entityRef: e.entityRef,
+        type: e.type, at: new Date(e.at), clientAt: e.clientAt ? new Date(e.clientAt) : null,
+        actor: e.actor, subject: e.subject, units: e.units, lines: e.lines,
+        locationId: e.locationId, sku: e.sku, reason: e.reason,
+      })),
+      skipDuplicates: true, // idempotente por id: un reintento no duplica la historia
+    });
+  }
+  async listByTask(operationId: string, taskId: string): Promise<TaskEvent[]> {
+    const rows = await this.t.findMany({ where: { operationId, taskId }, orderBy: { at: 'asc' } });
+    return rows.map((r: any) => this.toDomain(r));
+  }
+  async listByEntity(operationId: string, entityId: string, opts?: { stage?: string | null }): Promise<TaskEvent[]> {
+    const rows = await this.t.findMany({ where: { operationId, entityId, ...(opts?.stage ? { stage: opts.stage } : {}) }, orderBy: { at: 'asc' } });
+    return rows.map((r: any) => this.toDomain(r));
+  }
+  async query(operationId: string, opts?: { actor?: string | null; subject?: string | null; stage?: string | null; type?: TaskEventType | null; from?: string; to?: string; limit?: number }): Promise<TaskEvent[]> {
+    const where: any = { operationId };
+    if (opts?.actor) where.actor = opts.actor;
+    if (opts?.subject) where.subject = opts.subject;
+    if (opts?.stage) where.stage = opts.stage;
+    if (opts?.type) where.type = opts.type;
+    if (opts?.from || opts?.to) where.at = { ...(opts?.from ? { gte: new Date(opts.from) } : {}), ...(opts?.to ? { lte: new Date(opts.to) } : {}) };
+    const rows = await this.t.findMany({ where, orderBy: { at: 'asc' }, ...(opts?.limit ? { take: opts.limit } : {}) });
+    return rows.map((r: any) => this.toDomain(r));
+  }
+}
+
 export class PrismaWorkTaskRepository implements WorkTaskRepository {
   constructor(private readonly db: PrismaClient) {}
   private get t(): any { return (this.db as any).workTask; }
@@ -1193,7 +1247,7 @@ export class PrismaWorkTaskRepository implements WorkTaskRepository {
     return {
       id: `t-${r.seq}`, operationId: r.operationId, sellerId: r.sellerId ?? null, type: r.type as WorkTaskStage,
       orderId: r.orderId ?? null, orderRef: r.orderRef ?? null, entityId: r.entityId, entityRef: r.entityRef ?? null,
-      state: r.state as WorkTaskState, unitsEstimate: r.unitsEstimate, assignmentId: r.assignmentId ?? null, operator: r.operator ?? null,
+      state: r.state as WorkTaskState, unitsEstimate: r.unitsEstimate, unitsDone: r.unitsDone ?? 0, assignmentId: r.assignmentId ?? null, operator: r.operator ?? null,
       createdAt: (r.createdAt as Date).toISOString(), createdBy: r.createdBy,
       startedAt: r.startedAt ? (r.startedAt as Date).toISOString() : null,
       completedAt: r.completedAt ? (r.completedAt as Date).toISOString() : null, completedBy: r.completedBy ?? null, note: r.note ?? null,
@@ -1202,7 +1256,7 @@ export class PrismaWorkTaskRepository implements WorkTaskRepository {
   private toRow(t: Omit<WorkTask, 'id'>): any {
     return {
       operationId: t.operationId, sellerId: t.sellerId, type: t.type, orderId: t.orderId, orderRef: t.orderRef,
-      entityId: t.entityId, entityRef: t.entityRef, state: t.state, unitsEstimate: t.unitsEstimate,
+      entityId: t.entityId, entityRef: t.entityRef, state: t.state, unitsEstimate: t.unitsEstimate, unitsDone: t.unitsDone ?? 0,
       assignmentId: t.assignmentId, operator: t.operator, createdAt: new Date(t.createdAt), createdBy: t.createdBy,
       startedAt: t.startedAt ? new Date(t.startedAt) : null, completedAt: t.completedAt ? new Date(t.completedAt) : null,
       completedBy: t.completedBy, note: t.note,

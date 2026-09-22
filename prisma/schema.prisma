@@ -117,6 +117,8 @@ model WorkTask {
   entityRef     String?
   state         String // pending | assigned | in_progress | done | cancelled
   unitsEstimate Int       @default(0)
+  /// Unidades REALMENTE ejecutadas (unitsEstimate es lo que se creyó antes de empezar).
+  unitsDone     Int       @default(0)
   assignmentId  String?
   operator      String?
   createdAt     DateTime
@@ -129,6 +131,42 @@ model WorkTask {
   @@index([operationId, orderId])
   @@index([operationId, type, state])
   @@index([operationId, state])
+  /// Productividad por persona: sin este índice, cada consulta recorría la tabla entera.
+  @@index([operationId, operator, completedAt])
+  @@index([operationId, completedAt])
+}
+
+/// Libro de eventos de tarea: append-only, una fila por transición.
+/// WorkTask y WorkAssignment son proyecciones de esto; si alguna vez discrepan,
+/// mandan los eventos, porque son los únicos que no se sobrescriben.
+model TaskEvent {
+  id           String   @id
+  operationId  String
+  sellerId     String?
+  taskId       String?
+  assignmentId String?
+  stage        String // PICK | PACK | SHIP | PUTAWAY | RECEIVE | COUNT | RESLOT | RESTOCK | RESERVE
+  entityId     String
+  entityRef    String?
+  type         String // CREATED | ASSIGNED | TAKEN | REASSIGNED | STARTED | PAUSED | RESUMED | PROGRESS | RELEASED | DONE | CANCELLED
+  /// Hora del servidor: la que manda para ordenar y medir.
+  at           DateTime
+  /// Hora que declaró el dispositivo del operario. Solo para detectar un reloj corrido.
+  clientAt     DateTime?
+  actor        String
+  /// A quién le ocurre, cuando no es quien la ejecuta (en ASSIGNED, el que recibe).
+  subject      String?
+  units        Int?
+  lines        Int?
+  locationId   String?
+  sku          String?
+  reason       String?
+
+  @@index([operationId, taskId, at])
+  @@index([operationId, entityId, at])
+  @@index([operationId, actor, at])
+  @@index([operationId, subject, at])
+  @@index([operationId, at])
 }
 
 model User {
@@ -768,6 +806,9 @@ model StockMovement {
   reference  String?
   groupId    String? // agrupa las 2 patas de un traslado
   actor      String   @default("system")
+  /// Tarea que originó el movimiento. El vínculo existía como texto dentro de
+  /// `reference` ("PICK:<orderId>") y había que parsearlo a mano para usarlo.
+  taskId     String?
   occurredAt DateTime
 
   seller Seller @relation(fields: [sellerId], references: [id])
@@ -775,6 +816,10 @@ model StockMovement {
   @@index([sellerId, sku, locationId])
   @@index([sellerId, sku, state])
   @@index([groupId])
+  @@index([taskId])
+  /// Productividad y series por operario: antes era un recorrido completo de la tabla.
+  @@index([sellerId, occurredAt])
+  @@index([actor, occurredAt])
 }
 
 // Órdenes de venta ingresadas desde el OMS (con seller y canal ya resueltos).

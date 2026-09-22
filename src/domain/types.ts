@@ -985,7 +985,7 @@ export interface OrderEvent {
  * por SQL: tiempos entre estados, forecasting y agentes leen de aquí sin cargar
  * las órdenes completas a memoria. La fuente sigue siendo append-only.
  */
-export type DomainEntityType = 'ORDER' | 'RECEIPT' | 'RETURN';
+export type DomainEntityType = 'ORDER' | 'RECEIPT' | 'RETURN' | 'TASK';
 export interface DomainEvent {
   id: string; // determinístico: `${entityType}:${entityId}:${seq}` — idempotente ante re-guardado
   entityType: DomainEntityType;
@@ -1152,6 +1152,13 @@ export interface WorkTask {
   entityRef: string | null; // texto legible
   state: WorkTaskState;
   unitsEstimate: number;
+  /**
+   * Unidades REALMENTE ejecutadas, que no es lo mismo que `unitsEstimate`: ese es lo
+   * que se creyó antes de empezar y nunca se corregía. Sin este campo no hay forma de
+   * saber si una tarea de 40 unidades terminó con 40 o con 12, y cualquier estándar de
+   * tiempo aprendido sobre la estimación mide la estimación, no el trabajo.
+   */
+  unitsDone: number;
   assignmentId: string | null; // WorkAssignment.id cuando la tarea se asigna a un operario
   operator: string | null; // operario asignado (si aplica)
   createdAt: string;
