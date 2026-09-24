@@ -30,7 +30,10 @@ export class OperationsController {
   @Patch(':operationId')
   @RequirePermission('operation:manage')
   update(@Param('operationId') operationId: string, @Body() dto: UpdateOperationDto) {
-    return this.wms.updateOperation(operationId, { name: dto.name, active: dto.active });
+    return this.wms.updateOperation(operationId, {
+      name: dto.name, active: dto.active,
+      contactName: dto.contactName, contactEmail: dto.contactEmail, contactPhone: dto.contactPhone,
+    });
   }
 
   /** Marca (white-label) de la operación — la leen todos sus usuarios (incluye clientes). */
@@ -139,6 +142,44 @@ export class OperationsController {
   ) {
     const sellerScope = user && user.role === UserRole.CLIENT ? (user.sellerId ?? null) : null;
     return this.wms.listOperationOrders(operationId, { sellerId: sellerId || null, sellerScope });
+  }
+
+  /**
+   * Los coeficientes de tiempo vigentes: los de esta bodega, los heredados de la
+   * plataforma y el factor de cada operario. Es una vista de supervisión.
+   */
+  @Get(':operationId/task-times')
+  @RequirePermission('master:manage')
+  taskTimes(@Param('operationId') operationId: string) {
+    return this.wms.taskTimeModels_list(operationId);
+  }
+
+  /**
+   * Reajusta los coeficientes ahora, sin esperar a la noche.
+   *
+   * Devuelve el error medio nuevo y el anterior para cada etapa: así se ve si
+   * aprender sirvió de algo, en vez de asumirlo.
+   */
+  @Post(':operationId/task-times/learn')
+  @RequirePermission('master:manage')
+  learnTaskTimes(@Param('operationId') operationId: string, @Body() body?: { desdeDias?: number }) {
+    return this.wms.learnTaskTimes(operationId, { desdeDias: body?.desdeDias });
+  }
+
+  /** Cuánto debería demorar una tarea de esta forma: mediana, p90 y de dónde sale. */
+  @Get(':operationId/task-times/estimate')
+  @RequirePermission('stock:read')
+  estimateTask(
+    @Param('operationId') operationId: string,
+    @Query('stage') stage: string,
+    @Query('units') units?: string,
+    @Query('lines') lines?: string,
+    @Query('operator') operator?: string,
+  ) {
+    return this.wms.estimateTask(operationId, stage || 'PICK', {
+      units: units ? Number(units) : 0,
+      lines: lines ? Number(lines) : 1,
+    }, operator || null);
   }
 
   @Get(':operationId/sellers')

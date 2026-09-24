@@ -86,14 +86,14 @@ export class AssignmentsController {
   /** Asigna (o reasigna) una tarea a un operario. */
   @Post('assign')
   @RequirePermission('master:manage')
-  assign(@CurrentUser() user: User | null, @Body() body: { operationId?: string; type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; operator: string; unitsEstimate?: number; note?: string | null }) {
-    return this.wms.assignTask(actorOperation(user, body?.operationId), { type: body.type, entityId: body.entityId, entityRef: body.entityRef ?? null, sellerId: body.sellerId ?? null, operator: body.operator, unitsEstimate: body.unitsEstimate, by: actorOf(user), note: body.note ?? null });
+  assign(@CurrentUser() user: User | null, @Body() body: { operationId?: string; type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; operator: string; unitsEstimate?: number; linesEstimate?: number; note?: string | null }) {
+    return this.wms.assignTask(actorOperation(user, body?.operationId), { type: body.type, entityId: body.entityId, entityRef: body.entityRef ?? null, sellerId: body.sellerId ?? null, operator: body.operator, linesEstimate: body.linesEstimate, unitsEstimate: body.unitsEstimate, by: actorOf(user), note: body.note ?? null });
   }
 
   /** Asignación masiva. */
   @Post('bulk')
   @RequirePermission('master:manage')
-  bulk(@CurrentUser() user: User | null, @Body() body: { operationId?: string; items: Array<{ type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; unitsEstimate?: number; operator: string }> }) {
+  bulk(@CurrentUser() user: User | null, @Body() body: { operationId?: string; items: Array<{ type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; unitsEstimate?: number; linesEstimate?: number; operator: string }> }) {
     return this.wms.bulkAssign(actorOperation(user, body?.operationId), body?.items || [], actorOf(user));
   }
 

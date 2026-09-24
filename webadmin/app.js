@@ -99,7 +99,31 @@
   };
   function esc(s){return String(s==null?"":s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}
   function fill(el,opts){el.innerHTML=opts.map(function(o){return '<option value="'+esc(o.v)+'">'+esc(o.t)+'</option>';}).join("");}
-  function code(id){return locById[id]?locById[id].code:id;}
+  /**
+   * Código legible de una ubicación.
+   *
+   * El índice se arma al entrar, así que una ubicación creada DESPUÉS —la de
+   * reposición, que nacía la primera vez que alguien cancelaba una orden— no estaba y
+   * la tabla mostraba su UUID. Un identificador de 36 caracteres donde debería ir
+   * "DEV-REPOSICION" no le dice nada a nadie y parece que el stock se perdió.
+   *
+   * Ahora, ante una ubicación desconocida, se recarga el maestro UNA vez y se vuelve a
+   * pintar. Si aun así no aparece, se muestra una etiqueta que dice qué pasa en vez
+   * del id crudo.
+   */
+  var locYaBuscada={};
+  function code(id){
+    if(!id)return '—';
+    if(locById[id])return locById[id].code;
+    // Una recarga por id desconocido, no una por sesión: así una ubicación creada más
+    // tarde también se resuelve, y un id que de verdad no existe no deja el panel
+    // recargando en un bucle.
+    if(!locYaBuscada[id]&&op&&token){
+      locYaBuscada[id]=true;
+      reloadLocations().then(function(){ if(locById[id])renderAll(); }).catch(function(){});
+    }
+    return 'Ubicación desconocida ('+String(id).slice(0,8)+'…)';
+  }
   function canAct(){return role!=="CLIENT"&&role!=="OPERATOR"?true:false;}
   // Espejo (para UX) de los permisos del backend. El backend SIEMPRE es la autoridad;
   // esto solo decide qué botones mostrar.
@@ -2472,8 +2496,67 @@
       }).join(''):'<tr><td colspan="8" class="empty">Este operario no tiene actividades asignadas.</td></tr>';
     }).catch(function(){});
   }
+  // ---- Modelo de tiempo (coeficientes aprendidos) ---------------------------
+  var TT_ETAPA={PICK:'Picking',PUTAWAY:'Guardado',PACK:'Empaque',SHIP:'Despacho',RECEIVE:'Recepción',COUNT:'Conteo',RESLOT:'Re-slotting',RESTOCK:'Reposición'};
+  var TT_ORIGEN={operacion:'esta bodega',plataforma:'heredado de la plataforma',defecto:'valor declarado',operario:'esta bodega'};
+  function renderTaskTimes(){
+    var body=$("#tt-body"); if(!body||!op)return;
+    api('/operations/'+encodeURIComponent(op)+'/task-times').then(function(d){
+      var propios=d.operacion||[], plat=d.plataforma||[];
+      // Se muestra lo que de verdad se va a usar en cada etapa: si la bodega no tiene
+      // modelo propio, lo que hereda. Mostrar solo lo propio dejaría la tabla vacía y
+      // daría a entender que no hay estimación, cuando sí la hay.
+      var porEtapa={};
+      Object.keys(TT_ETAPA).forEach(function(e){
+        var p=propios.filter(function(x){return x.stage===e;})[0];
+        var g=plat.filter(function(x){return x.stage===e;})[0];
+        if(p) porEtapa[e]={m:p,origen:'operacion'};
+        else if(g) porEtapa[e]={m:g,origen:'plataforma'};
+      });
+      var filas=Object.keys(porEtapa);
+      var n2=function(v){return (Math.round(v*100)/100).toFixed(2);};
+      body.innerHTML=filas.length?filas.map(function(e){
+        var x=porEtapa[e], m=x.m;
+        return '<tr><td>'+esc(TT_ETAPA[e]||e)+'</td>'
+          +'<td class="num">'+n2(m.setupMin)+' min</td>'
+          +'<td class="num">'+n2(m.perLineMin)+' min</td>'
+          +'<td class="num">'+n2(m.perUnitMin)+' min</td>'
+          +'<td class="num">'+fmtInt(m.samples)+'</td>'
+          +'<td class="num">'+n2(m.errorMedioMin)+' min</td>'
+          +'<td class="num">×'+n2(m.p90Factor)+'</td>'
+          +'<td><span class="muted">'+esc(TT_ORIGEN[x.origen])+'</span></td></tr>';
+      }).join(''):'<tr><td colspan="8" class="empty">Aún no hay coeficientes aprendidos: se usan los declarados.</td></tr>';
+      var fac=(d.factores||[]).filter(function(f){return f.stage==='PICK';});
+      if($("#tt-sub"))$("#tt-sub").textContent=fac.length?(fac.length+' operario(s) con ritmo propio medido'):'sin ritmo propio por operario todavía';
+    }).catch(function(){ body.innerHTML='<tr><td colspan="8" class="empty">No se pudo cargar el modelo.</td></tr>'; });
+  }
+  if($("#tt-learn"))$("#tt-learn").addEventListener('click',function(){
+    var b=this, msg=$("#tt-msg");
+    b.disabled=true; if(msg)msg.textContent='Reajustando con las tareas medidas…';
+    api('/operations/'+encodeURIComponent(op)+'/task-times/learn',{method:'POST',body:{}}).then(function(r){
+      var ok=(r.etapas||[]).filter(function(e){return e.ajustado;});
+      var no=(r.etapas||[]).filter(function(e){return !e.ajustado;});
+      var txt=[];
+      // Se dice si aprender SIRVIÓ, comparando el error nuevo con el anterior. Un
+      // reajuste que no baja el error no es una mejora aunque haya corrido.
+      ok.forEach(function(e){
+        var mejora=(e.errorAnteriorMin!=null&&e.errorMedioMin!=null)?(' · error '+e.errorAnteriorMin+' → '+e.errorMedioMin+' min'):'';
+        txt.push('<b>'+esc(TT_ETAPA[e.stage]||e.stage)+'</b>: '+e.samples+' tareas'+mejora);
+      });
+      no.forEach(function(e){ txt.push('<span class="muted">'+esc(TT_ETAPA[e.stage]||e.stage)+': '+esc(e.motivo||'sin ajuste')+'</span>'); });
+      if(msg)msg.innerHTML=txt.join('<br>')||'Sin cambios.';
+      // El toast siempre pone ✓, así que solo se usa cuando de verdad pasó algo.
+      // Un "no hubo datos" con palomita al lado es una mentira pequeña pero mentira;
+      // ese caso ya queda explicado, con su motivo, en el panel de abajo.
+      if(ok.length)toast('Reajustadas '+ok.length+' etapa(s)');
+      renderTaskTimes();
+    }).catch(function(e){ if(msg)msg.textContent=e.message; toast(e.message,false); })
+      .then(function(){ b.disabled=false; });
+  });
+
   function loadAssignments(){
     if(!op) return;
+    renderTaskTimes();
     var q='operationId='+encodeURIComponent(op);
     api('/assignments/mode?'+q).then(function(m){$$("#asg-mode .segbtn").forEach(function(x){x.classList.toggle("on",x.getAttribute("data-asgm")===(m&&m.assignmentMode));});}).catch(function(){});
     api('/assignments/continuous?'+q).then(function(c){var cb=$("#asg-continuous");if(cb){var on=!!(c&&c.autoBalance);cb.setAttribute('data-on',on?'1':'0');cb.textContent='🔄 Continuo: '+(on?'on':'off');cb.classList.toggle('pri',on);}}).catch(function(){});
@@ -2499,25 +2582,34 @@
       $("#asg-kpis").innerHTML=k.map(function(x){return '<div class="kpi"><div class="l">'+x.l+'</div><div class="v">'+x.v+'</div><div class="d">'+esc(x.d)+'</div></div>';}).join("");
       $("#asg-load-body").innerHTML=(load.operarios||[]).length?load.operarios.map(function(o){
         var hot=(o.horasEstimadas!=null&&o.horasEstimadas>=6)?' style="color:var(--bad,#c0392b);font-weight:700"':'';
-        return '<tr><td>'+esc(o.nombre||o.operario)+'</td><td class="num">'+(o.velocidadUH||'—')+'</td><td class="num">'+(o.velocidadTH!=null?o.velocidadTH:'—')+'</td><td class="num">'+o.tareasAbiertas+'</td><td class="num">'+o.unidades+'</td><td class="num"'+hot+'>'+(o.horasEstimadas!=null?o.horasEstimadas+' h':'—')+'</td></tr>';
-      }).join(""):'<tr><td colspan="6" class="empty">Sin operarios en la operación.</td></tr>';
+        // Bajo una hora se muestra en minutos: una carga de 40 min dicha como "0,67 h"
+        // no se lee, y las tareas de bodega duran minutos, no horas.
+        var t=(o.minutosEstimados!=null&&o.minutosEstimados<60)?(o.minutosEstimados+' min'):((o.horasEstimadas!=null?o.horasEstimadas:'—')+' h');
+        return '<tr><td>'+esc(o.nombre||o.operario)+'</td><td class="num">'+(o.velocidadUH||'—')+'</td><td class="num">'+(o.velocidadTH!=null?o.velocidadTH:'—')+'</td><td class="num">'+o.tareasAbiertas+'</td><td class="num">'+o.unidades+'</td><td class="num">'+(o.paradas||0)+'</td><td class="num"'+hot+'>'+t+'</td></tr>';
+      }).join(""):'<tr><td colspan="7" class="empty">Sin operarios en la operación.</td></tr>';
       // Pie: el TOTAL del equipo y el PROMEDIO por operario. La velocidad total no
       // es el promedio de las velocidades: es unidades totales sobre horas totales.
       var T=load.totales, P=load.promedios, pie=$("#asg-load-foot");
       if(pie)pie.innerHTML=(T&&load.operarios&&load.operarios.length)
-        ? '<tr class="tot"><td>Total ('+T.operarios+' operarios)</td><td class="num">'+(T.velocidadUH!=null?T.velocidadUH:'—')+'</td><td class="num">'+(T.velocidadTH!=null?T.velocidadTH:'—')+'</td><td class="num">'+T.tareasAbiertas+'</td><td class="num">'+fmtInt(T.unidades)+'</td><td class="num">'+T.horasEstimadas+' h</td></tr>'
-          +'<tr class="prom"><td>Promedio por operario</td><td class="num">'+(P.velocidadUH!=null?P.velocidadUH:'—')+'</td><td class="num">—</td><td class="num">'+P.tareasAbiertas+'</td><td class="num">'+fmtInt(P.unidades)+'</td><td class="num">'+P.horasEstimadas+' h</td></tr>'
+        ? '<tr class="tot"><td>Total ('+T.operarios+' operarios)</td><td class="num">'+(T.velocidadUH!=null?T.velocidadUH:'—')+'</td><td class="num">'+(T.velocidadTH!=null?T.velocidadTH:'—')+'</td><td class="num">'+T.tareasAbiertas+'</td><td class="num">'+fmtInt(T.unidades)+'</td><td class="num">'+((load.operarios||[]).reduce(function(a,o){return a+(o.paradas||0);},0))+'</td><td class="num">'+T.horasEstimadas+' h</td></tr>'
+          +'<tr class="prom"><td>Promedio por operario</td><td class="num">'+(P.velocidadUH!=null?P.velocidadUH:'—')+'</td><td class="num">—</td><td class="num">'+P.tareasAbiertas+'</td><td class="num">'+fmtInt(P.unidades)+'</td><td class="num">—</td><td class="num">'+P.horasEstimadas+' h</td></tr>'
         : '';
       var pool=r[1]||[];
       $("#asg-pool-sub").textContent=pool.length+" tareas";
       var opts='<option value="">—</option>'+asgOperators.map(function(o){return '<option value="'+esc(o.id)+'">'+esc(o.name||o.id)+'</option>';}).join("");
       $("#asg-pool-body").innerHTML=pool.length?pool.map(function(t){
         return '<tr><td class="mono2">'+esc(t.entityRef)+'</td><td>'+esc(t.sellerId)+'</td><td class="num">'+t.unidades+'</td><td>'+(t.asignadoA?('<span class="chip st-RESERVED"><span class="dot"></span>'+esc(t.asignadoA)+'</span>'):'<span class="muted">sin asignar</span>')+'</td>'
-          +'<td><select class="asg-pick" data-eid="'+esc(t.entityId)+'" data-ref="'+esc(t.entityRef)+'" data-sid="'+esc(t.sellerId)+'" data-un="'+t.unidades+'" style="padding:4px 6px">'+opts+'</select></td></tr>';
+          +'<td><select class="asg-pick" data-eid="'+esc(t.entityId)+'" data-ref="'+esc(t.entityRef)+'" data-sid="'+esc(t.sellerId)+'" data-un="'+t.unidades+'" data-par="'+(t.paradas||1)+'" data-note="'+esc(t.note||'')+'" style="padding:4px 6px">'+opts+'</select></td></tr>';
       }).join(""):'<tr><td colspan="5" class="empty">No hay tareas pendientes de este tipo.</td></tr>';
       $$("#asg-pool-body .asg-pick").forEach(function(sel){sel.addEventListener("change",function(){
         var operario=sel.value; if(!operario)return;
-        api('/assignments/assign',{method:'POST',body:{operationId:op,type:asgType,entityId:sel.getAttribute('data-eid'),entityRef:sel.getAttribute('data-ref'),sellerId:sel.getAttribute('data-sid'),unitsEstimate:parseInt(sel.getAttribute('data-un'),10)||0,operator:operario}}).then(function(){toast('Asignada a '+operario);loadAssignments();}).catch(function(e){toast(e.message);});
+        api('/assignments/assign',{method:'POST',body:{operationId:op,type:asgType,entityId:sel.getAttribute('data-eid'),entityRef:sel.getAttribute('data-ref'),sellerId:sel.getAttribute('data-sid'),unitsEstimate:parseInt(sel.getAttribute('data-un'),10)||0,
+          // Las paradas viajan con la asignación. Sin esto la tarea llegaba al operario
+          // como "1 parada" y el tiempo estimado quedaba corto: el modelo de tiempo
+          // pesa el desplazamiento y el reparto a mano lo estaba tirando.
+          linesEstimate:parseInt(sel.getAttribute('data-par'),10)||1,
+          note:sel.getAttribute('data-note')||undefined,
+          operator:operario}}).then(function(){toast('Asignada a '+operario);loadAssignments();}).catch(function(e){toast(e.message);});
       });});
     }).catch(function(){});
   }
@@ -4967,7 +5059,11 @@
     if(o.packing)msg+='<p class="muted" style="margin:10px 0 0">La orden estaba empacada: los insumos de embalaje usados no se reponen.</p>';
     confirmBox("Cancelar orden",msg,"Sí, cancelar",function(){
       api('/sellers/'+osel(o)+'/orders/'+id+'/cancel',{method:'POST'})
-        .then(function(){toast(recolectadas?("Orden cancelada · "+recolectadas+" un devueltas a su ubicación"):"Orden cancelada");return recargaOrdenes();})
+        // Cancelar puede CREAR la ubicación de reposición si la operación es anterior
+        // a que se creara con la operación. Se recarga el maestro para que la tabla de
+        // inventario muestre su código y no su id.
+        .then(function(){toast(recolectadas?("Orden cancelada · "+recolectadas+" un devueltas a reposición"):"Orden cancelada");return reloadLocations().catch(function(){});})
+        .then(function(){return recargaOrdenes();})
         .catch(function(e){toast(e.message);});
     },true);
   }
@@ -6700,6 +6796,46 @@
     });
   }
 
+  /**
+   * Iniciales para el avatar de la tarjeta.
+   *
+   * Salían del id, que en las cuentas creadas a mano es legible ("op-ninja" → NI) pero
+   * en las self-serve es un UUID: la lista mostraba "08", "FD", "90". Se toman del
+   * NOMBRE, que es lo que el super-admin está leyendo igual, y solo se cae al id
+   * cuando la operación no tiene nombre.
+   */
+  function inicialesOp(o){
+    var n=String(o.name||"").trim();
+    if(n){
+      var ps=n.split(/\s+/).filter(Boolean);
+      return (ps.length>1?(ps[0][0]+ps[1][0]):n.slice(0,2)).toUpperCase();
+    }
+    return String(o.id||"").replace("op-","").slice(0,2).toUpperCase();
+  }
+
+  /**
+   * Ficha del alta: con qué datos entró esta cuenta.
+   *
+   * Vive en la tarjeta de la operación y no en una pantalla aparte porque el
+   * super-admin la necesita en el momento en que mira la lista de cuentas — para
+   * llamar a alguien que se registró ayer y no ha vuelto, sobre todo. El teléfono es
+   * `tel:` para que se marque de un clic, y el correo `mailto:`.
+   *
+   * Una cuenta creada a mano por la plataforma no tiene ficha: no pasó por el
+   * formulario y no hay nada que mostrar.
+   */
+  function fichaAlta(o){
+    if(!o.contactName&&!o.contactEmail&&!o.contactPhone&&!o.createdAt&&!o.selfServe) return "";
+    var pista=o.track==="operator"?"Operador 3PL":o.track==="brand"?"Marca / tienda":null;
+    var fila=function(k,v){ return v?('<div class="ofi-r"><span>'+k+'</span><b>'+v+'</b></div>'):""; };
+    var tel=o.contactPhone?'<a href="tel:'+esc(String(o.contactPhone).replace(/[^\d+]/g,""))+'">'+esc(o.contactPhone)+'</a>':"";
+    var mail=o.contactEmail?'<a href="mailto:'+esc(o.contactEmail)+'">'+esc(o.contactEmail)+'</a>':"";
+    var alta=o.createdAt?fmtDate(o.createdAt):"";
+    var cuerpo=fila("Contacto",o.contactName?esc(o.contactName):"")+fila("Celular",tel)+fila("Email",mail)+fila("Se registró como",pista?esc(pista):"")+fila("Fecha de alta",alta?esc(alta):"");
+    if(!cuerpo) return "";
+    return '<div class="opficha"><div class="ofi-h">'+(o.selfServe?"Registro self-serve":"Datos de contacto")+'</div>'+cuerpo+'</div>';
+  }
+
   function renderOps(){
     if(role!=="PLATFORM_ADMIN"){$("#ops-grid").innerHTML='<div class="empty">Solo la plataforma ve todas las operaciones.</div>';return;}
     $("#ops-grid").innerHTML=D.ops.map(function(o){
@@ -6707,7 +6843,7 @@
       var acts='<div class="card-actions"><button class="mini" data-oedit="'+esc(o.id)+'">Editar</button>'
         +'<button class="mini" data-oadmin="'+esc(o.id)+'">＋ Admin</button>'
         +(inactive?'<button class="mini" data-oact="'+esc(o.id)+'">Activar</button>':'<button class="mini danger" data-odeact="'+esc(o.id)+'">Desactivar</button>')+'</div>';
-      return '<div class="card"'+(inactive?' style="opacity:.6"':'')+'><div class="opcard"><div class="oi">'+esc(o.id.replace("op-","").slice(0,2).toUpperCase())+'</div><div><div class="on">'+esc(o.name||o.id)+'</div><div class="om">'+esc(o.id)+(inactive?' · inactiva':'')+'</div></div></div>'+acts+'</div>';
+      return '<div class="card"'+(inactive?' style="opacity:.6"':'')+'><div class="opcard"><div class="oi">'+esc(inicialesOp(o))+'</div><div><div class="on">'+esc(o.name||o.id)+'</div><div class="om">'+esc(o.id)+(inactive?' · inactiva':'')+'</div></div></div>'+fichaAlta(o)+acts+'</div>';
     }).join("");
     $$("#ops-grid [data-oedit]").forEach(function(b){b.addEventListener("click",function(){openOpForm(byId(D.ops,b.getAttribute("data-oedit")));});});
     $$("#ops-grid [data-oadmin]").forEach(function(b){b.addEventListener("click",function(){openUserForm(null,{operationId:b.getAttribute("data-oadmin"),role:"ADMIN"});});});
@@ -6805,6 +6941,10 @@
     var html='<div class="form">'
       +(isEdit?'':'<div class="fld"><label>Identificador (opcional)</label><input id="of-id" placeholder="Ej: op-lima"><span class="hint">Si lo dejas vacío se genera solo.</span></div>')
       +'<div class="fld"><label>Nombre de la operación</label><input id="of-name" value="'+esc(o?(o.name||''):'')+'" placeholder="Ej: Bodega Lima"></div>'
+      +(isEdit?('<div class="fld"><label>Persona de contacto</label><input id="of-cname" value="'+esc(o.contactName||'')+'" placeholder="Camila Rojas"></div>'
+        +'<div class="row2"><div class="fld"><label>Celular</label><input id="of-cphone" type="tel" value="'+esc(o.contactPhone||'')+'" placeholder="+56 9 1234 5678"></div>'
+        +'<div class="fld"><label>Email de contacto</label><input id="of-cemail" type="email" value="'+esc(o.contactEmail||'')+'" placeholder="tu@empresa.cl"></div></div>'
+        +'<span class="hint">Lo que la cuenta declaró al registrarse. Corrígelo si te dieron otro número; vaciar un campo lo borra.</span>'):'')
       +'<div class="ferr" id="of-err"></div>'
       +'<div class="acts"><span class="hint">'+(isEdit?esc(o.id):'Nueva bodega / administrador aislado')+'</span><div style="display:flex;gap:10px"><button class="btn" id="of-cancel">Cancelar</button><button class="btn pri" id="of-save">'+(isEdit?'Guardar':'Crear operación')+'</button></div></div>'
       +'</div>';
@@ -6814,7 +6954,16 @@
       var name=$("#of-name").value.trim();
       if(!name){$("#of-err").textContent="El nombre es obligatorio.";return;}
       var p;
-      if(isEdit){p=api('/operations/'+o.id,{method:'PATCH',body:{name:name}});}
+      if(isEdit){
+        var cuerpo={name:name};
+        // Solo viajan los campos que el formulario muestra. El servidor distingue
+        // "vacío" (borrar) de "ausente" (dejar como está), así que mandar el string
+        // tal cual es correcto.
+        if($("#of-cname"))cuerpo.contactName=$("#of-cname").value.trim();
+        if($("#of-cphone"))cuerpo.contactPhone=$("#of-cphone").value.trim();
+        if($("#of-cemail"))cuerpo.contactEmail=$("#of-cemail").value.trim();
+        p=api('/operations/'+o.id,{method:'PATCH',body:cuerpo});
+      }
       else{var id=$("#of-id").value.trim();p=api('/operations',{method:'POST',body:id?{id:id,name:name}:{name:name}});}
       p.then(function(res){closeModal();toast(isEdit?"Operación actualizada":"Operación creada");reloadOps().then(function(){if(!isEdit&&res&&res.id){openConfirm("Crear administrador","¿Quieres crear ahora el administrador de "+name+"?",function(){openUserForm(null,{operationId:res.id,role:"ADMIN"});});}});}).catch(function(e){$("#of-err").textContent=e.message;});
     });
@@ -7766,11 +7915,18 @@
   function doRegister(){
     var company=$("#rg-company").value.trim(), name=$("#rg-name").value.trim();
     var email=$("#rg-email").value.trim(), pass=$("#rg-pass").value, track=$("#rg-track").value;
+    var phone=($("#rg-phone")?$("#rg-phone").value:"").trim();
     $("#rg-err").textContent="";
-    if(!company||!name||!email||!pass){ $("#rg-err").textContent="Completa todos los campos."; return; }
+    if(!company||!name||!email||!phone||!pass){ $("#rg-err").textContent="Completa todos los campos."; return; }
+    // Mismo criterio que el servidor (dominio `esTelefonoPlausible`): entre 8 y 15
+    // dígitos. Validar acá evita el viaje al servidor; el servidor valida igual,
+    // porque el formulario no es la única puerta a la API.
+    if(phone.replace(/\D/g,"").length<8||phone.replace(/\D/g,"").length>15){
+      $("#rg-err").textContent="Ingresa un celular válido con código de país. Ej: +56 9 1234 5678"; return;
+    }
     if(pass.length<6){ $("#rg-err").textContent="La contraseña debe tener al menos 6 caracteres."; return; }
     var btn=$("#rg-btn"); btn.disabled=true; btn.textContent="Creando…";
-    api('/auth/register',{method:'POST',body:{companyName:company,name:name,email:email,password:pass,track:track}}).then(function(r){
+    api('/auth/register',{method:'POST',body:{companyName:company,name:name,email:email,phone:phone,password:pass,track:track}}).then(function(r){
       $("#rg-pass").value="";
       pendingVerifyToken = (r.verification && r.verification.devToken) || null; // en local viene el token para verificar aquí mismo
       afterAuth(r);
@@ -7778,6 +7934,7 @@
   }
   if($("#rg-btn"))$("#rg-btn").addEventListener("click",doRegister);
   if($("#rg-pass"))$("#rg-pass").addEventListener("keydown",function(e){if(e.key==="Enter")doRegister();});
+  if($("#rg-phone"))$("#rg-phone").addEventListener("keydown",function(e){if(e.key==="Enter")doRegister();});
 
   // Olvidé mi contraseña
   function doForgot(){

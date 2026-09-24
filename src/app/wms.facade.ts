@@ -21,7 +21,9 @@ import { CostingService } from '../domain/costing.service';
 import { PlatformUsageService } from '../domain/platform-usage.service';
 import { AnnouncementInput, AnnouncementPatch, AnnouncementService } from '../domain/announcement.service';
 import { CreateWebhookInput, UpdateWebhookInput, WebhookService } from '../domain/webhook.service';
-import { WebhookEventType } from '../domain/types';
+import { WebhookEventType ,
+  StoredTaskTimeModel,
+  StoredOperatorFactor} from '../domain/types';
 import { DeadlineConfig, DeadlineState, deadlineBoost, deadlineState, enRiesgo, resolveDueAt } from '../domain/deadline';
 import { AiDashboardService, capacidades as aiDashCapacidades } from './ai-dashboard.service';
 import { ChatSender, ChatService } from '../domain/chat.service';
@@ -31,6 +33,7 @@ import { CreateUserInput, UpdateUserInput, UserService } from '../domain/user.se
 import { OperationService } from '../domain/operation.service';
 import { BarcodeService, RegisterPackInput } from '../domain/barcode.service';
 import { ForbiddenError, NotFoundError, PlanLimitError, ValidationError } from '../domain/errors';
+import { esTelefonoPlausible } from '../domain/phone';
 import { Consignee, ConsigneeInput, direccionPrincipal, formatearRut, normalizarConsignee } from '../domain/consignee';
 import { ApiKey, ApiKeyScope, apiKeyPublica, llaveVigente, nuevoSecreto, prefijoVisible } from '../domain/api-key';
 import { createHash } from 'crypto';
@@ -116,7 +119,9 @@ import {
   ZoneType,
 } from '../domain/types';
 import { TaskEvent, TaskEventType, proyectarTarea, tiemposDeTarea, TaskProjection } from '../domain/task-event';
-import { AiConfigRepository, AiCredential, AuthTokenRepository, Clock, CopilotSettingsRepository, CountAuditRepository, EmailSender, EventRepository, IdGenerator, LotRepository, PlanConfigRepository, AiAuditRepository, WorkAssignmentRepository, WorkTaskRepository, AgentRuleConfigRepository, AgentAlertRepository, AgentJournalRepository, AgentJournalEntry, CopilotSettings, AiDashboardRepository, TaskEventRepository } from '../domain/ports';
+import { conFactor, estimarHoras, estimarMinutos, modeloPorDefecto, tareaTipica, unidadesPorHoraEquivalente, TaskTimeModel, TaskTimeCoefficients, TaskTimeSource } from '../domain/task-time';
+import { Observacion, MIN_MUESTRAS, ajustarCoeficientes, factorDeOperario, factorP90, filtrarObservaciones, resolverModelo } from '../domain/task-time-learning';
+import { AiConfigRepository, AiCredential, AuthTokenRepository, Clock, CopilotSettingsRepository, CountAuditRepository, EmailSender, EventRepository, IdGenerator, LotRepository, PlanConfigRepository, AiAuditRepository, WorkAssignmentRepository, WorkTaskRepository, AgentRuleConfigRepository, AgentAlertRepository, AgentJournalRepository, AgentJournalEntry, CopilotSettings, AiDashboardRepository, TaskEventRepository, TaskTimeModelRepository } from '../domain/ports';
 import { AgentSchedule, EstadoVentana, SCHEDULE_DEFAULT, estadoVentana, normalizarSchedule, resumenSchedule } from '../domain/agent-schedule';
 import { ACTION_POLICIES, decidePolicy, describePolicy, effectiveAgentSettings } from '../domain/agent-policy';
 import { AGENT_RULES, AgentRuleDef, agentRuleDef } from '../domain/agent-rules';
@@ -221,6 +226,8 @@ export class WmsFacade {
      * quién la tuvo antes, cuánto esperó, cuántas veces rebotó.
      */
     private readonly taskEvents?: TaskEventRepository,
+    /** Coeficientes de tiempo aprendidos (opcional: sin esto se usan los declarados). */
+    private readonly taskTimeModels?: TaskTimeModelRepository,
   ) {}
 
   // ---- Llaves de API y servidor MCP -----------------------------------------
@@ -1203,7 +1210,7 @@ export class WmsFacade {
         const pool = await this.getTaskPool(operationId, tipo).catch(() => [] as any[]);
         const t = pool.find((x: any) => x.entityId === clave || x.entityRef === clave);
         if (!t) { errores.push({ entidad: clave, error: `no hay tarea ${tipo} pendiente con esa referencia` }); continue; }
-        items.push({ type: tipo, entityId: t.entityId, entityRef: t.entityRef, sellerId: t.sellerId, unitsEstimate: t.unidades, operator: quien.id });
+        items.push({ type: tipo, entityId: t.entityId, entityRef: t.entityRef, sellerId: t.sellerId, unitsEstimate: t.unidades, linesEstimate: t.paradas, operator: quien.id });
       }
       if (!items.length) return { ok: false, asignadas: 0, errores, mensaje: 'No se asignó ninguna tarea. NO digas que se asignó algo.' };
       try {
@@ -2595,8 +2602,15 @@ export class WmsFacade {
   }
 
   // ---- Operaciones (tenant superior; solo PLATFORM_ADMIN) -------------------
-  createOperation(input: { id?: string; name: string; track?: 'brand' | 'operator' | null; selfServe?: boolean }): Promise<Operation> {
-    return this.operationsService.create(input);
+  async createOperation(input: { id?: string; name: string; track?: 'brand' | 'operator' | null; selfServe?: boolean }): Promise<Operation> {
+    const op = await this.operationsService.create(input);
+    // La ubicación de reposición (donde cae lo que vuelve de una cancelación) se creaba
+    // sola la PRIMERA vez que alguien cancelaba una orden. Funcionaba, pero aparecía
+    // una ubicación nueva a mitad de turno que nadie había configurado y que el panel
+    // todavía no conocía: en la tabla de inventario salía su id crudo en vez del código.
+    // Creándola con la operación, existe desde el día uno y se ve en el maestro.
+    await this.inventory.ensureReposicionLocation(op.id).catch(() => undefined);
+    return op;
   }
   getOperation(operationId: string): Promise<Operation | null> {
     return this.operationsService.get(operationId);
@@ -2605,7 +2619,7 @@ export class WmsFacade {
     return this.operationsService.list();
   }
   /** Edita nombre/estado de una operación (solo PLATFORM_ADMIN vía guard). */
-  updateOperation(operationId: string, patch: { name?: string; active?: boolean }): Promise<Operation> {
+  updateOperation(operationId: string, patch: { name?: string; active?: boolean; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null }): Promise<Operation> {
     return this.operationsService.update(operationId, patch);
   }
   listSellers(operationId: string): Promise<Seller[]> {
@@ -3264,14 +3278,16 @@ export class WmsFacade {
    * por defecto; emite el token de verificación, envía el correo y devuelve un JWT para
    * aterrizar dentro del producto de inmediato. El email nace SIN verificar.
    */
-  async registerSelfServe(input: { companyName: string; name: string; email: string; password: string; track: 'brand' | 'operator' }): Promise<{ token: string; user: User; operationId: string; sellerId: string | null; verification: { sent: boolean; devToken?: string } }> {
+  async registerSelfServe(input: { companyName: string; name: string; email: string; phone: string; password: string; track: 'brand' | 'operator' }): Promise<{ token: string; user: User; operationId: string; sellerId: string | null; verification: { sent: boolean; devToken?: string } }> {
     const companyName = (input.companyName || '').trim();
     const name = (input.name || '').trim();
     const email = (input.email || '').trim().toLowerCase();
+    const phone = (input.phone || '').trim();
     const track: 'brand' | 'operator' = input.track === 'operator' ? 'operator' : 'brand';
     if (!companyName) throw new ValidationError('El nombre de la empresa es obligatorio');
     if (!name) throw new ValidationError('Tu nombre es obligatorio');
     if (!email.includes('@')) throw new ValidationError('Ingresa un email válido');
+    if (!esTelefonoPlausible(phone)) throw new ValidationError('Ingresa un celular válido con código de país. Ej: +56 9 1234 5678');
     if (!input.password || input.password.length < 6) throw new ValidationError('La contraseña debe tener al menos 6 caracteres');
     const existing = await this.usersService.findByEmail(email);
     if (existing) throw new ValidationError('Ya existe una cuenta con ese email. Inicia sesión o recupera tu contraseña.');
@@ -3281,6 +3297,10 @@ export class WmsFacade {
     const operation = await this.operationsService.create({
       name: companyName, track, selfServe: true,
       planId: 'free', trialPlan: 'growth', trialEndsAt,
+      // El formulario completo queda guardado con la cuenta: la plataforma tiene que
+      // poder llamar a quien se registró sin depender de que el correo llegue.
+      contactName: name, contactEmail: email, contactPhone: phone,
+      createdAt: this.nowIso(),
     });
     // 2) Admin de la operación (email sin verificar todavía).
     const user = await this.usersService.createUser({
@@ -4073,29 +4093,71 @@ export class WmsFacade {
     return { assignmentMode: mode };
   }
 
-  /** Roster de operarios de la operación con su velocidad real (u/h) para balancear. */
-  private async operatorRoster(operationId: string): Promise<Array<{ id: string; name: string; speed: number }>> {
+  /**
+   * Roster de operarios con su modelo de tiempo.
+   *
+   * Antes esto devolvía UNA velocidad por persona (u/h) y todo el balanceo dividía
+   * unidades por ese número, con 50 u/h de constante para quien no tuviera medición.
+   * El problema no era la constante: era la forma. Una velocidad única supone que el
+   * trabajo escala con las unidades, y no escala — escala con las paradas.
+   *
+   * Ahora cada operario trae `horasDe(tarea)`, que aplica el modelo de su etapa
+   * (setup + paradas + unidades) y encima su factor personal. La `speed` que se sigue
+   * devolviendo es solo compatibilidad para los paneles que muestran u/h: es la
+   * velocidad EQUIVALENTE en una tarea típica, no una propiedad de la persona.
+   */
+  private async operatorRoster(operationId: string): Promise<Array<{ id: string; name: string; speed: number; factor: number; horasDe: (stage: string, t: { units?: number | null; lines?: number | null }) => number }>> {
     const users = (await this.listUsers(operationId)).filter((u) => String(u.role) === 'OPERATOR' && u.active !== false);
-    let speedOf = new Map<string, number>();
-    try {
-      const prod = await this.laborProductivity(operationId);
-      for (const o of prod.operators || []) if (o.unitsPerHour) speedOf.set(o.operator, o.unitsPerHour);
-    } catch { /* sin productividad aún */ }
-    const DEFAULT_SPEED = 50;
-    return users.map((u) => ({ id: u.id, name: u.name, speed: speedOf.get(u.id) || DEFAULT_SPEED }));
+    // Los coeficientes vienen de lo APRENDIDO cuando hay suficientes tareas medidas;
+    // si no, del modelo de la plataforma y, en última instancia, de los declarados.
+    // La jerarquía se resuelve una vez acá y no en cada llamada: el roster se usa en
+    // bucles de asignación y consultar la base por tarea sería absurdo.
+    const coefDe = new Map<string, TaskTimeCoefficients>();
+    const factorOf = new Map<string, number>();
+    const ETAPAS = ['PICK', 'PUTAWAY', 'PACK', 'SHIP', 'RECEIVE', 'COUNT', 'RESLOT', 'RESTOCK'];
+    if (this.taskTimeModels) {
+      try {
+        for (const etapa of ETAPAS) {
+          const m = await this.taskTimeModelFor(operationId, etapa, null);
+          coefDe.set(etapa, m.coef);
+        }
+        for (const f of await this.taskTimeModels.listFactors(operationId)) {
+          // Un operario puede tener factores distintos por etapa; para el balanceo se
+          // usa el de picking, que es donde se juega la mayor parte del trabajo.
+          if (f.stage === 'PICK') factorOf.set(f.operator, f.factor);
+        }
+      } catch { /* sin modelos aún: se cae a los declarados */ }
+    }
+    const coefEtapa = (stage: string): TaskTimeCoefficients => coefDe.get(String(stage).toUpperCase()) || modeloPorDefecto(stage).coef;
+
+    const tipica = tareaTipica('PICK');
+    return users.map((u) => {
+      const factor = factorOf.get(u.id) ?? 1;
+      const horasDe = (stage: string, t: { units?: number | null; lines?: number | null }): number =>
+        estimarHoras(conFactor(coefEtapa(stage), factor), t);
+      const equivalente = unidadesPorHoraEquivalente(conFactor(coefEtapa('PICK'), factor), tipica) ?? 50;
+      return { id: u.id, name: u.name, speed: equivalente, factor, horasDe };
+    });
   }
 
   /** Pool de tareas pendientes de un tipo, con su estimación de unidades y asignatario actual. */
-  async getTaskPool(operationId: string, type: WorkTaskType, opts?: { onlyUnassigned?: boolean; limit?: number }): Promise<Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; unidades: number; prioridad: number; asignadoA: string | null; note?: string | null }>> {
+  async getTaskPool(operationId: string, type: WorkTaskType, opts?: { onlyUnassigned?: boolean; limit?: number }): Promise<Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; unidades: number; /** Ubicaciones distintas que hay que visitar: el término que explica el desplazamiento. */ paradas: number; prioridad: number; asignadoA: string | null; note?: string | null }>> {
     const sellers = (await this.listSellers(operationId)).map((s) => s.id);
     const assigneeOf = new Map<string, string>();
     if (this.assignments) for (const a of await this.assignments.listOpen(operationId, { type })) assigneeOf.set(a.entityId, a.operator);
-    const out: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; unidades: number; prioridad: number; asignadoA: string | null; note?: string | null }> = [];
+    // `paradas` = ubicaciones distintas a visitar. Es lo que el modelo de tiempo viejo
+    // no miraba: 8 unidades de una ubicación y 8 unidades de 8 ubicaciones no son el
+    // mismo trabajo, aunque sumen igual.
+    const out: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; unidades: number; paradas: number; prioridad: number; asignadoA: string | null; note?: string | null }> = [];
     if (type === 'PICK') {
       for (const sid of sellers) {
         for (const o of await this.getPickingQueue(sid)) {
           const entityId = o.id;
-          out.push({ type, entityId, entityRef: o.externalOrderId || o.id, sellerId: sid, unidades: (o.lines || []).reduce((s, l) => s + l.qty, 0), prioridad: o.queuePosition, asignadoA: assigneeOf.get(entityId) ?? null });
+          // Las paradas del picking son las reservas: cada (sku, ubicación) es una
+          // visita. Dos líneas del mismo SKU en la misma ubicación son UNA parada.
+          const paradas = new Set<string>();
+          for (const l of o.lines || []) for (const a of l.allocations || []) paradas.add(`${a.sku ?? l.sku}:${a.locationId}`);
+          out.push({ type, entityId, entityRef: o.externalOrderId || o.id, sellerId: sid, unidades: (o.lines || []).reduce((s, l) => s + l.qty, 0), paradas: Math.max(1, paradas.size || (o.lines || []).length), prioridad: o.queuePosition, asignadoA: assigneeOf.get(entityId) ?? null });
         }
       }
     } else if (type === 'PUTAWAY') {
@@ -4115,7 +4177,8 @@ export class WmsFacade {
         let pr = 1;
         for (const e of byKey.values()) {
           const entityId = `${sid}:${e.sku}:${e.loc}`;
-          out.push({ type, entityId, entityRef: `${e.sku} @ ${recv.get(e.loc)}`, sellerId: sid, unidades: e.qty, prioridad: pr++, asignadoA: assigneeOf.get(entityId) ?? null });
+          // Guardado: una ubicación de origen y una de destino → una parada útil.
+          out.push({ type, entityId, entityRef: `${e.sku} @ ${recv.get(e.loc)}`, sellerId: sid, unidades: e.qty, paradas: 1, prioridad: pr++, asignadoA: assigneeOf.get(entityId) ?? null });
         }
       }
     } else if (type === 'RESTOCK') {
@@ -4141,7 +4204,7 @@ export class WmsFacade {
             out.push({
               type, entityId,
               entityRef: `${sku} → ${destino ? (codeById.get(destino) || destino) : 'ubicación por definir'}`,
-              sellerId: sid, unidades: qty, prioridad: pr++,
+              sellerId: sid, unidades: qty, paradas: 1, prioridad: pr++,
               asignadoA: assigneeOf.get(entityId) ?? null,
               note: destino,
             });
@@ -4158,7 +4221,7 @@ export class WmsFacade {
             const q = t.kind === 'LOCATION' ? { sellerId: sid, locationId: t.ref } : { sellerId: sid, sku: t.ref };
             unidades = (await this.inventory.getStock(q)).reduce((s, b) => s + Math.max(0, b.qty), 0) || 10;
           } catch { /* estimación nominal */ }
-          out.push({ type, entityId, entityRef: t.label, sellerId: sid, unidades, prioridad: t.priority, asignadoA: assigneeOf.get(entityId) ?? null });
+          out.push({ type, entityId, entityRef: t.label, sellerId: sid, unidades, paradas: 1, prioridad: t.priority, asignadoA: assigneeOf.get(entityId) ?? null });
         }
       }
     } else if (type === 'RECEIVE') {
@@ -4167,8 +4230,10 @@ export class WmsFacade {
         for (const r of await this.listReceipts(sid)) {
           if (r.status !== 'PENDING' && r.status !== 'PARTIAL') continue;
           const pend = (r.lines || []).reduce((s, l) => s + Math.max(0, l.expectedQty - (l.receivedQty || 0)), 0);
+          // Recepción: cada línea pendiente es un producto distinto que cotejar.
+          const lineasPend = (r.lines || []).filter((l) => Math.max(0, l.expectedQty - (l.receivedQty || 0)) > 0).length;
           const entityId = r.id;
-          out.push({ type, entityId, entityRef: r.reference || r.id, sellerId: sid, unidades: pend, prioridad: r.status === 'PARTIAL' ? 1 : 2, asignadoA: assigneeOf.get(entityId) ?? null });
+          out.push({ type, entityId, entityRef: r.reference || r.id, sellerId: sid, unidades: pend, paradas: Math.max(1, lineasPend), prioridad: r.status === 'PARTIAL' ? 1 : 2, asignadoA: assigneeOf.get(entityId) ?? null });
         }
       }
     } else if (type === 'RESLOT') {
@@ -4210,7 +4275,7 @@ export class WmsFacade {
           if (!target) continue; // ya está en (una de) las más cercanas
           count++;
           const entityId = `${sid}:${e.sku}:${e.loc}`;
-          out.push({ type, entityId, entityRef: `${e.sku}: ${codeOf.get(e.loc)} → ${target.code}`, sellerId: sid, unidades: e.qty, prioridad: 1, asignadoA: assigneeOf.get(entityId) ?? null, note: target.id });
+          out.push({ type, entityId, entityRef: `${e.sku}: ${codeOf.get(e.loc)} → ${target.code}`, sellerId: sid, unidades: e.qty, paradas: 1, prioridad: 1, asignadoA: assigneeOf.get(entityId) ?? null, note: target.id });
         }
       }
     } else if (type === 'PACK') {
@@ -4218,7 +4283,7 @@ export class WmsFacade {
       for (const sid of sellers) {
         for (const o of await this.orders.listOrders(sid)) {
           if (o.status !== 'PICKED') continue;
-          out.push({ type, entityId: o.id, entityRef: o.externalOrderId || o.id, sellerId: sid, unidades: (o.lines || []).reduce((s, l) => s + l.qty, 0), prioridad: Date.parse(o.createdAt) || 1, asignadoA: assigneeOf.get(o.id) ?? null });
+          out.push({ type, entityId: o.id, entityRef: o.externalOrderId || o.id, sellerId: sid, unidades: (o.lines || []).reduce((s, l) => s + l.qty, 0), paradas: Math.max(1, (o.lines || []).length), prioridad: Date.parse(o.createdAt) || 1, asignadoA: assigneeOf.get(o.id) ?? null });
         }
       }
     } else if (type === 'SHIP') {
@@ -4226,7 +4291,7 @@ export class WmsFacade {
       for (const sid of sellers) {
         for (const o of await this.orders.listOrders(sid)) {
           if (o.status !== 'PACKED') continue;
-          out.push({ type, entityId: o.id, entityRef: o.externalOrderId || o.id, sellerId: sid, unidades: (o.lines || []).reduce((s, l) => s + l.qty, 0), prioridad: Date.parse(o.createdAt) || 1, asignadoA: assigneeOf.get(o.id) ?? null });
+          out.push({ type, entityId: o.id, entityRef: o.externalOrderId || o.id, sellerId: sid, unidades: (o.lines || []).reduce((s, l) => s + l.qty, 0), paradas: Math.max(1, (o.lines || []).length), prioridad: Date.parse(o.createdAt) || 1, asignadoA: assigneeOf.get(o.id) ?? null });
         }
       }
     }
@@ -4236,7 +4301,7 @@ export class WmsFacade {
   }
 
   /** Asigna (o reasigna) una tarea a un operario. Idempotente por (type:entityId). */
-  async assignTask(operationId: string, input: { type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; operator: string; unitsEstimate?: number; by: string; note?: string | null; skipOperatorCheck?: boolean; /** El operario se la tomó él mismo del pool (no se la repartieron). */ tomadaPorElMismo?: boolean; motivo?: string | null }): Promise<WorkAssignment> {
+  async assignTask(operationId: string, input: { type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; operator: string; unitsEstimate?: number; by: string; note?: string | null; skipOperatorCheck?: boolean; /** Ubicaciones distintas a visitar (del pool). */ linesEstimate?: number; /** El operario se la tomó él mismo del pool (no se la repartieron). */ tomadaPorElMismo?: boolean; motivo?: string | null }): Promise<WorkAssignment> {
     if (!this.assignments) throw new ValidationError('Módulo de asignación no disponible');
     await this.assertFeature(operationId, 'task_assignment', 'La asignación de tareas');
     // Solo se asigna a un operario ACTIVO de la operación. El auto-balanceo ya parte del
@@ -4254,7 +4319,8 @@ export class WmsFacade {
     const a: WorkAssignment = {
       id, operationId, sellerId: input.sellerId ?? null, type: input.type, entityId: input.entityId,
       entityRef: input.entityRef ?? null, operator: input.operator, status: 'assigned',
-      unitsEstimate: Math.max(0, Math.round(input.unitsEstimate || 0)), assignedBy: input.by,
+      unitsEstimate: Math.max(0, Math.round(input.unitsEstimate || 0)),
+      linesEstimate: Math.max(1, Math.round(input.linesEstimate || 1)), assignedBy: input.by,
       assignedAt: this.clockNow(), startedAt: null, completedAt: null, completedBy: null, note: input.note ?? null,
     };
     await this.assignments.save(a);
@@ -4352,10 +4418,11 @@ export class WmsFacade {
     }
     // Carga actual (en horas) de cada destino, para repartir parejo.
     const horas = new Map(destinos.map((d) => [d.id, 0] as [string, number]));
-    const speed = new Map(destinos.map((d) => [d.id, d.speed] as [string, number]));
+    const modeloDe = new Map(destinos.map((d) => [d.id, d] as const));
     for (const a of await this.assignments.listOpen(operationId)) {
       if (a.operator === operatorId || !horas.has(a.operator)) continue;
-      horas.set(a.operator, horas.get(a.operator)! + a.unitsEstimate / (speed.get(a.operator) || 50));
+      const d = modeloDe.get(a.operator);
+      if (d) horas.set(a.operator, horas.get(a.operator)! + d.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate }));
     }
     const cuenta = new Map(destinos.map((d) => [d.id, 0] as [string, number]));
     let liberadas = 0, reasignadas = 0;
@@ -4366,16 +4433,16 @@ export class WmsFacade {
       liberadas++;
       let mejor = destinos[0], proj = Infinity;
       for (const d of destinos) {
-        const p = horas.get(d.id)! + a.unitsEstimate / d.speed;
+        const p = horas.get(d.id)! + d.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate });
         if (p < proj) { proj = p; mejor = d; }
       }
       try {
         await this.assignTask(operationId, {
           type: a.type, entityId: a.entityId, entityRef: a.entityRef, sellerId: a.sellerId,
-          operator: mejor.id, unitsEstimate: a.unitsEstimate, by, skipOperatorCheck: true,
+          operator: mejor.id, unitsEstimate: a.unitsEstimate, linesEstimate: a.linesEstimate, by, skipOperatorCheck: true,
           note: `reasignada al vaciar a ${operatorId}`,
         });
-        horas.set(mejor.id, horas.get(mejor.id)! + a.unitsEstimate / mejor.speed);
+        horas.set(mejor.id, horas.get(mejor.id)! + mejor.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate }));
         cuenta.set(mejor.id, cuenta.get(mejor.id)! + 1);
         reasignadas++;
       } catch { /* si una no se puede reasignar, queda liberada en el pool */ }
@@ -4395,7 +4462,7 @@ export class WmsFacade {
   }
 
   /** Asignación masiva. */
-  async bulkAssign(operationId: string, items: Array<{ type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; unitsEstimate?: number; operator: string }>, by: string): Promise<{ asignadas: number }> {
+  async bulkAssign(operationId: string, items: Array<{ type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; unitsEstimate?: number; linesEstimate?: number; operator: string }>, by: string): Promise<{ asignadas: number }> {
     let n = 0;
     for (const it of items) { await this.assignTask(operationId, { ...it, by }); n++; }
     return { asignadas: n };
@@ -4403,8 +4470,11 @@ export class WmsFacade {
 
   /**
    * Auto-balanceo: reparte las tareas pendientes (sin asignar) de un tipo entre los
-   * operarios, minimizando el TIEMPO proyectado de término de cada uno (usa la
-   * velocidad real u/h). Devuelve el plan; si execute=true además lo persiste.
+   * operarios, minimizando el TIEMPO proyectado de término de cada uno. El tiempo sale
+   * del modelo (setup + paradas + unidades) con el factor personal de cada operario,
+   * no de una velocidad única en unidades/hora: dos tareas de las mismas unidades
+   * pueden pesar muy distinto según cuántas ubicaciones haya que recorrer.
+   * Devuelve el plan; si execute=true además lo persiste.
    */
   async autoBalance(operationId: string, opts?: { type?: WorkTaskType; execute?: boolean; by?: string; limit?: number }): Promise<{ tipo: WorkTaskType; asignadas: number; ejecutado: boolean; plan: Array<{ entityId: string; entityRef: string; operario: string; unidades: number }>; porOperario: Array<{ operario: string; tareas: number; unidades: number; horasEstimadas: number }> }> {
     const type = opts?.type || 'PICK';
@@ -4418,7 +4488,7 @@ export class WmsFacade {
     if (this.assignments) {
       for (const a of await this.assignments.listOpen(operationId)) {
         const op = roster.find((r) => r.id === a.operator);
-        if (op) { const l = load.get(op.id)!; l.units += a.unitsEstimate; l.hours += a.unitsEstimate / op.speed; }
+        if (op) { const l = load.get(op.id)!; l.units += a.unitsEstimate; l.hours += op.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate }); }
       }
     }
     const plan: Array<{ entityId: string; entityRef: string; operario: string; unidades: number; type: WorkTaskType; sellerId: string }> = [];
@@ -4427,10 +4497,10 @@ export class WmsFacade {
       let best = roster[0];
       let bestProj = Infinity;
       for (const op of roster) {
-        const proj = load.get(op.id)!.hours + task.unidades / op.speed;
+        const proj = load.get(op.id)!.hours + op.horasDe(task.type, { units: task.unidades, lines: task.paradas });
         if (proj < bestProj) { bestProj = proj; best = op; }
       }
-      const l = load.get(best.id)!; l.units += task.unidades; l.hours += task.unidades / best.speed;
+      const l = load.get(best.id)!; l.units += task.unidades; l.hours += best.horasDe(task.type, { units: task.unidades, lines: task.paradas });
       plan.push({ entityId: task.entityId, entityRef: task.entityRef, operario: best.id, unidades: task.unidades, type, sellerId: task.sellerId });
     }
     if (opts?.execute && this.assignments) {
@@ -4442,7 +4512,7 @@ export class WmsFacade {
 
   /** Carga de trabajo por operario (para el panel del supervisor y el copiloto). */
   async operatorLoad(operationId: string): Promise<{
-    operarios: Array<{ operario: string; nombre: string; velocidadUH: number; velocidadTH: number | null; unidadesPorTarea: number | null; tareasAbiertas: number; unidades: number; horasEstimadas: number | null; porTipo: Record<string, number> }>;
+    operarios: Array<{ operario: string; nombre: string; velocidadUH: number; velocidadTH: number | null; unidadesPorTarea: number | null; tareasAbiertas: number; unidades: number; paradas: number; minutosEstimados: number; horasEstimadas: number | null; porTipo: Record<string, number> }>;
     totales: { operarios: number; tareasAbiertas: number; unidades: number; horasEstimadas: number; velocidadUH: number | null; velocidadTH: number | null; unidadesPorTarea: number | null };
     promedios: { tareasAbiertas: number; unidades: number; horasEstimadas: number; velocidadUH: number | null };
     pendientesSinAsignar: Record<string, number>;
@@ -4460,11 +4530,24 @@ export class WmsFacade {
       // de sus tareas abiertas. Sirve para planificar ("¿cuántas alcanza a cerrar
       // en el turno?"), que es distinto de cuántas unidades mueve.
       const unidadesPorTarea = list.length ? Math.round((unidades / list.length) * 10) / 10 : null;
-      const velocidadTH = unidadesPorTarea && unidadesPorTarea > 0 ? Math.round((op.speed / unidadesPorTarea) * 100) / 100 : null;
+      // Las horas salen del modelo, tarea por tarea: cada una aporta su setup, sus
+      // paradas y sus unidades. Dividir el total de unidades por una velocidad única
+      // —como se hacía— daba el mismo número para diez tareas chicas que para una
+      // grande de las mismas unidades, y en el piso no se parecen en nada.
+      const paradas = list.reduce((s, a) => s + Math.max(1, a.linesEstimate || 1), 0);
+      const horas = list.reduce((s, a) => s + op.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate }), 0);
+      // Dos decimales, no uno: una tarea típica dura ~12 minutos y con un decimal
+      // (6 min de resolución) dos cargas claramente distintas se ven idénticas.
+      const horasEstimadas = list.length ? Math.round(horas * 100) / 100 : 0;
+      const minutosEstimados = Math.round(horas * 60);
+      // Tareas/hora: cuántas alcanza a cerrar en una hora al ritmo de SUS tareas.
+      const velocidadTH = horas > 0 ? Math.round((list.length / horas) * 100) / 100 : null;
+      // u/h equivalente de su carga real, no una velocidad fija de la persona.
+      const velocidadUH = horas > 0 ? Math.round((unidades / horas) * 10) / 10 : op.speed;
       return {
-        operario: op.id, nombre: op.name, velocidadUH: op.speed, velocidadTH, unidadesPorTarea,
-        tareasAbiertas: list.length, unidades,
-        horasEstimadas: op.speed > 0 ? Math.round((unidades / op.speed) * 10) / 10 : null, porTipo,
+        operario: op.id, nombre: op.name, velocidadUH, velocidadTH, unidadesPorTarea,
+        tareasAbiertas: list.length, unidades, paradas,
+        horasEstimadas, minutosEstimados, porTipo,
       };
     }).sort((a, b) => (b.horasEstimadas || 0) - (a.horasEstimadas || 0));
 
@@ -4474,7 +4557,7 @@ export class WmsFacade {
     const nOps = operarios.length;
     const tTareas = operarios.reduce((t, o) => t + o.tareasAbiertas, 0);
     const tUnidades = operarios.reduce((t, o) => t + o.unidades, 0);
-    const tHoras = Math.round(operarios.reduce((t, o) => t + (o.horasEstimadas || 0), 0) * 10) / 10;
+    const tHoras = Math.round(operarios.reduce((t, o) => t + (o.horasEstimadas || 0), 0) * 100) / 100;
     const r1 = (x: number) => Math.round(x * 10) / 10;
     const totales = {
       operarios: nOps, tareasAbiertas: tTareas, unidades: tUnidades, horasEstimadas: tHoras,
@@ -5317,7 +5400,7 @@ export class WmsFacade {
     const pool = await this.getTaskPool(operationId, input.type, { limit: 5000 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
     const item = pool.find((p) => p.entityId === input.entityId);
     if (!item) throw new NotFoundError('La tarea ya no está disponible.');
-    const a = await this.assignTask(operationId, { type: input.type, entityId: item.entityId, entityRef: item.entityRef, sellerId: item.sellerId, operator, unitsEstimate: item.unidades, by: operator, note: (item as any).note || 'tomada desde la app', skipOperatorCheck: true, tomadaPorElMismo: true });
+    const a = await this.assignTask(operationId, { type: input.type, entityId: item.entityId, entityRef: item.entityRef, sellerId: item.sellerId, operator, unitsEstimate: item.unidades, linesEstimate: item.paradas, by: operator, note: (item as any).note || 'tomada desde la app', skipOperatorCheck: true, tomadaPorElMismo: true });
     return a;
   }
   /**
@@ -5534,7 +5617,7 @@ export class WmsFacade {
 
   // ---- Registro de tareas (task ledger) -------------------------------------
   /** Abre (o reutiliza) una tarea del ledger para una etapa/entidad. Best-effort. */
-  private async openTask(operationId: string, input: { type: WorkTaskStage; sellerId?: string | null; orderId?: string | null; orderRef?: string | null; entityId: string; entityRef?: string | null; unitsEstimate?: number; by: string; state?: WorkTaskState; note?: string | null }): Promise<WorkTask | null> {
+  private async openTask(operationId: string, input: { type: WorkTaskStage; sellerId?: string | null; orderId?: string | null; orderRef?: string | null; entityId: string; entityRef?: string | null; unitsEstimate?: number; linesEstimate?: number; by: string; state?: WorkTaskState; note?: string | null }): Promise<WorkTask | null> {
     if (!this.taskLedger) return null;
     try {
       const existing = await this.taskLedger.findOpen(operationId, input.type, input.entityId);
@@ -5544,7 +5627,7 @@ export class WmsFacade {
         orderId: input.orderId ?? null, orderRef: input.orderRef ?? null,
         entityId: input.entityId, entityRef: input.entityRef ?? null,
         state: input.state ?? 'pending', unitsEstimate: Math.max(0, Math.round(input.unitsEstimate || 0)),
-        unitsDone: 0,
+        linesEstimate: Math.max(1, Math.round(input.linesEstimate || 1)), unitsDone: 0,
         assignmentId: null, operator: null, createdAt: this.clockNow(), createdBy: input.by,
         startedAt: null, completedAt: null, completedBy: null, note: input.note ?? null,
       });
@@ -5614,6 +5697,218 @@ export class WmsFacade {
       if (hit) oid = hit.id;
     }
     return this.taskLedger.listByOrder(opId, oid);
+  }
+
+  // ---- Aprendizaje del tiempo de tarea (Fase 3) -----------------------------
+  /** Alcance global de la plataforma para los modelos heredados. */
+  private static readonly ALCANCE_PLATAFORMA = '__plataforma__';
+
+  /**
+   * Extrae de las tareas terminadas las observaciones con las que se aprende.
+   *
+   * La duración sale de STARTED → DONE, no de CREATED → DONE: lo primero es trabajo,
+   * lo segundo incluye el rato que la tarea esperó en el pool y en la bandeja. Meter
+   * la espera en el modelo de ejecución es exactamente el error que veníamos
+   * arrastrando desde `tiempos_preparacion`.
+   */
+  async taskTimeObservations(operationId: string, opts?: { desdeDias?: number }): Promise<Observacion[]> {
+    if (!this.taskLedger) return [];
+    const desde = Date.parse(this.clockNow()) - (opts?.desdeDias ?? 60) * 86400000;
+    const tareas = await this.taskLedger.list(operationId, { state: 'done', limit: 5000 }).catch(() => [] as WorkTask[]);
+    const out: Observacion[] = [];
+    for (const t of tareas) {
+      if (!t.startedAt || !t.completedAt) continue;                 // sin ejecución medible
+      if (Date.parse(t.completedAt) < desde) continue;
+      const minutos = (Date.parse(t.completedAt) - Date.parse(t.startedAt)) / 60000;
+      out.push({
+        stage: String(t.type),
+        operator: String(t.completedBy || t.operator || 'system'),
+        minutos,
+        lines: Math.max(1, t.linesEstimate || 1),
+        // Lo realmente ejecutado manda sobre la estimación previa: aprender sobre la
+        // estimación sería aprender lo que ya creíamos, no lo que pasó.
+        units: Math.max(0, t.unitsDone || t.unitsEstimate || 0),
+        at: t.completedAt,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Reajusta los coeficientes de una operación desde lo que de verdad pasó.
+   *
+   * Corre de noche y a mano. Es idempotente y no destruye nada: si un ajuste no se
+   * sostiene (pocas muestras, coeficiente negativo, sin variación), el modelo anterior
+   * se queda como estaba y se informa por qué, en vez de escribir un número peor.
+   */
+  async learnTaskTimes(operationId: string, opts?: { desdeDias?: number }): Promise<{
+    operationId: string;
+    etapas: Array<{ stage: string; ajustado: boolean; motivo?: string; samples: number; errorMedioMin?: number; errorAnteriorMin?: number; coef?: TaskTimeCoefficients; p90Factor?: number; descartes: Record<string, number> }>;
+    operarios: number;
+  }> {
+    if (!this.taskTimeModels) return { operationId, etapas: [], operarios: 0 };
+    const nowIso = this.clockNow();
+    const nowMs = Date.parse(nowIso);
+    const todas = await this.taskTimeObservations(operationId, opts);
+    const porEtapa = new Map<string, Observacion[]>();
+    for (const o of todas) { const a = porEtapa.get(o.stage) || []; a.push(o); porEtapa.set(o.stage, a); }
+
+    const etapas: Array<{ stage: string; ajustado: boolean; motivo?: string; samples: number; errorMedioMin?: number; errorAnteriorMin?: number; coef?: TaskTimeCoefficients; p90Factor?: number; descartes: Record<string, number> }> = [];
+    let operarios = 0;
+
+    // Sin una sola tarea medible, devolver una lista vacía no le dice nada a quien
+    // apretó el botón. La causa casi siempre es la misma y conviene nombrarla: las
+    // tareas se están cerrando sin pasar por "iniciar", así que no hay duración.
+    if (!todas.length) {
+      const cerradas = await this.taskLedger?.list(operationId, { state: 'done', limit: 200 }).catch(() => []) ?? [];
+      const sinInicio = cerradas.filter((t) => !t.startedAt).length;
+      return {
+        operationId,
+        etapas: [{
+          stage: '—', ajustado: false, samples: 0, descartes: {},
+          motivo: cerradas.length === 0
+            ? 'todavía no hay tareas terminadas en el período'
+            : `hay ${cerradas.length} tarea(s) terminada(s) pero ${sinInicio} sin marca de inicio: sin STARTED no hay duración que medir`,
+        }],
+        operarios: 0,
+      };
+    }
+
+    for (const [stage, crudas] of porEtapa) {
+      const { utiles, descartes } = filtrarObservaciones(crudas);
+      if (utiles.length < MIN_MUESTRAS) {
+        etapas.push({ stage, ajustado: false, motivo: `solo ${utiles.length} muestras útiles (se necesitan ${MIN_MUESTRAS})`, samples: utiles.length, descartes });
+        continue;
+      }
+      const fit = ajustarCoeficientes(utiles, nowMs);
+      if (!fit) {
+        etapas.push({ stage, ajustado: false, motivo: 'el ajuste no se sostiene (sin variación suficiente o coeficiente negativo)', samples: utiles.length, descartes });
+        continue;
+      }
+      // ¿Aprender sirvió? Se compara contra el error del modelo que se estaba usando.
+      const previo = await this.taskTimeModels.get(operationId, stage).catch(() => null);
+      const coefPrevio = previo
+        ? { setupMin: previo.setupMin, perLineMin: previo.perLineMin, perUnitMin: previo.perUnitMin }
+        : modeloPorDefecto(stage).coef;
+      const errorAnterior = utiles.reduce((s, o) => s + Math.abs(estimarMinutos(coefPrevio, { lines: o.lines, units: o.units }) - o.minutos), 0) / utiles.length;
+
+      const p90 = factorP90(utiles, fit.coef);
+      await this.taskTimeModels.save({
+        operationId, stage,
+        setupMin: fit.coef.setupMin, perLineMin: fit.coef.perLineMin, perUnitMin: fit.coef.perUnitMin,
+        p90Factor: p90, samples: fit.samples, errorMedioMin: fit.errorMedioMin,
+        descartes, updatedAt: nowIso,
+      });
+      etapas.push({
+        stage, ajustado: true, samples: fit.samples,
+        errorMedioMin: fit.errorMedioMin, errorAnteriorMin: Math.round(errorAnterior * 100) / 100,
+        coef: fit.coef, p90Factor: p90, descartes,
+      });
+
+      // Factor personal por operario, sobre el modelo recién ajustado.
+      const porOperario = new Map<string, Observacion[]>();
+      for (const o of utiles) { const a = porOperario.get(o.operator) || []; a.push(o); porOperario.set(o.operator, a); }
+      for (const [operator, suyas] of porOperario) {
+        const f = factorDeOperario(suyas, fit.coef);
+        if (f == null) continue;
+        await this.taskTimeModels.saveFactor({ operationId, operator, stage, factor: f, samples: suyas.length, updatedAt: nowIso });
+        operarios += 1;
+      }
+    }
+    return { operationId, etapas, operarios };
+  }
+
+  /**
+   * Reajuste global de la plataforma: junta las observaciones de TODAS las operaciones
+   * y deja un modelo que hereda cualquier bodega que todavía no tenga el suyo.
+   *
+   * Es lo que hace que un cliente nuevo arranque con algo parecido a la realidad en vez
+   * de con una constante inventada, desde el primer día y sin haber medido nada.
+   */
+  async learnPlatformTaskTimes(opts?: { desdeDias?: number }): Promise<{ etapas: Array<{ stage: string; ajustado: boolean; samples: number }> }> {
+    if (!this.taskTimeModels) return { etapas: [] };
+    const nowIso = this.clockNow();
+    const nowMs = Date.parse(nowIso);
+    const ops = await this.listOperations().catch(() => []);
+    const todas: Observacion[] = [];
+    for (const op of ops) todas.push(...(await this.taskTimeObservations(op.id, opts).catch(() => [])));
+    const porEtapa = new Map<string, Observacion[]>();
+    for (const o of todas) { const a = porEtapa.get(o.stage) || []; a.push(o); porEtapa.set(o.stage, a); }
+    const etapas: Array<{ stage: string; ajustado: boolean; samples: number }> = [];
+    for (const [stage, crudas] of porEtapa) {
+      const { utiles, descartes } = filtrarObservaciones(crudas);
+      const fit = utiles.length >= MIN_MUESTRAS ? ajustarCoeficientes(utiles, nowMs) : null;
+      if (!fit) { etapas.push({ stage, ajustado: false, samples: utiles.length }); continue; }
+      await this.taskTimeModels.save({
+        operationId: WmsFacade.ALCANCE_PLATAFORMA, stage,
+        setupMin: fit.coef.setupMin, perLineMin: fit.coef.perLineMin, perUnitMin: fit.coef.perUnitMin,
+        p90Factor: factorP90(utiles, fit.coef), samples: fit.samples, errorMedioMin: fit.errorMedioMin,
+        descartes, updatedAt: nowIso,
+      });
+      etapas.push({ stage, ajustado: true, samples: fit.samples });
+    }
+    return { etapas };
+  }
+
+  /**
+   * El modelo que corresponde usar para una etapa (y opcionalmente un operario), con
+   * su origen y sus muestras al lado.
+   *
+   * Nunca falla ni devuelve nulo: si no hay nada aprendido, cae al modelo declarado.
+   * Una estimación siempre existe; lo que cambia es cuánto vale.
+   */
+  async taskTimeModelFor(operationId: string, stage: string, operator?: string | null): Promise<TaskTimeModel & { p90Factor: number; errorMedioMin: number }> {
+    const def = modeloPorDefecto(stage);
+    if (!this.taskTimeModels) return { ...def, p90Factor: 1.5, errorMedioMin: 0 };
+    const [dela, dePlataforma, factores] = await Promise.all([
+      this.taskTimeModels.get(operationId, stage).catch(() => null),
+      this.taskTimeModels.get(WmsFacade.ALCANCE_PLATAFORMA, stage).catch(() => null),
+      operator ? this.taskTimeModels.listFactors(operationId, { operator }).catch(() => [] as StoredOperatorFactor[]) : Promise.resolve([] as StoredOperatorFactor[]),
+    ]);
+    const suyo = factores.find((f) => f.stage === stage);
+    const r = resolverModelo(stage, {
+      operacion: dela ? { coef: { setupMin: dela.setupMin, perLineMin: dela.perLineMin, perUnitMin: dela.perUnitMin }, samples: dela.samples } : null,
+      plataforma: dePlataforma ? { coef: { setupMin: dePlataforma.setupMin, perLineMin: dePlataforma.perLineMin, perUnitMin: dePlataforma.perUnitMin }, samples: dePlataforma.samples } : null,
+      factorOperario: suyo ? suyo.factor : null,
+    });
+    const usado = r.source === 'operacion' || r.source === 'operario' ? dela : r.source === 'plataforma' ? dePlataforma : null;
+    return {
+      stage, coef: conFactor(r.coef, r.factor), source: r.source, samples: r.samples,
+      operatorFactor: r.factor,
+      p90Factor: usado?.p90Factor ?? 1.5,
+      errorMedioMin: usado?.errorMedioMin ?? 0,
+    };
+  }
+
+  /**
+   * Cuánto va a demorar una tarea concreta: mediana y p90, con el origen del modelo.
+   *
+   * Los dos números existen porque se usan para cosas distintas. El p50 reparte carga
+   * —si se usara el p90 para eso, todo el mundo parecería saturado—. El p90 es el que
+   * se le promete a un cliente, porque comprometerse con la mediana es fallar la mitad
+   * de las veces.
+   */
+  async estimateTask(operationId: string, stage: string, tarea: { units?: number | null; lines?: number | null }, operator?: string | null): Promise<{
+    p50Min: number; p90Min: number; source: TaskTimeSource; samples: number; errorMedioMin: number; coef: TaskTimeCoefficients;
+  }> {
+    const m = await this.taskTimeModelFor(operationId, stage, operator);
+    const p50 = estimarMinutos(m.coef, tarea);
+    return {
+      p50Min: p50,
+      p90Min: Math.round(p50 * m.p90Factor * 10) / 10,
+      source: m.source, samples: m.samples, errorMedioMin: m.errorMedioMin, coef: m.coef,
+    };
+  }
+
+  /** Los modelos vigentes de una operación (panel de supervisión). */
+  async taskTimeModels_list(operationId: string): Promise<{ operacion: StoredTaskTimeModel[]; plataforma: StoredTaskTimeModel[]; factores: StoredOperatorFactor[] }> {
+    if (!this.taskTimeModels) return { operacion: [], plataforma: [], factores: [] };
+    const [operacion, plataforma, factores] = await Promise.all([
+      this.taskTimeModels.list(operationId).catch(() => []),
+      this.taskTimeModels.list(WmsFacade.ALCANCE_PLATAFORMA).catch(() => []),
+      this.taskTimeModels.listFactors(operationId).catch(() => []),
+    ]);
+    return { operacion, plataforma, factores };
   }
 
   // ---- Auditoría fina: las preguntas que el libro de eventos hace responsables ----
@@ -5713,29 +6008,29 @@ export class WmsFacade {
   }
 
   /** Carga actual (unidades/horas) por operario, a partir de sus asignaciones abiertas. */
-  private async currentLoad(operationId: string): Promise<{ roster: Array<{ id: string; name: string; speed: number }>; load: Map<string, { hours: number }> }> {
+  private async currentLoad(operationId: string): Promise<{ roster: Awaited<ReturnType<WmsFacade['operatorRoster']>>; load: Map<string, { hours: number }> }> {
     const roster = await this.operatorRoster(operationId);
     const load = new Map<string, { hours: number }>();
     for (const op of roster) load.set(op.id, { hours: 0 });
     if (this.assignments) {
       for (const a of await this.assignments.listOpen(operationId)) {
         const op = roster.find((r) => r.id === a.operator);
-        if (op) load.get(op.id)!.hours += a.unitsEstimate / op.speed;
+        if (op) load.get(op.id)!.hours += op.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate });
       }
     }
     return { roster, load };
   }
 
   /** Asigna UNA tarea al operario con menor tiempo proyectado. Devuelve true si asignó. */
-  private async autoAssignOne(operationId: string, type: WorkTaskType, task: { entityId: string; entityRef: string | null; sellerId: string | null; unidades: number; note?: string | null }): Promise<boolean> {
+  private async autoAssignOne(operationId: string, type: WorkTaskType, task: { entityId: string; entityRef: string | null; sellerId: string | null; unidades: number; paradas?: number; note?: string | null }): Promise<boolean> {
     if (!this.assignments) return false;
     const existing = await this.assignments.get(`${type}:${task.entityId}`);
     if (existing && (existing.status === 'assigned' || existing.status === 'in_progress')) return false; // ya asignada
     const { roster, load } = await this.currentLoad(operationId);
     if (!roster.length) return false;
     let best = roster[0]; let bestProj = Infinity;
-    for (const op of roster) { const proj = load.get(op.id)!.hours + task.unidades / op.speed; if (proj < bestProj) { bestProj = proj; best = op; } }
-    await this.assignTask(operationId, { type, entityId: task.entityId, entityRef: task.entityRef, sellerId: task.sellerId, operator: best.id, unitsEstimate: task.unidades, by: 'auto-balance', note: task.note ?? 'auto-balanceo continuo', skipOperatorCheck: true });
+    for (const op of roster) { const proj = load.get(op.id)!.hours + op.horasDe(type, { units: task.unidades, lines: task.paradas ?? 1 }); if (proj < bestProj) { bestProj = proj; best = op; } }
+    await this.assignTask(operationId, { type, entityId: task.entityId, entityRef: task.entityRef, sellerId: task.sellerId, operator: best.id, unitsEstimate: task.unidades, linesEstimate: task.paradas ?? 1, by: 'auto-balance', note: task.note ?? 'auto-balanceo continuo', skipOperatorCheck: true });
     return true;
   }
 
@@ -5743,7 +6038,7 @@ export class WmsFacade {
   private async rebalancePending(operationId: string, type: WorkTaskType): Promise<number> {
     const pool = await this.getTaskPool(operationId, type, { onlyUnassigned: true });
     let n = 0;
-    for (const t of pool) if (await this.autoAssignOne(operationId, type, { entityId: t.entityId, entityRef: t.entityRef, sellerId: t.sellerId, unidades: t.unidades, note: t.note })) n++;
+    for (const t of pool) if (await this.autoAssignOne(operationId, type, { entityId: t.entityId, entityRef: t.entityRef, sellerId: t.sellerId, unidades: t.unidades, paradas: t.paradas, note: t.note })) n++;
     return n;
   }
 
@@ -5782,7 +6077,7 @@ export class WmsFacade {
     }
     for (const arr of openByOp.values()) arr.sort((a, b) => (a.assignedAt < b.assignedAt ? -1 : 1));
     const hours = new Map<string, number>();
-    for (const r of roster) hours.set(r.id, (openByOp.get(r.id) || []).reduce((s, a) => s + a.unitsEstimate / r.speed, 0));
+    for (const r of roster) hours.set(r.id, (openByOp.get(r.id) || []).reduce((s, a) => s + r.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate }), 0));
 
     const movimientos: Array<{ tarea: string; de: string; a: string; unidades: number }> = [];
     let guard = 0;
@@ -5796,8 +6091,8 @@ export class WmsFacade {
       // Elige la tarea que deja los tiempos más parejos tras moverla.
       let pick: WorkAssignment | null = null, bestScore = Infinity;
       for (const a of movable) {
-        const newHi = hours.get(hi.id)! - a.unitsEstimate / speed.get(hi.id)!;
-        const newLo = hours.get(lo.id)! + a.unitsEstimate / speed.get(lo.id)!;
+        const newHi = hours.get(hi.id)! - hi.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate });
+        const newLo = hours.get(lo.id)! + lo.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate });
         const score = Math.abs(newHi - newLo);
         if (score < bestScore) { bestScore = score; pick = a; }
       }

@@ -20,6 +20,7 @@ import {
   WorkAssignmentRepository,
   WorkTaskRepository,
   TaskEventRepository,
+  TaskTimeModelRepository,
   AgentRuleConfigRepository,
   AgentAlertRepository,
   PlanConfigRepository,
@@ -61,6 +62,8 @@ import {
 import type { TaskEvent, TaskEventType } from '../../domain/task-event';
 import {
   Announcement,
+  StoredTaskTimeModel,
+  StoredOperatorFactor,
   AnnouncementClick,
   AuthToken,
   AuthTokenKind,
@@ -706,6 +709,25 @@ export class InMemoryWorkAssignmentRepository implements WorkAssignmentRepositor
  * Libro de eventos de tarea en memoria. Append-only de verdad: no hay forma de
  * modificar ni borrar una fila una vez escrita, igual que en la versión Prisma.
  */
+export class InMemoryTaskTimeModelRepository implements TaskTimeModelRepository {
+  private modelos = new Map<string, StoredTaskTimeModel>();
+  private factores = new Map<string, StoredOperatorFactor>();
+  async save(m: StoredTaskTimeModel): Promise<void> { this.modelos.set(`${m.operationId}|${m.stage}`, { ...m }); }
+  async get(operationId: string, stage: string): Promise<StoredTaskTimeModel | null> {
+    const m = this.modelos.get(`${operationId}|${stage}`);
+    return m ? { ...m } : null;
+  }
+  async list(operationId: string): Promise<StoredTaskTimeModel[]> {
+    return [...this.modelos.values()].filter((m) => m.operationId === operationId).map((m) => ({ ...m }));
+  }
+  async saveFactor(f: StoredOperatorFactor): Promise<void> { this.factores.set(`${f.operationId}|${f.operator}|${f.stage}`, { ...f }); }
+  async listFactors(operationId: string, opts?: { operator?: string | null }): Promise<StoredOperatorFactor[]> {
+    return [...this.factores.values()]
+      .filter((f) => f.operationId === operationId && (!opts?.operator || f.operator === opts.operator))
+      .map((f) => ({ ...f }));
+  }
+}
+
 export class InMemoryTaskEventRepository implements TaskEventRepository {
   private store: TaskEvent[] = [];
   async append(events: TaskEvent[]): Promise<void> {

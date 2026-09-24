@@ -83,10 +83,13 @@
       if (rest.length) laborFlush();   // sigue con la siguiente
     }).catch(function (e) {
       laborFlushing = false;
-      // Un 4xx es una muestra que el servidor nunca va a aceptar (tarea mal formada,
-      // sesión vencida): se descarta para que no bloquee a las que vienen detrás.
-      // Un fallo de red se deja en la cola y se reintenta.
-      if (/Error 4\d\d/.test(e && e.message)) { var rest = laborQueue(); rest.shift(); laborQueueSave(rest); }
+      // Un 4xx que NO sea de sesión es una muestra que el servidor nunca va a aceptar
+      // (mal formada): se descarta para que no bloquee a las que vienen detrás. Un 401
+      // es otra cosa — la muestra es válida y el problema es el token: se conserva y se
+      // reintenta cuando el operario vuelva a entrar. Antes un turno entero de
+      // mediciones se perdía en silencio justo por esto.
+      var st = e && e.status;
+      if (st && st >= 400 && st < 500 && st !== 401) { var rest = laborQueue(); rest.shift(); laborQueueSave(rest); }
     });
   }
   // Reintenta al volver la conexión y cada minuto mientras la app esté abierta.
@@ -103,20 +106,52 @@
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     }).then(function (res) {
       return res.text().then(function (t) {
-        var data = t ? JSON.parse(t) : {};
+        // Una respuesta que no es JSON (un 502 del proxy, un portal cautivo de la wifi
+        // de la bodega) reventaba con un SyntaxError crudo en pantalla.
+        var data = {};
+        if (t) { try { data = JSON.parse(t); } catch (e) { data = { message: 'El servidor respondió algo que no se entiende (' + res.status + ')' }; } }
         if (!res.ok) {
           var msg = (data && (data.detail || data.message)) || ('Error ' + res.status);
           if (typeof msg === 'object') msg = JSON.stringify(msg);
-          throw new Error(msg);
+          var err = new Error(msg);
+          // El status se conserva en el error. Antes se perdía, y el único chequeo del
+          // archivo era una expresión regular sobre el TEXTO del mensaje — que fallaba
+          // justo cuando el servidor sí mandaba un detalle.
+          err.status = res.status;
+          if (res.status === 401) sesionVencida();
+          throw err;
         }
         return data;
       });
     });
   }
 
+  /**
+   * La sesión expiró (el token dura 12 horas y un turno la cruza).
+   *
+   * Antes no pasaba nada: la bandeja fallaba con un mensaje rojo cada 30 segundos, sin
+   * decir nunca que había que volver a entrar, y las mediciones de productividad
+   * encoladas se tiraban a la basura al recibir el 401. Ahora se avisa una sola vez, se
+   * vuelve al login y **la cola se conserva**: esas muestras son trabajo real medido y
+   * se envían solas cuando el operario vuelve a entrar.
+   */
+  var avisoSesion = false;
+  function sesionVencida() {
+    if (avisoSesion) return;
+    avisoSesion = true;
+    cfg.token = ''; save();
+    user = null;
+    if (msgTimer) { clearInterval(msgTimer); msgTimer = null; }
+    MSGS = []; msgLeidoAt = null;
+    if ($('msg-dot')) $('msg-dot').classList.remove('on');
+    toast('Tu sesión expiró. Vuelve a entrar.', false);
+    show('login');
+    setTimeout(function () { avisoSesion = false; }, 5000);
+  }
+
   // ---- Navegación -----------------------------------------------------------
   function show(id) {
-    ['login', 'home', 'scan', 'quick'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
+    ['login', 'home', 'scan', 'quick', 'msgs'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
     if (id !== 'scan') stopCamera();
     if (id === 'home') { loadBoard(); if (!boardTimer) boardTimer = setInterval(function () { if ($('home').classList.contains('on') && !document.hidden) loadBoard(); }, 30000); }
   }
@@ -160,7 +195,22 @@
       .catch(function (e) { toast('No se pudo conectar: ' + e.message, false); });
   });
 
-  $('btn-logout').addEventListener('click', function () { user = null; show('login'); });
+  $('btn-logout').addEventListener('click', function () {
+    // Salir tiene que BORRAR la credencial. Antes solo volvía a la pantalla de login
+    // con el token intacto en el aparato: cualquiera que recargara la página entraba.
+    // La cola de mediciones NO se toca: es trabajo que ya ocurrió y se manda cuando
+    // alguien vuelva a entrar.
+    cfg.token = ''; save();
+    user = null; opId = null; task = null;
+    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
+    // El hilo de mensajes es de una persona: al salir no puede quedar en pantalla para
+    // quien entre después en el mismo aparato compartido.
+    if (msgTimer) { clearInterval(msgTimer); msgTimer = null; }
+    MSGS = []; msgLeidoAt = null;
+    if ($('msg-list')) $('msg-list').innerHTML = '';
+    if ($('msg-dot')) $('msg-dot').classList.remove('on');
+    show('login');
+  });
 
   // ---- Selección de operación ----------------------------------------------
   var OP_META = {
@@ -218,6 +268,7 @@
     api('/assignments/board?operationId=' + encodeURIComponent(oid) + '&operator=' + encodeURIComponent(user.id))
       .then(function (b) { board = b; renderBoard(); })
       .catch(function (e) { toast('No pude cargar tus tareas: ' + e.message, false); });
+    refrescaNoLeidos();
   }
   function taskTitle(t) { return (TI[t.type] || '•') + ' ' + (TL[t.type] || t.type); }
   function renderBoard() {
@@ -275,7 +326,19 @@
   // Inicia una tarea de la bandeja: marca in_progress y abre el flujo correspondiente con contexto.
   function startAssigned(t) {
     if (!t) return;
-    api('/assignments/start', { method: 'POST', body: { operationId: opIdOrNull(), type: t.type, entityId: t.entityId } }).catch(function () {});
+    // Marcar la tarea como iniciada NO es opcional: de ese instante salen los tiempos
+    // en cola / en bandeja / ejecución que ve el supervisor, y el modelo que aprende
+    // cuánto dura cada tarea. Se descartaba el error en silencio, así que el operario
+    // trabajaba y el panel nunca veía la tarea empezada.
+    // `clientAt` deja constancia del reloj del aparato, para descartar mediciones de un
+    // teléfono desfasado sin castigar al que trabaja donde no llega la antena.
+    api('/assignments/start', {
+      method: 'POST',
+      body: { operationId: opIdOrNull(), type: t.type, entityId: t.entityId, clientAt: new Date().toISOString() },
+    }).catch(function (e) {
+      if (e && e.status === 401) return;          // ya se avisó y se volvió al login
+      toast('No se pudo marcar la tarea como iniciada: ' + (e && e.message || 'sin conexión'), false);
+    });
     task = t;
     if (t.sellerId) { cfg.seller = t.sellerId; save(); }
     if (t.type === 'PICK') { startOp('pick'); loadTaskPicklist(); return; }
@@ -421,6 +484,7 @@
   $('btn-qcancel').addEventListener('click', function () { task = null; show('home'); });
 
   function startOp(which) {
+    avisoCamara = '';   // se vuelve a evaluar en cada operación
     op = which; steps = OP_META[op].steps.slice(); stepIdx = 0; captured = {};
     taskStartAt = new Date().toISOString(); // G4: marca de inicio real de la tarea
     $('s-title').textContent = OP_META[op].title;
@@ -430,7 +494,10 @@
     $('qtywrap').style.display = 'none';
     $('btn-confirm').style.display = 'none';
     $('result').style.display = 'none';
-    $('manual').style.display = 'none';
+    // El campo de código NO se esconde. Venía de cuando era el plan B de la cámara:
+    // en un iPhone (sin lector nativo) y con pistola era la única entrada posible, y
+    // estaba oculta. Ahora se muestra siempre y la cámara es la que sobra si no está.
+    $('manual').style.display = '';
     $('after').style.display = 'none';
     if (!task) setTaskCtx('');
     show('scan');
@@ -443,12 +510,22 @@
   function enterStep() {
     var s = steps[stepIdx];
     lastRejected = '';
-    $('s-step').textContent = s ? STEP_HINT[s] : 'Listo';
-    $('cam-hint').textContent = s ? STEP_HINT[s] : '';
+    var hint = s ? STEP_HINT[s] : 'Listo';
+    $('s-step').textContent = hint;
+    $('cam-hint').textContent = s ? hint : '';
+    // El rótulo del campo dice QUÉ escanear en este paso: con pistola no hay visor de
+    // cámara con texto encima, así que esta es la única indicación que el operario ve.
+    // El rótulo dice QUÉ escanear en este paso, y arrastra el aviso de que en este
+    // equipo no hay cámara: si se pisara uno con otro, el operario perdería la
+    // instrucción del paso, que es lo que de verdad necesita leer.
+    var lbl = $('m-label');
+    if (lbl) lbl.textContent = (s ? hint : 'Listo') + (avisoCamara ? ' · ' + avisoCamara : '');
+    var inp = $('m-code');
+    if (inp) inp.placeholder = (s === 'product') ? 'EAN / DUN del producto' : 'Código de ubicación';
     $('picklist').style.display = 'none'; $('picklist').innerHTML = '';
     if (s && s !== 'product') renderPicklist(s);
+    enfocaCodigo();   // la pistola escribe donde está el cursor
   }
-  function updateStepHint() { enterStep(); }
 
   // Ordena y rotula las ubicaciones candidatas según el paso.
   function renderPicklist(step) {
@@ -576,9 +653,9 @@
 
   function advance() {
     stepIdx += 1;
-    if (stepIdx < steps.length) { updateStepHint(); return; }
+    if (stepIdx < steps.length) { enterStep(); return; }
     // Todos los pasos capturados
-    updateStepHint();
+    enterStep();
     if (op === 'stock') { doStockLookup(); return; }
     setupQty();
   }
@@ -705,18 +782,61 @@
       .catch(function (e) { toast(e.message, false); });
   }
 
-  // ---- Cámara + lector ------------------------------------------------------
+  // ---- Entrada de código: pistola, cámara y teclado --------------------------
+  // Tres caminos hacia la MISMA función `onDetect`, porque en una bodega conviven los
+  // tres: un lector de mano o de anillo que teclea el código y da Enter, la cámara del
+  // teléfono donde el navegador la soporta, y los dedos cuando el código está rayado.
+  //
+  // Antes solo existía la cámara, y el campo de texto aparecía únicamente si la cámara
+  // fallaba. Eso dejaba fuera a toda pistola (que no dispara ningún evento que la app
+  // escuchara) y a todo iPhone (Safari no tiene el lector nativo del navegador).
   var stream = null, detector = null, scanning = false, lastCode = '', lastAt = 0;
+
+  /** ¿Ya vimos este código hace nada? Evita el doble disparo entre cámara y pistola. */
+  function esRepetido(raw) {
+    var now = Date.now();
+    if (raw === lastCode && now - lastAt < 1600) return true;
+    lastCode = raw; lastAt = now;
+    return false;
+  }
 
   function startCamera() {
     var video = $('video');
-    if (!('BarcodeDetector' in window)) { showManual('Este navegador no tiene lector nativo de códigos. Usa el ingreso manual.'); return; }
+    // La cámara es un extra, no el camino principal: si no está, la app sigue
+    // perfectamente usable con la pistola o el teclado.
+    if (!('BarcodeDetector' in window)) { sinCamara('Este equipo lee con pistola o a mano.'); return; }
     try { detector = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'] }); }
-    catch (e) { showManual('No se pudo iniciar el lector. Usa el ingreso manual.'); return; }
+    catch (e) { sinCamara('Este equipo lee con pistola o a mano.'); return; }
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       .then(function (s) { stream = s; video.srcObject = s; return video.play(); })
       .then(function () { scanning = true; $('cam-hint').textContent = STEP_HINT[steps[stepIdx]] || ''; requestAnimationFrame(loop); })
-      .catch(function () { showManual('Sin acceso a la cámara. Usa el ingreso manual.'); });
+      .catch(function () { sinCamara('Sin acceso a la cámara. Usa la pistola o escribe el código.'); });
+  }
+
+  /** Sin cámara: se oculta el visor para no ocupar media pantalla con un recuadro negro. */
+  var avisoCamara = '';
+  function sinCamara(msg) {
+    var cam = $('cam'); if (cam) cam.style.display = 'none';
+    var f = $('manual'); if (f) f.style.display = '';   // por si algo la escondió
+    avisoCamara = msg;
+    enterStep();        // repinta el rótulo del paso con el aviso incorporado
+    enfocaCodigo();
+  }
+
+  /**
+   * Devuelve el foco al campo de código.
+   *
+   * Una pistola HID es un teclado: escribe donde esté el cursor. Si el foco se fue a
+   * otro lado, el disparo se pierde en el vacío y el operario no entiende por qué no
+   * pasa nada. Por eso se reclama el foco al entrar a cada paso y después de cada
+   * confirmación.
+   *
+   * `preventScroll` evita que el teclado en pantalla salte en un teléfono: el campo ya
+   * está a la vista y el salto marea.
+   */
+  function enfocaCodigo() {
+    var el = $('m-code'); if (!el) return;
+    try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
   }
 
   function loop() {
@@ -724,8 +844,8 @@
     var video = $('video');
     detector.detect(video).then(function (codes) {
       if (codes && codes.length) {
-        var raw = codes[0].rawValue, now = Date.now();
-        if (raw && (raw !== lastCode || now - lastAt > 1600)) { lastCode = raw; lastAt = now; onDetect(raw); }
+        var raw = codes[0].rawValue;
+        if (raw && !esRepetido(raw)) onDetect(raw);
       }
     }).catch(function () {}).then(function () { if (scanning) requestAnimationFrame(loop); });
   }
@@ -735,12 +855,18 @@
     if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
   }
 
-  function showManual(msg) {
-    $('cam-hint').textContent = msg;
-    $('manual').style.display = '';
-  }
-  $('btn-mresolve').addEventListener('click', function () {
-    var code = $('m-code').value.trim(); if (code) onDetect(code); $('m-code').value = '';
+  // El campo es un <form>: el Enter de la pistola lo envía. Esto es TODO lo que hace
+  // falta para soportar un lector HID — no hay que detectar la velocidad de tecleo ni
+  // adivinar si fue una persona o un aparato.
+  $('manual').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var el = $('m-code'), code = (el.value || '').trim();
+    el.value = '';
+    enfocaCodigo();                       // listo para el siguiente disparo
+    if (!code) return;
+    if (esRepetido(code)) return;         // la pistola a veces dispara dos veces
+    if (navigator.vibrate) navigator.vibrate(40);
+    onDetect(code);
   });
 
   $('btn-back').addEventListener('click', function () { task = null; show('home'); });
@@ -800,6 +926,168 @@
   }
 
   // ---- Utils ----------------------------------------------------------------
+  // ---- Canal con la administración ------------------------------------------
+  // El panel del administrador podía escribirle a un operario desde antes, y el
+  // copiloto incluso le respondía al admin "le llega a su app". No le llegaba: la app
+  // nunca leyó ese canal. Esto lo vuelve cierto.
+  //
+  // El hilo es el del propio operario y el servidor lo fuerza: el endpoint ignora el
+  // `threadUserId` que mande alguien sin `chat:manage`, así que desde acá no hay forma
+  // de leer la conversación de otro aunque se manipule la petición.
+  var MSGS = [];            // último hilo cargado
+  var msgLeidoAt = null;    // hasta cuándo leyó este operario (para el no-leído)
+  var msgTimer = null;
+  var msgEnviando = false;
+
+  function fechaCorta(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    var hoy = new Date();
+    var mismoDia = d.toDateString() === hoy.toDateString();
+    var hora = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    return mismoDia ? hora : ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + ' ' + hora;
+  }
+
+  /** Mensajes que llegaron después de la última vez que este operario abrió la bandeja. */
+  function contarNoLeidos() {
+    if (!user) return 0;
+    var corte = msgLeidoAt ? Date.parse(msgLeidoAt) : 0;
+    return MSGS.filter(function (m) {
+      return m.senderId !== user.id && Date.parse(m.at) > corte;
+    }).length;
+  }
+
+  function pintaNoLeidos() {
+    var d = $('msg-dot'); if (!d) return;
+    var n = contarNoLeidos();
+    d.textContent = n > 9 ? '9+' : String(n);
+    d.classList.toggle('on', n > 0);
+  }
+
+  /**
+   * Trae el hilo y el estado de lectura. Se llama desde el tablero (cada 30 s) y con
+   * más frecuencia mientras la pantalla de mensajes está abierta.
+   *
+   * Un fallo acá NO grita: si la bodega se quedó sin señal, el operario ya lo va a
+   * notar por sus tareas; un segundo mensaje rojo por lo mismo solo estorba.
+   */
+  function refrescaNoLeidos() {
+    var oid = opIdOrNull(); if (!oid || !user || !cfg.token) return Promise.resolve();
+    return Promise.all([
+      api('/ops-channel/messages?operationId=' + encodeURIComponent(oid)),
+      api('/ops-channel/read?operationId=' + encodeURIComponent(oid)).catch(function () { return null; }),
+    ]).then(function (r) {
+      MSGS = Array.isArray(r[0]) ? r[0] : [];
+      if (r[1] && typeof r[1].operatorReadAt !== 'undefined') msgLeidoAt = r[1].operatorReadAt;
+      pintaNoLeidos();
+      if ($('msgs').classList.contains('on')) renderMsgs();
+    }).catch(function () { /* silencioso a propósito */ });
+  }
+
+  function renderMsgs() {
+    var cont = $('msg-list'); if (!cont) return;
+    if (!MSGS.length) {
+      cont.innerHTML = '<div class="msgs-empty">Aún no hay mensajes.<br>Escribe si necesitas algo de la administración: un faltante, una duda de una orden, un problema con una ubicación.</div>';
+      return;
+    }
+    var ordenados = MSGS.slice().sort(function (a, b) { return Date.parse(a.at) - Date.parse(b.at); });
+    cont.innerHTML = ordenados.map(function (m) {
+      var mio = user && m.senderId === user.id;
+      var cuerpo = m.text || m.note || (m.kind === 'voice' ? 'Mensaje de voz' : '');
+      var audio = '';
+      if (m.kind === 'voice' && m.audioId) {
+        audio = '<div class="audio"><button class="btn alt" style="padding:9px" data-audio="' + esc(m.audioId) + '">▶ Escuchar'
+          + (m.durationSec ? ' (' + m.durationSec + 's)' : '') + '</button></div>';
+      }
+      return '<div class="msg ' + (mio ? 'me' : 'them') + (m.kind === 'voice' ? ' voice' : '') + '">'
+        + (mio ? '' : '<div class="who">' + esc(m.senderName || 'Administración') + '</div>')
+        + esc(cuerpo) + audio
+        + '<div class="when">' + fechaCorta(m.at) + '</div></div>';
+    }).join('');
+    cont.scrollTop = cont.scrollHeight;
+    try { cont.lastElementChild.scrollIntoView({ block: 'end' }); } catch (e) {}
+  }
+
+  /** Deja constancia de que el operario ya vio el hilo. El "visto" del panel sale de acá. */
+  function marcaLeido() {
+    var oid = opIdOrNull(); if (!oid || !user) return;
+    api('/ops-channel/read', { method: 'POST', body: { operationId: oid } })
+      .then(function (r) { if (r && typeof r.operatorReadAt !== 'undefined') msgLeidoAt = r.operatorReadAt; pintaNoLeidos(); })
+      .catch(function () {});
+  }
+
+  function abreMensajes() {
+    show('msgs');
+    renderMsgs();
+    refrescaNoLeidos().then(marcaLeido);
+    if (!msgTimer) {
+      msgTimer = setInterval(function () {
+        if (!$('msgs').classList.contains('on') || document.hidden) return;
+        refrescaNoLeidos().then(function () { if (contarNoLeidos()) marcaLeido(); });
+      }, 12000);
+    }
+  }
+
+  if ($('btn-msgs')) $('btn-msgs').addEventListener('click', abreMensajes);
+  if ($('btn-msgback')) $('btn-msgback').addEventListener('click', function () { show('home'); });
+
+  // El teclado del teléfono manda Enter; en un textarea eso sería un salto de línea.
+  // Enter envía, Shift+Enter (teclado físico de una pistola con dock) hace el salto.
+  if ($('msg-text')) {
+    $('msg-text').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviaMensaje(); }
+    });
+  }
+  if ($('msg-form')) {
+    $('msg-form').addEventListener('submit', function (e) { e.preventDefault(); enviaMensaje(); });
+  }
+
+  function enviaMensaje() {
+    if (msgEnviando) return;
+    var el = $('msg-text'), texto = (el.value || '').trim();
+    if (!texto) return;
+    var oid = opIdOrNull();
+    if (!oid) { toast('No sé a qué operación mandar el mensaje', false); return; }
+    msgEnviando = true; $('msg-send').disabled = true;
+    api('/ops-channel/messages', { method: 'POST', body: { operationId: oid, kind: 'text', text: texto } })
+      .then(function (m) {
+        el.value = '';
+        if (m && m.id) MSGS.push(m);
+        renderMsgs();
+        marcaLeido();
+      })
+      .catch(function (e) {
+        // El envío puede fallar porque la operación no tiene el canal habilitado. Eso
+        // no es un problema de red y decirle "sin conexión" al operario lo manda a
+        // buscar señal por nada.
+        toast('No se pudo enviar: ' + (e && e.message || 'sin conexión'), false);
+      })
+      .then(function () { msgEnviando = false; $('msg-send').disabled = false; });
+  }
+
+  // Reproducción de una nota de voz que dejó la administración. El audio se pide solo
+  // cuando se toca: el listado trae la referencia, no los megabytes.
+  if ($('msg-list')) {
+    $('msg-list').addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-audio]') : null;
+      if (!b) return;
+      var oid = opIdOrNull(); if (!oid) return;
+      b.disabled = true; b.textContent = 'Cargando…';
+      api('/ops-channel/audio/' + encodeURIComponent(b.getAttribute('data-audio')) + '?operationId=' + encodeURIComponent(oid))
+        .then(function (a) {
+          if (!a || !a.dataBase64) throw new Error('el audio ya no está disponible');
+          var au = document.createElement('audio');
+          au.controls = true; au.autoplay = true;
+          au.src = 'data:' + (a.mime || 'audio/webm') + ';base64,' + a.dataBase64;
+          b.parentNode.replaceChild(au, b);
+        })
+        .catch(function (err) {
+          b.disabled = false; b.textContent = '▶ Escuchar';
+          toast('No se pudo reproducir: ' + (err && err.message || 'sin conexión'), false);
+        });
+    });
+  }
+
   function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
 
   // ---- Service worker -------------------------------------------------------

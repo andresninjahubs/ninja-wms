@@ -116,7 +116,7 @@ export class AuthController {
   @Post('register')
   async register(@Body() dto: RegisterDto) {
     const res = await this.wms.registerSelfServe({
-      companyName: dto.companyName, name: dto.name, email: dto.email, password: dto.password, track: dto.track,
+      companyName: dto.companyName, name: dto.name, email: dto.email, phone: dto.phone, password: dto.password, track: dto.track,
     });
     await this.wms.recordLogin(res.user.id, res.user.operationId ?? null);
     return { authenticated: true, token: res.token, user: res.user, operationId: res.operationId, sellerId: res.sellerId, verification: res.verification };

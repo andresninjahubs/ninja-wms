@@ -61,6 +61,13 @@
     .op .t{font-weight:700}
     .op.wide{grid-column:1/3;flex-direction:row;justify-content:center}
     .cam{position:relative;background:#000;border-radius:16px;overflow:hidden;aspect-ratio:4/3;max-height:40vh}
+    /* El campo de código: la entrada principal cuando se trabaja con pistola. Grande,
+       monoespaciado y con foco marcado, porque es donde el operario mira para saber
+       que el disparo entró. */
+    #manual{margin:12px 0 4px}
+    #manual #m-code{width:100%;font-size:19px;letter-spacing:.04em;padding:16px 14px;border:2px solid var(--line);border-radius:14px;background:#fff}
+    #manual #m-code:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 4px rgba(18,183,106,.16)}
+    #m-label{display:block;font-weight:700;margin-bottom:7px}
     .cam video{width:100%;height:100%;object-fit:cover}
     .cam .frame{position:absolute;inset:18% 12%;border:3px solid rgba(255,255,255,.85);border-radius:14px;box-shadow:0 0 0 2000px rgba(0,0,0,.25)}
     .cam .laser{position:absolute;left:12%;right:12%;top:50%;height:2px;background:var(--signal);box-shadow:0 0 8px var(--signal)}
@@ -118,6 +125,27 @@
     .taskctx .lines{margin-top:6px;display:flex;flex-direction:column;gap:3px}
     .taskctx .ln{display:flex;justify-content:space-between;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
     .taskctx .ln.done{opacity:.55;text-decoration:line-through}
+    /* Canal con la administración. El panel ya podía escribirle al operario; la app
+       nunca leía ese canal, así que el copiloto afirmaba "le llega a su app" y no
+       llegaba. Esto es esa bandeja. */
+    .iconbtn.badge{position:relative}
+    .iconbtn .dot{position:absolute;top:-5px;right:-5px;min-width:19px;height:19px;padding:0 5px;border-radius:10px;background:var(--crit);color:#fff;font-size:11px;font-weight:800;display:none;align-items:center;justify-content:center;line-height:1}
+    .iconbtn .dot.on{display:flex}
+    .msgs{display:flex;flex-direction:column;gap:10px;flex:1}
+    .msg{max-width:84%;border-radius:16px;padding:10px 13px;font-size:14.5px;box-shadow:var(--shadow);white-space:pre-wrap;word-break:break-word}
+    .msg .who{font-size:11.5px;font-weight:800;letter-spacing:.03em;opacity:.75;margin-bottom:3px}
+    .msg .when{font-size:11px;opacity:.6;margin-top:4px;text-align:right}
+    .msg.them{align-self:flex-start;background:var(--surface);border:1px solid var(--line)}
+    .msg.me{align-self:flex-end;background:var(--aurora-2);color:#fff;border:0}
+    .msg.me .when,.msg.me .who{opacity:.85}
+    .msg.voice .audio{margin-top:6px}
+    .msg.voice audio{width:100%;height:38px}
+    .msgs-empty{color:var(--ink-3);font-size:13.5px;text-align:center;padding:26px 14px}
+    #msg-form{display:flex;gap:8px;align-items:flex-end;position:sticky;bottom:0;background:color-mix(in srgb,var(--bg) 88%, transparent);backdrop-filter:blur(8px);padding:10px 0 2px}
+    #msg-text{flex:1;resize:none;font-family:var(--body);font-size:16px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:13px}
+    #msg-text:focus{outline:none;border-color:var(--primary-2)}
+    #msg-send{flex:none;width:54px;height:54px;border:0;border-radius:16px;background:var(--aurora);color:#fff;font-size:20px;font-weight:800}
+    #msg-send:disabled{opacity:.5}
     .pwa-brand-home{display:flex;align-items:center;margin-right:10px}
     .pwa-brand-home:empty{display:none}
     .pwa-brand-home img{border-radius:6px}
@@ -147,6 +175,7 @@
         <div id="pwa-brand-home" class="pwa-brand-home"></div>
         <div><div class="title" id="h-user">—</div><div class="sub" id="h-seller">—</div></div>
         <div class="spacer"></div>
+        <button class="iconbtn badge" id="btn-msgs" title="Mensajes con la administración">💬<span class="dot" id="msg-dot">0</span></button>
         <button class="iconbtn" id="btn-refresh" title="Actualizar">↻</button>
         <button class="iconbtn" id="btn-logout" title="Salir">⎋</button>
       </header>
@@ -184,6 +213,21 @@
       </div>
     </section>
 
+    <!-- Canal con la administración: lo que el panel manda, y lo que el operario responde -->
+    <section id="msgs" class="screen">
+      <header>
+        <button class="iconbtn" id="btn-msgback">‹</button>
+        <div><div class="title">Mensajes</div><div class="sub" id="msg-sub">Con la administración de la bodega</div></div>
+      </header>
+      <div class="body">
+        <div class="msgs" id="msg-list"></div>
+        <form id="msg-form" autocomplete="off">
+          <textarea id="msg-text" rows="1" maxlength="1500" placeholder="Escribe a la administración…" enterkeyhint="send"></textarea>
+          <button class="btn" id="msg-send" type="submit" title="Enviar">➤</button>
+        </form>
+      </div>
+    </section>
+
     <!-- Acción rápida de una tarea (empacar / despachar) -->
     <section id="quick" class="screen">
       <header>
@@ -211,11 +255,16 @@
           <div class="frame"></div><div class="laser"></div>
           <div class="hint" id="cam-hint">Iniciando cámara…</div>
         </div>
-        <div id="manual" style="display:none">
-          <label for="m-code">Código (ingreso manual)</label>
-          <input id="m-code" class="code" placeholder="EAN / DUN"><div style="height:8px"></div>
-          <button class="btn alt" id="btn-mresolve">Buscar código</button>
-        </div>
+        <!-- El campo de código está SIEMPRE disponible, no solo cuando la cámara falla.
+             Es lo que recibe el disparo de una pistola (que teclea y da Enter), lo que
+             permite escribir a mano cuando el código está rayado, y la única entrada
+             posible en iPhone, donde el lector nativo del navegador no existe. -->
+        <form id="manual" autocomplete="off">
+          <label for="m-code" id="m-label">Escanea con la pistola o escribe el código</label>
+          <input id="m-code" class="code" placeholder="EAN / DUN / ubicación" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
+          <div style="height:8px"></div>
+          <button class="btn alt" id="btn-mresolve" type="submit">Buscar código</button>
+        </form>
 
         <div class="card" id="reso" style="display:none">
           <div class="kv"><span>Producto</span><b id="r-sku">—</b></div>

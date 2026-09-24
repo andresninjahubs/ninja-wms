@@ -49,6 +49,26 @@ export function startAgentScheduler(facade: WmsFacade, log: (msg: string) => voi
           try { await facade.runRollups(op.id, {}); } catch (e) { log(`Rollup [${op.id}] falló: ${(e as Error).message}`); }
         }
         log(`Rollup diario de analítica ejecutado para ${ops.length} operación(es).`);
+
+        // Reajuste de los tiempos de tarea, después del rollup y una vez al día.
+        // De noche y no en caliente porque recorre el ledger completo y porque los
+        // coeficientes no deben moverse a mitad de turno: un supervisor que ve la
+        // carga cambiar sola mientras reparte trabajo deja de confiar en la pantalla.
+        for (const op of ops) {
+          try {
+            const r = await facade.learnTaskTimes(op.id);
+            const ok = r.etapas.filter((e) => e.ajustado);
+            if (ok.length) {
+              log(`Tiempos [${op.name || op.id}]: ${ok.map((e) => `${e.stage} (${e.samples} tareas, error ${e.errorMedioMin} min)`).join(', ')}`);
+            }
+          } catch (e) { log(`Tiempos [${op.id}] falló: ${(e as Error).message}`); }
+        }
+        // Y el modelo global, que es el que hereda una bodega nueva sin datos propios.
+        try {
+          const g = await facade.learnPlatformTaskTimes();
+          const ok = g.etapas.filter((e) => e.ajustado);
+          if (ok.length) log(`Tiempos de plataforma: ${ok.map((e) => `${e.stage} (${e.samples})`).join(', ')}`);
+        } catch (e) { log(`Tiempos de plataforma falló: ${(e as Error).message}`); }
       }
     } finally {
       ticking = false;

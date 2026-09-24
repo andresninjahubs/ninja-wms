@@ -512,6 +512,14 @@ export class UpdateOperationDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  // Datos de contacto del alta. Se permite el string vacío para borrarlos; omitirlos
+  // los deja como están.
+  @IsOptional() @IsString() @MaxLength(120) contactName?: string;
+
+  @IsOptional() @IsString() @MaxLength(160) contactEmail?: string;
+
+  @IsOptional() @IsString() @MaxLength(40) contactPhone?: string;
 }
 
 export class ReceiveDto {
@@ -1368,6 +1376,11 @@ export class RegisterDto {
   @IsString() @MinLength(1) @MaxLength(120) name!: string;
 
   @IsEmail() @MaxLength(160) email!: string;
+
+  // Obligatorio: es la única vía de contacto que no depende de que el correo llegue.
+  // El formato lo valida el dominio (`esTelefonoPlausible`), que es deliberadamente
+  // permisivo para no rechazar números de fuera de Chile.
+  @IsString() @MinLength(8) @MaxLength(40) phone!: string;
 
   @IsString() @MinLength(6) @MaxLength(200) password!: string;
 

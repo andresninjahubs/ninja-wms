@@ -535,6 +535,14 @@
   .opcard .oi{width:42px;height:42px;border-radius:11px;background:var(--primary-wash);color:var(--primary-ink);display:grid;place-items:center;font-family:"Sora",sans-serif;font-weight:800;font-size:16px}
   .opcard .on{font-family:"Sora",sans-serif;font-weight:700;font-size:15px}
   .opcard .om{font-size:12px;color:var(--ink-3)}
+  /* Ficha del alta dentro de la tarjeta de la operación: con qué datos entró la cuenta. */
+  .opficha{margin:0 17px 12px;padding:11px 13px;background:var(--surface-2);border:1px solid var(--line);border-radius:11px}
+  .opficha .ofi-h{font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);margin-bottom:7px}
+  .opficha .ofi-r{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:2px 0}
+  .opficha .ofi-r span{color:var(--ink-3);flex:none}
+  .opficha .ofi-r b{font-weight:600;text-align:right;word-break:break-word;min-width:0}
+  .opficha .ofi-r a{color:var(--primary);text-decoration:none}
+  .opficha .ofi-r a:hover{text-decoration:underline}
 
   /* Drawer + modal */
   .drawer,.modal{position:fixed;inset:0;background:rgba(10,16,20,.5);display:none;z-index:40}
@@ -1000,6 +1008,63 @@
   .loginbox .lgrow{margin-top:-4px;margin-bottom:2px;text-align:right}
   .lg-link{background:none;border:0;color:var(--primary);font-weight:600;font-size:12px;cursor:pointer;padding:0;font-family:inherit}
   .lg-link:hover{text-decoration:underline}
+  /* ---- Llamado a crear cuenta -------------------------------------------------
+     Era una línea de texto gris con un enlace dentro de la misma frase que "¿Olvidaste
+     tu contraseña?": quien nunca ha tenido cuenta no tiene por qué distinguir una de
+     otra a esa escala. Acá pasa a ser lo segundo que se ve después de "Entrar".
+
+     La animación es lenta a propósito. Un destello cada 4,5 segundos atrae la mirada
+     cuando la pantalla está quieta; uno cada medio segundo se lee como un banner y la
+     gente aprende a ignorarlo. Al pasar el cursor se detiene: ya cumplió su función y
+     seguir moviéndose solo estorba al que va a hacer clic. */
+  .lgcta{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+  .lgcta .lgcta-q{font-size:12px;color:var(--ink-3);font-weight:500;text-align:center;margin:0 0 9px}
+  .lgcta-btn{
+    position:relative;overflow:hidden;width:100%;cursor:pointer;
+    border:1px solid color-mix(in srgb,var(--primary) 42%, transparent);
+    border-radius:12px;padding:12px 14px;
+    background:color-mix(in srgb,var(--primary) 9%, var(--surface));
+    color:var(--primary-ink,var(--primary));
+    font-family:inherit;font-weight:700;font-size:14px;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    animation:lgctaLatido 4.5s ease-in-out infinite;
+    transition:transform .16s ease, box-shadow .16s ease, background .16s ease;
+  }
+  /* El destello: una banda diagonal que cruza el botón y se va. */
+  .lgcta-btn::before{
+    content:"";position:absolute;top:0;bottom:0;left:-60%;width:45%;
+    background:linear-gradient(100deg,transparent,color-mix(in srgb,var(--primary) 26%, transparent),transparent);
+    transform:skewX(-18deg);
+    animation:lgctaBrillo 4.5s ease-in-out infinite;
+  }
+  .lgcta-btn .lgcta-ic{font-size:15px;animation:lgctaFlecha 4.5s ease-in-out infinite}
+  .lgcta-btn:hover,.lgcta-btn:focus-visible{
+    animation:none;background:color-mix(in srgb,var(--primary) 16%, var(--surface));
+    transform:translateY(-1px);box-shadow:0 8px 20px -10px color-mix(in srgb,var(--primary) 70%, transparent);
+  }
+  .lgcta-btn:hover::before,.lgcta-btn:focus-visible::before,.lgcta-btn:hover .lgcta-ic{animation:none}
+  .lgcta-btn:active{transform:translateY(0)}
+  .lgcta .lgcta-sub{font-size:11px;color:var(--ink-3);text-align:center;margin:8px 0 0}
+  @keyframes lgctaLatido{
+    0%,72%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--primary) 0%, transparent)}
+    80%{box-shadow:0 0 0 5px color-mix(in srgb,var(--primary) 13%, transparent)}
+    92%{box-shadow:0 0 0 9px color-mix(in srgb,var(--primary) 0%, transparent)}
+  }
+  @keyframes lgctaBrillo{
+    0%,58%{left:-60%}
+    82%,100%{left:125%}
+  }
+  @keyframes lgctaFlecha{
+    0%,62%,100%{transform:translateX(0)}
+    72%{transform:translateX(3px)}
+    82%{transform:translateX(0)}
+  }
+  /* Quien pidió menos movimiento recibe el mismo botón, destacado pero quieto: el
+     contraste y el borde ya lo separan del resto sin animar nada. */
+  @media (prefers-reduced-motion: reduce){
+    .lgcta-btn,.lgcta-btn::before,.lgcta-btn .lgcta-ic{animation:none}
+    .lgcta-btn::before{display:none}
+  }
   .lgview h1{font-family:"Sora",sans-serif;font-size:22px;margin:0 0 4px}
   /* Aviso de verificación de email dentro del panel */
   .verifybar{background:var(--warn-wash,#fff8e6);border-bottom:1px solid var(--warn,#c78a00);color:var(--ink);padding:9px 16px;font-size:13px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -1838,6 +1903,7 @@
             <button class="segbtn" data-asgt="SHIP">Despacho</button>
             <button class="segbtn" data-asgt="PUTAWAY">Guardado</button>
             <button class="segbtn" data-asgt="RECEIVE">Recepción</button>
+            <button class="segbtn" data-asgt="RESTOCK">Reposición</button>
             <button class="segbtn" data-asgt="RESLOT">Re-slotting</button>
             <button class="segbtn" data-asgt="COUNT">Conteo</button>
           </div>
@@ -1859,7 +1925,16 @@
           <div class="kpis" id="asg-kpis"></div>
           <div class="card">
             <div class="h"><h3>Carga por operario</h3><div class="sp" style="flex:1"></div><span class="muted" id="asg-load-sub"></span></div>
-            <div class="tablewrap"><table class="matrix"><thead><tr><th>Operario</th><th class="num">Velocidad (u/h)</th><th class="num">Velocidad (tareas/h)</th><th class="num">Tareas abiertas</th><th class="num">Unidades</th><th class="num">Horas estimadas</th></tr></thead><tbody id="asg-load-body"></tbody><tfoot id="asg-load-foot"></tfoot></table></div>
+            <div class="tablewrap"><table class="matrix"><thead><tr><th>Operario</th><th class="num">Velocidad (u/h)</th><th class="num">Velocidad (tareas/h)</th><th class="num">Tareas abiertas</th><th class="num">Unidades</th><th class="num" title="Ubicaciones distintas que hay que visitar. Es lo que más explica el tiempo de una tarea, más que las unidades.">Paradas</th><th class="num">Tiempo estimado</th></tr></thead><tbody id="asg-load-body"></tbody><tfoot id="asg-load-foot"></tfoot></table></div>
+          </div>
+          <div class="card">
+            <div class="h"><h3>Modelo de tiempo</h3><div class="sp" style="flex:1"></div>
+              <span class="muted" id="tt-sub"></span>
+              <button class="btn" id="tt-learn" style="margin-left:10px">Reajustar ahora</button>
+            </div>
+            <p class="muted" style="margin:0 12px 10px;font-size:12.5px;max-width:80ch">El tiempo de una tarea se estima como <b>setup + minutos por parada × paradas + minutos por unidad × unidades</b>. Los coeficientes se reajustan cada noche con las tareas realmente medidas; mientras no haya suficientes, se heredan de la plataforma o se usan los declarados.</p>
+            <div class="tablewrap"><table class="matrix"><thead><tr><th>Etapa</th><th class="num">Setup</th><th class="num">Por parada</th><th class="num">Por unidad</th><th class="num">Tareas medidas</th><th class="num" title="Cuánto se equivoca el modelo, en promedio">Error medio</th><th class="num" title="Cuánto se estira la estimación para cubrir al 90% de los casos. Es el que usan los compromisos de salida.">Margen p90</th><th>Origen</th></tr></thead><tbody id="tt-body"></tbody></table></div>
+            <div id="tt-msg" class="muted" style="padding:0 12px 12px;font-size:12.5px"></div>
           </div>
           <div class="card">
             <div class="h"><h3>Pool de tareas pendientes</h3><div class="sp" style="flex:1"></div><span class="muted" id="asg-pool-sub"></span></div>
@@ -2178,7 +2253,13 @@
       <input id="lg-pass" type="password" placeholder="••••••••" autocomplete="current-password">
       <button class="b" id="lg-btn">Entrar</button>
       <div class="lgrow"><button class="lg-link" data-go="forgot">¿Olvidaste tu contraseña?</button></div>
-      <div class="hint">¿No tienes cuenta? <button class="lg-link" data-go="register">Crea una gratis</button></div>
+      <div class="lgcta">
+        <p class="lgcta-q">¿Todavía no tienes cuenta?</p>
+        <button class="lgcta-btn" type="button" data-go="register">
+          <span>Crea tu cuenta gratis</span><span class="lgcta-ic" aria-hidden="true">→</span>
+        </button>
+        <p class="lgcta-sub">Empieza gratis. Sin tarjeta. Listo en un minuto.</p>
+      </div>
     </div>
 
     <!-- Vista: crear cuenta (self-serve) -->
@@ -2197,6 +2278,8 @@
       <input id="rg-name" type="text" placeholder="Camila Rojas" autocomplete="name">
       <label>Email de trabajo</label>
       <input id="rg-email" type="email" placeholder="tu@empresa.cl" autocomplete="username">
+      <label>Celular</label>
+      <input id="rg-phone" type="tel" placeholder="+56 9 1234 5678" autocomplete="tel" inputmode="tel">
       <label>Contraseña</label>
       <input id="rg-pass" type="password" placeholder="mínimo 6 caracteres" autocomplete="new-password">
       <button class="b" id="rg-btn">Crear cuenta gratis</button>

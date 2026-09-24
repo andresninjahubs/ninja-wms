@@ -50,6 +50,7 @@ import {
   WorkAssignmentRepository,
   WorkTaskRepository,
   TaskEventRepository,
+  TaskTimeModelRepository,
   AgentRuleConfigRepository,
   AgentAlertRepository,
   AgentJournalRepository,
@@ -67,6 +68,8 @@ import {
   CountAudit,
   CostRateCard,
   DomainEvent,
+  StoredTaskTimeModel,
+  StoredOperatorFactor,
   DomainEntityType,
   DailyInventorySnapshot,
   DailyDemand,
@@ -293,6 +296,10 @@ export class PrismaOperationRepository implements OperationRepository {
       autoBalance: o.autoBalance ?? false,
       operatorSelfPickup: o.operatorSelfPickup ?? false,
       deadlineConfig: (o.deadlineConfig as any) ?? null,
+      contactName: o.contactName ?? null,
+      contactEmail: o.contactEmail ?? null,
+      contactPhone: o.contactPhone ?? null,
+      createdAt: o.createdAt ? (o.createdAt as Date).toISOString() : null,
     };
   }
   async findById(id: string): Promise<Operation | null> {
@@ -308,6 +315,11 @@ export class PrismaOperationRepository implements OperationRepository {
       autoBalance: op.autoBalance ?? false,
       operatorSelfPickup: op.operatorSelfPickup ?? false,
       deadlineConfig: (op.deadlineConfig ?? null) as unknown as object,
+      contactName: op.contactName ?? null,
+      contactEmail: op.contactEmail ?? null,
+      contactPhone: op.contactPhone ?? null,
+      // `createdAt` NO viaja en el update: lo pone la base al crear y reescribirlo
+      // desde el dominio movería la fecha de alta en cada guardado.
     };
     await this.db.operation.upsert({
       where: { id: op.id },
@@ -1160,14 +1172,14 @@ export class PrismaWorkAssignmentRepository implements WorkAssignmentRepository 
     return {
       id: r.id, operationId: r.operationId, sellerId: r.sellerId ?? null, type: r.type as WorkTaskType,
       entityId: r.entityId, entityRef: r.entityRef ?? null, operator: r.operator, status: r.status as WorkAssignmentStatus,
-      unitsEstimate: r.unitsEstimate, assignedBy: r.assignedBy, assignedAt: (r.assignedAt as Date).toISOString(),
+      unitsEstimate: r.unitsEstimate, linesEstimate: r.linesEstimate ?? 1, assignedBy: r.assignedBy, assignedAt: (r.assignedAt as Date).toISOString(),
       startedAt: r.startedAt ? (r.startedAt as Date).toISOString() : null,
       completedAt: r.completedAt ? (r.completedAt as Date).toISOString() : null, completedBy: r.completedBy ?? null, note: r.note ?? null,
       priority: r.priority ?? 0, priorityReason: r.priorityReason ?? null,
     };
   }
   async save(a: WorkAssignment): Promise<void> {
-    const data = { ...a, assignedAt: new Date(a.assignedAt), startedAt: a.startedAt ? new Date(a.startedAt) : null, completedAt: a.completedAt ? new Date(a.completedAt) : null, priority: a.priority ?? 0, priorityReason: a.priorityReason ?? null };
+    const data = { ...a, linesEstimate: a.linesEstimate ?? 1, assignedAt: new Date(a.assignedAt), startedAt: a.startedAt ? new Date(a.startedAt) : null, completedAt: a.completedAt ? new Date(a.completedAt) : null, priority: a.priority ?? 0, priorityReason: a.priorityReason ?? null };
     await this.db.workAssignment.upsert({ where: { id: a.id }, create: data, update: data });
   }
   async get(id: string): Promise<WorkAssignment | null> {
@@ -1192,6 +1204,55 @@ export class PrismaWorkAssignmentRepository implements WorkAssignmentRepository 
  * Libro de eventos de tarea. Solo escribe y lee: no expone update ni delete, porque
  * un registro que se puede corregir sin dejar rastro no es una auditoría.
  */
+export class PrismaTaskTimeModelRepository implements TaskTimeModelRepository {
+  constructor(private readonly db: PrismaClient) {}
+  private get m(): any { return (this.db as any).taskTimeModel; }
+  private get f(): any { return (this.db as any).operatorTimeFactor; }
+  private toDomain(r: any): StoredTaskTimeModel {
+    return {
+      operationId: r.operationId, stage: r.stage,
+      setupMin: r.setupMin, perLineMin: r.perLineMin, perUnitMin: r.perUnitMin,
+      p90Factor: r.p90Factor ?? 1.5, samples: r.samples ?? 0, errorMedioMin: r.errorMedioMin ?? 0,
+      descartes: (r.descartes as any) ?? null, updatedAt: (r.updatedAt as Date).toISOString(),
+    };
+  }
+  async save(m: StoredTaskTimeModel): Promise<void> {
+    const data = {
+      setupMin: m.setupMin, perLineMin: m.perLineMin, perUnitMin: m.perUnitMin,
+      p90Factor: m.p90Factor, samples: m.samples, errorMedioMin: m.errorMedioMin,
+      descartes: (m.descartes ?? null) as any, updatedAt: new Date(m.updatedAt),
+    };
+    await this.m.upsert({
+      where: { operationId_stage: { operationId: m.operationId, stage: m.stage } },
+      create: { operationId: m.operationId, stage: m.stage, ...data },
+      update: data,
+    });
+  }
+  async get(operationId: string, stage: string): Promise<StoredTaskTimeModel | null> {
+    const r = await this.m.findUnique({ where: { operationId_stage: { operationId, stage } } });
+    return r ? this.toDomain(r) : null;
+  }
+  async list(operationId: string): Promise<StoredTaskTimeModel[]> {
+    const rows = await this.m.findMany({ where: { operationId } });
+    return rows.map((r: any) => this.toDomain(r));
+  }
+  async saveFactor(f: StoredOperatorFactor): Promise<void> {
+    const data = { factor: f.factor, samples: f.samples, updatedAt: new Date(f.updatedAt) };
+    await this.f.upsert({
+      where: { operationId_operator_stage: { operationId: f.operationId, operator: f.operator, stage: f.stage } },
+      create: { operationId: f.operationId, operator: f.operator, stage: f.stage, ...data },
+      update: data,
+    });
+  }
+  async listFactors(operationId: string, opts?: { operator?: string | null }): Promise<StoredOperatorFactor[]> {
+    const rows = await this.f.findMany({ where: { operationId, ...(opts?.operator ? { operator: opts.operator } : {}) } });
+    return rows.map((r: any) => ({
+      operationId: r.operationId, operator: r.operator, stage: r.stage,
+      factor: r.factor, samples: r.samples ?? 0, updatedAt: (r.updatedAt as Date).toISOString(),
+    }));
+  }
+}
+
 export class PrismaTaskEventRepository implements TaskEventRepository {
   constructor(private readonly db: PrismaClient) {}
   private get t(): any { return (this.db as any).taskEvent; }
@@ -1247,7 +1308,7 @@ export class PrismaWorkTaskRepository implements WorkTaskRepository {
     return {
       id: `t-${r.seq}`, operationId: r.operationId, sellerId: r.sellerId ?? null, type: r.type as WorkTaskStage,
       orderId: r.orderId ?? null, orderRef: r.orderRef ?? null, entityId: r.entityId, entityRef: r.entityRef ?? null,
-      state: r.state as WorkTaskState, unitsEstimate: r.unitsEstimate, unitsDone: r.unitsDone ?? 0, assignmentId: r.assignmentId ?? null, operator: r.operator ?? null,
+      state: r.state as WorkTaskState, unitsEstimate: r.unitsEstimate, linesEstimate: r.linesEstimate ?? 1, unitsDone: r.unitsDone ?? 0, assignmentId: r.assignmentId ?? null, operator: r.operator ?? null,
       createdAt: (r.createdAt as Date).toISOString(), createdBy: r.createdBy,
       startedAt: r.startedAt ? (r.startedAt as Date).toISOString() : null,
       completedAt: r.completedAt ? (r.completedAt as Date).toISOString() : null, completedBy: r.completedBy ?? null, note: r.note ?? null,
@@ -1256,7 +1317,7 @@ export class PrismaWorkTaskRepository implements WorkTaskRepository {
   private toRow(t: Omit<WorkTask, 'id'>): any {
     return {
       operationId: t.operationId, sellerId: t.sellerId, type: t.type, orderId: t.orderId, orderRef: t.orderRef,
-      entityId: t.entityId, entityRef: t.entityRef, state: t.state, unitsEstimate: t.unitsEstimate, unitsDone: t.unitsDone ?? 0,
+      entityId: t.entityId, entityRef: t.entityRef, state: t.state, unitsEstimate: t.unitsEstimate, linesEstimate: t.linesEstimate ?? 1, unitsDone: t.unitsDone ?? 0,
       assignmentId: t.assignmentId, operator: t.operator, createdAt: new Date(t.createdAt), createdBy: t.createdBy,
       startedAt: t.startedAt ? new Date(t.startedAt) : null, completedAt: t.completedAt ? new Date(t.completedAt) : null,
       completedBy: t.completedBy, note: t.note,

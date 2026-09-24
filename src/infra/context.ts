@@ -42,6 +42,7 @@ import {
   ConsigneeRepository,
   ApiKeyRepository,
   TaskEventRepository,
+  TaskTimeModelRepository,
   OpsChannelRepository,
   AiConfigRepository,
   CopilotSettingsRepository,
@@ -88,6 +89,7 @@ import {
   InMemoryConsigneeRepository,
   InMemoryApiKeyRepository,
   InMemoryTaskEventRepository,
+  InMemoryTaskTimeModelRepository,
   InMemoryOpsChannelRepository,
   InMemoryAiConfigRepository,
   InMemoryCopilotSettingsRepository,
@@ -154,6 +156,7 @@ export async function createWmsContext(): Promise<WmsContext> {
   let consignees: ConsigneeRepository;
   let apiKeys: ApiKeyRepository;
   let taskEvents: TaskEventRepository;
+  let taskTimeModels: TaskTimeModelRepository;
   let opsChannel: OpsChannelRepository;
   let aiConfig: AiConfigRepository;
   let copilotSettings: CopilotSettingsRepository;
@@ -200,6 +203,7 @@ export async function createWmsContext(): Promise<WmsContext> {
       PrismaConsigneeRepository,
       PrismaApiKeyRepository,
   PrismaTaskEventRepository,
+  PrismaTaskTimeModelRepository,
       PrismaOpsChannelRepository,
       PrismaAiConfigRepository,
       PrismaCopilotSettingsRepository,
@@ -255,6 +259,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     consignees = new PrismaConsigneeRepository(db);
     apiKeys = new PrismaApiKeyRepository(db);
     taskEvents = new PrismaTaskEventRepository(db);
+    taskTimeModels = new PrismaTaskTimeModelRepository(db);
     opsChannel = new PrismaOpsChannelRepository(db);
     aiConfig = new PrismaAiConfigRepository(db);
     copilotSettings = new PrismaCopilotSettingsRepository(db);
@@ -300,6 +305,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     consignees = new InMemoryConsigneeRepository();
     apiKeys = new InMemoryApiKeyRepository();
     taskEvents = new InMemoryTaskEventRepository();
+    taskTimeModels = new InMemoryTaskTimeModelRepository();
     opsChannel = new InMemoryOpsChannelRepository();
     aiConfig = new InMemoryAiConfigRepository();
     copilotSettings = new InMemoryCopilotSettingsRepository();
@@ -399,6 +405,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     consignees,
     apiKeys,
     taskEvents,
+    taskTimeModels,
   );
 
   // Bootstrap del super-admin de plataforma (Ninja Hubs).

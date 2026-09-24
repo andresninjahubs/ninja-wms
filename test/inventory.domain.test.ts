@@ -10,6 +10,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { conFactor, estimarMinutos, modeloPorDefecto, tareaTipica, unidadesPorHoraEquivalente } from '../src/domain/task-time';
+import { ajustarCoeficientes, factorDeOperario, factorP90, filtrarObservaciones, resolverModelo, MIN_MUESTRAS } from '../src/domain/task-time-learning';
 import { InventoryService } from '../src/domain/inventory.service';
 import { OrderService } from '../src/domain/order.service';
 import { ReceiptOrderService } from '../src/domain/receipt.service';
@@ -80,6 +82,7 @@ import {
   InMemoryConsigneeRepository,
   InMemoryApiKeyRepository,
   InMemoryTaskEventRepository,
+  InMemoryTaskTimeModelRepository,
   InMemoryPlanConfigRepository,
   InMemoryCountAuditRepository,
   InMemoryEventRepository,
@@ -970,9 +973,10 @@ async function run() {
     const consignees = new InMemoryConsigneeRepository();
     const apiKeys = new InMemoryApiKeyRepository();
     const taskEvents = new InMemoryTaskEventRepository();
+    const taskTimeModels = new InMemoryTaskTimeModelRepository();
     const facade = new WmsFacade(inventory, orderService, receiptService, productService, billingService, sellers, skus, locations, ids, advisor, cyc, userSvc, bc, opSvc, metricsService, chatService, platformUsageService, announcementService, webhookService, shippingLabels, returnService, serials, packagingService,
-      undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, undefined, consignees, apiKeys, taskEvents);
-    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig, consignees, apiKeys, taskEvents };
+      undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, undefined, consignees, apiKeys, taskEvents, taskTimeModels);
+    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig, consignees, apiKeys, taskEvents, taskTimeModels };
   }
 
   async function seedScan(facade: WmsFacade) {
@@ -2764,7 +2768,7 @@ async function run() {
 
   await test('self-serve: registro de marca provisiona operación + admin + seller', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Tienda Aurora', name: 'Camila', email: 'camila@aurora.cl', password: 'secreto123', track: 'brand' });
+    const res = await facade.registerSelfServe({ companyName: 'Tienda Aurora', name: 'Camila', email: 'camila@aurora.cl', phone: '+56 9 1234 5678', password: 'secreto123', track: 'brand' });
     assert.ok(res.token && res.token.length > 20, 'auto-login: devuelve JWT');
     assert.equal(res.user.role, 'ADMIN');
     assert.equal(res.user.emailVerified, false, 'el email nace sin verificar');
@@ -2785,7 +2789,7 @@ async function run() {
 
   await test('self-serve: registro de operador 3PL no crea sellers', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Bodega Halcón', name: 'Iván', email: 'ivan@halcon.cl', password: 'clave12345', track: 'operator' });
+    const res = await facade.registerSelfServe({ companyName: 'Bodega Halcón', name: 'Iván', email: 'ivan@halcon.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'operator' });
     assert.equal(res.sellerId, null, 'operador 3PL invita clientes luego');
     const op = await facade.getOperation(res.operationId);
     assert.equal(op?.track, 'operator');
@@ -2795,16 +2799,16 @@ async function run() {
 
   await test('self-serve: email duplicado se rechaza con mensaje claro', async () => {
     const { facade } = buildFacade();
-    await facade.registerSelfServe({ companyName: 'Uno', name: 'A', email: 'dup@x.cl', password: 'clave12345', track: 'brand' });
+    await facade.registerSelfServe({ companyName: 'Uno', name: 'A', email: 'dup@x.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' });
     await expectThrows(
-      () => facade.registerSelfServe({ companyName: 'Dos', name: 'B', email: 'DUP@x.cl', password: 'clave12345', track: 'brand' }),
+      () => facade.registerSelfServe({ companyName: 'Dos', name: 'B', email: 'DUP@x.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' }),
       ValidationError,
     );
   });
 
   await test('self-serve: verificación de email por token de un solo uso', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Verif Co', name: 'Vera', email: 'vera@verif.cl', password: 'clave12345', track: 'brand' });
+    const res = await facade.registerSelfServe({ companyName: 'Verif Co', name: 'Vera', email: 'vera@verif.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' });
     const token = res.verification.devToken!;
     assert.ok(token, 'en dev, el token viaja en la respuesta');
     // Token inválido -> error legible.
@@ -2822,7 +2826,7 @@ async function run() {
 
   await test('self-serve: reset de contraseña por token', async () => {
     const { facade } = buildFacade();
-    await facade.registerSelfServe({ companyName: 'Reset Co', name: 'Rita', email: 'rita@reset.cl', password: 'viejaClave1', track: 'brand' });
+    await facade.registerSelfServe({ companyName: 'Reset Co', name: 'Rita', email: 'rita@reset.cl', phone: '+56 9 1234 5678', password: 'viejaClave1', track: 'brand' });
     const req = await facade.requestPasswordReset('rita@reset.cl');
     assert.equal(req.ok, true);
     const token = req.devToken!;
@@ -2842,7 +2846,7 @@ async function run() {
 
   await test('planes: cuenta self-serve parte en trial de Growth', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Marca PLG', name: 'Pía', email: 'pia@plg.cl', password: 'clave12345', track: 'brand' });
+    const res = await facade.registerSelfServe({ companyName: 'Marca PLG', name: 'Pía', email: 'pia@plg.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' });
     const st = await facade.getPlanState(res.operationId);
     assert.equal(st.plan.id, 'growth', 'durante la prueba el plan efectivo es Growth');
     assert.equal(st.basePlan.id, 'free', 'el plan base es Free');
@@ -2858,7 +2862,7 @@ async function run() {
 
   await test('planes: al vencer la prueba cae a Free y se aplican los features', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Marca Free', name: 'Leo', email: 'leo@free.cl', password: 'clave12345', track: 'brand' });
+    const res = await facade.registerSelfServe({ companyName: 'Marca Free', name: 'Leo', email: 'leo@free.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' });
     // Forzar el vencimiento del trial (poner una fecha pasada).
     await facade.setOperationPlan(res.operationId, 'free'); // setPlan borra el trial -> plan efectivo = Free
     const st = await facade.getPlanState(res.operationId);
@@ -2874,7 +2878,7 @@ async function run() {
 
   await test('planes: enforcement de cuota de usuarios en Free', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Cuota Co', name: 'Uno', email: 'uno@cuota.cl', password: 'clave12345', track: 'brand' });
+    const res = await facade.registerSelfServe({ companyName: 'Cuota Co', name: 'Uno', email: 'uno@cuota.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' });
     await facade.setOperationPlan(res.operationId, 'free'); // Free: máx 2 usuarios; ya hay 1 (admin)
     // El 2º usuario entra.
     await facade.createUser({ name: 'Dos', email: 'dos@cuota.cl', role: UserRole.OPERATOR, operationId: res.operationId, password: 'clave12345' });
@@ -2910,7 +2914,7 @@ async function run() {
     assert.equal(free1.features.includes('wms_core'), true, 'el núcleo va siempre incluido');
     assert.equal(free1.limits.users, 9, 'límite de usuarios actualizado');
     // Efecto en vivo: una cuenta en Free ahora puede conectar IA.
-    const res = await facade.registerSelfServe({ companyName: 'Pkg Co', name: 'Pau', email: 'pau@pkg.cl', password: 'clave12345', track: 'brand' });
+    const res = await facade.registerSelfServe({ companyName: 'Pkg Co', name: 'Pau', email: 'pau@pkg.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' });
     await facade.setOperationPlan(res.operationId, 'free');
     assert.equal(await facade.hasFeature(res.operationId, 'ai_copilot'), true);
   });
@@ -2959,7 +2963,7 @@ async function run() {
 
   await test('onboarding: cuenta nueva de marca arranca el checklist en cero', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Marca Onb', name: 'Ona', email: 'ona@onb.cl', password: 'clave12345', track: 'brand' });
+    const res = await facade.registerSelfServe({ companyName: 'Marca Onb', name: 'Ona', email: 'ona@onb.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' });
     const st = await facade.getOnboardingState(res.operationId);
     assert.equal(st.track, 'brand');
     assert.equal(st.activated, false);
@@ -2974,7 +2978,7 @@ async function run() {
 
   await test('onboarding: operador 3PL incluye el paso de crear cliente', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Op Onb', name: 'Ivo', email: 'ivo@op.cl', password: 'clave12345', track: 'operator' });
+    const res = await facade.registerSelfServe({ companyName: 'Op Onb', name: 'Ivo', email: 'ivo@op.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'operator' });
     const st = await facade.getOnboardingState(res.operationId);
     assert.equal(st.track, 'operator');
     const cc = st.steps.find((s: any) => s.key === 'create_client');
@@ -2984,7 +2988,7 @@ async function run() {
 
   await test('onboarding: datos de ejemplo pueblan y activan la cuenta', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Sample Co', name: 'Sam', email: 'sam@sample.cl', password: 'clave12345', track: 'brand' });
+    const res = await facade.registerSelfServe({ companyName: 'Sample Co', name: 'Sam', email: 'sam@sample.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' });
     const r = await facade.loadSampleData(res.operationId);
     assert.equal(r.loaded, true);
     // Puebla productos, stock y órdenes; despacha al menos una => activada.
@@ -3675,7 +3679,10 @@ async function run() {
   await test('edición: se pueden agregar y quitar productos de una orden reservada', async () => {
     const f = buildFacade();
     const [o0] = await seedPickPool(f, 1);
-    const loc = (await f.facade.listLocations('op1'))[0];
+    // De almacenaje explícitamente, no "la primera": la operación trae además la
+    // ubicación de reposición (zona de RECEPCIÓN), y lo que está en recepción NO es
+    // reservable a propósito. Tomar la primera que apareciera era una casualidad.
+    const loc = (await f.facade.listLocations('op1')).find((l) => l.zoneType === ZoneType.STORAGE)!;
     await f.facade.createSku('acme', { sku: 'PAN', description: 'Pantalón' });
     await f.facade.receive('acme', { sku: 'PAN', qty: 50, locationId: loc.id });
     const o = await f.facade.getOrder('acme', o0);
@@ -4064,11 +4071,14 @@ async function run() {
     const usada = await f.facade.createLocation({ operationId: 'op1', code: 'A-01-1-A', zoneType: ZoneType.STORAGE, capacity: 1000, pickRank: 1 });
     await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
     await f.facade.receive('acme', { sku: 'CAM', qty: 5, locationId: usada.id });
+    // Se cuentan solo las ubicaciones creadas acá: la operación trae además la de
+    // reposición, que no es parte de lo que este test mira.
+    const mias = async () => (await f.facade.listLocations('op1')).filter((l) => l.code !== 'DEV-REPOSICION');
     const r = await f.facade.deleteLocation(vacia.id);
     assert.equal(r.code, 'Z-99');
-    assert.equal((await f.facade.listLocations('op1')).length, 1, 'la vacía desaparece');
+    assert.equal((await mias()).length, 1, 'la vacía desaparece');
     await expectThrows(() => f.facade.deleteLocation(usada.id), ValidationError);
-    assert.equal((await f.facade.listLocations('op1')).length, 1, 'la usada sigue (con historia no se borra)');
+    assert.equal((await mias()).length, 1, 'la usada sigue (con historia no se borra)');
     // Una recepción abierta apuntando a la ubicación también bloquea el borrado.
     const recv = await f.facade.createLocation({ operationId: 'op1', code: 'RECV-02', zoneType: ZoneType.RECEIVING });
     await f.facade.createReceipt('acme', { supplier: 'Prov', locationId: recv.id, lines: [{ sku: 'CAM', qty: 1 }] } as any);
@@ -5537,26 +5547,25 @@ async function run() {
     const pedro = l.operarios.find((o: any) => o.operario === 'op-1');
     const sofia = l.operarios.find((o: any) => o.operario === 'op-2');
 
-    // Velocidad en TAREAS/hora: a igual velocidad en unidades, quien tiene tareas
-    // más chicas cierra más tareas por hora. Ese es el dato que sirve para planificar.
+    // El tiempo sale del modelo, tarea por tarea. Una tarea de PICK de N unidades en
+    // UNA parada cuesta 1,5 min de setup + 1,0 min de parada + 0,3 min por unidad.
+    //   Pedro:  2 × (1,5 + 1 + 100×0,3) = 2 × 32,5 = 65 min = 1,08 h
+    //   Sofía:  4 × (1,5 + 1 + 25×0,3)  = 4 × 10   = 40 min = 0,67 h
+    // Pedro mueve las mismas 200 unidades que Sofía las suyas, pero concentradas.
     assert.equal(pedro.unidadesPorTarea, 100);
-    assert.equal(pedro.velocidadTH, 0.5, '50 u/h con tareas de 100 un → media tarea por hora');
+    assert.equal(pedro.horasEstimadas, 1.08);
     assert.equal(sofia.unidadesPorTarea, 25);
-    assert.equal(sofia.velocidadTH, 2, '50 u/h con tareas de 25 un → 2 tareas por hora');
+    assert.equal(sofia.horasEstimadas, 0.67);
+
+    // Tareas/hora: quien tiene tareas más chicas cierra más por hora. Ese es el dato
+    // que sirve para planificar un turno, y ahora sale del tiempo real de SUS tareas.
+    assert.ok(sofia.velocidadTH > pedro.velocidadTH, 'tareas chicas → más tareas por hora');
 
     // Totales.
     assert.equal(l.totales.operarios, 2);
     assert.equal(l.totales.tareasAbiertas, 6);
     assert.equal(l.totales.unidades, 300);
-    assert.equal(l.totales.horasEstimadas, 6, '200/50 + 100/50 = 6 h');
-    assert.equal(l.totales.velocidadUH, 50, 'unidades totales sobre horas totales');
-    assert.equal(l.totales.velocidadTH, 1, '6 tareas en 6 horas');
-    assert.equal(l.totales.unidadesPorTarea, 50);
-
-    // Promedios por operario.
-    assert.equal(l.promedios.tareasAbiertas, 3);
-    assert.equal(l.promedios.unidades, 150);
-    assert.equal(l.promedios.horasEstimadas, 3);
+    assert.equal(l.totales.horasEstimadas, 1.75, '1,08 + 0,67');
 
     // Sin operarios cargados, los totales son cero y no revientan.
     const vacio: any = await f.facade.operatorLoad('op1');
@@ -5732,7 +5741,7 @@ async function run() {
 
   await test('IA: el ámbito de plataforma no exige plan contratado (el tenant sí)', async () => {
     const { facade } = buildFacade();
-    const res = await facade.registerSelfServe({ companyName: 'Sin IA', name: 'Ana', email: 'ana@sinia.cl', password: 'clave12345', track: 'brand' });
+    const res = await facade.registerSelfServe({ companyName: 'Sin IA', name: 'Ana', email: 'ana@sinia.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand' });
     await facade.setOperationPlan(res.operationId, 'free'); // Free no incluye ai_copilot
     await expectThrows(
       () => facade.setAiConfig(res.operationId, null, { provider: 'openai', apiKey: 'sk-xxxxxxxx', chatModel: 'gpt-4o-mini' }),
@@ -6530,6 +6539,306 @@ async function run() {
     const act = await f.facade.userActivity('op1');
     const e = act.feed.find((x: any) => x.actor === 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')!;
     assert.equal(e.actorName, 'Usuario no encontrado (aaaaaaaa…)', 'se nota que falta el usuario: ' + e.actorName);
+  });
+
+  console.log('\nModelo de tiempo de tarea (setup + paradas + unidades)\n');
+
+  await test('modelo de tiempo: la calibración de arranque no cambia nada de golpe', () => {
+    // Los coeficientes están puestos para que una tarea TÍPICA dé exactamente el
+    // mismo tiempo que daba la tabla de unidades/hora anterior. Si alguien los toca
+    // sin querer, este test lo delata antes de que la bodega note un cambio raro.
+    const ANTES: Record<string, number> = { PICK: 80, PUTAWAY: 60, PACK: 50, RECEIVE: 70, COUNT: 120, OTHER: 60 };
+    for (const etapa of Object.keys(ANTES)) {
+      const t = tareaTipica(etapa);
+      const uh = unidadesPorHoraEquivalente(modeloPorDefecto(etapa).coef, t)!;
+      assert.ok(Math.abs(uh - ANTES[etapa]) < 0.5, `${etapa}: la tarea típica da ${uh} u/h y antes daba ${ANTES[etapa]}`);
+    }
+  });
+
+  await test('modelo de tiempo: distingue lo que el modelo viejo no podía distinguir', () => {
+    const coef = modeloPorDefecto('PICK').coef;
+    // Las mismas 8 unidades, dos formas de trabajo completamente distintas.
+    const concentrada = estimarMinutos(coef, { units: 8, lines: 1 });   // todo en una ubicación
+    const dispersa = estimarMinutos(coef, { units: 8, lines: 8 });      // una unidad en cada una
+    assert.equal(concentrada, 4.9);
+    assert.equal(dispersa, 11.9);
+    assert.ok(dispersa > concentrada * 2, 'recorrer ocho ubicaciones cuesta más del doble');
+    // Con el modelo viejo (unidades ÷ u/h) las dos daban 6 min: idénticas.
+    // Ese era el error que hacía que el balanceo repartiera mal la carga.
+  });
+
+  await test('modelo de tiempo: el factor personal escala, no reemplaza al modelo', () => {
+    const coef = modeloPorDefecto('PICK').coef;
+    const base = estimarMinutos(coef, { units: 20, lines: 4 });
+    const rapido = estimarMinutos(conFactor(coef, 0.8), { units: 20, lines: 4 });
+    const lento = estimarMinutos(conFactor(coef, 1.25), { units: 20, lines: 4 });
+    assert.ok(rapido < base && base < lento, 'el factor ordena, no invierte');
+    assert.ok(Math.abs(rapido - base * 0.8) < 0.1, 'un 20% más rápido es un 20% menos de tiempo');
+    // La FORMA de la tarea sigue mandando sobre quién la hace: el operario lento con
+    // una tarea concentrada termina antes que el rápido con una dispersa.
+    const lentoConcentrada = estimarMinutos(conFactor(coef, 1.25), { units: 8, lines: 1 });
+    const rapidoDispersa = estimarMinutos(conFactor(coef, 0.8), { units: 8, lines: 8 });
+    assert.ok(lentoConcentrada < rapidoDispersa, 'la forma pesa más que la persona');
+  });
+
+  await test('modelo de tiempo: el balanceo reparte por tiempo, no por unidades', async () => {
+    const f = buildFacade();
+    await seedScan(f.facade);
+    await f.facade.scanInbound('acme', { barcode: 'EAN-1', packCount: 40, locationCode: 'A-01-1-A' } as any);
+    await f.facade.createUser({ id: 'op-a', name: 'Ana O', email: 'ao@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createUser({ id: 'op-b', name: 'Bea O', email: 'bo@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    // A recibe una tarea de 30 unidades en UNA parada; B, una de 10 en DIEZ paradas.
+    // Por unidades A va muy cargado; por tiempo, B lo está más.
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: 'x-concentrada', entityRef: 'CONC', sellerId: 'acme', operator: 'op-a', unitsEstimate: 30, linesEstimate: 1, by: 'jefe', skipOperatorCheck: true });
+    await f.facade.assignTask('op1', { type: 'PICK', entityId: 'x-dispersa', entityRef: 'DISP', sellerId: 'acme', operator: 'op-b', unitsEstimate: 10, linesEstimate: 10, by: 'jefe', skipOperatorCheck: true });
+
+    const l: any = await f.facade.operatorLoad('op1');
+    const a = l.operarios.find((o: any) => o.operario === 'op-a');
+    const b = l.operarios.find((o: any) => o.operario === 'op-b');
+    assert.ok(a.unidades > b.unidades, 'A mueve el triple de unidades');
+    assert.ok(b.horasEstimadas > a.horasEstimadas, 'pero B tiene más trabajo por delante: ' + a.horasEstimadas + ' vs ' + b.horasEstimadas);
+    assert.equal(b.paradas, 10, 'las paradas quedan visibles en el panel');
+  });
+
+  console.log('\nAprendizaje del tiempo de tarea (Fase 3)\n');
+
+  /** Genera tareas con una "verdad" conocida, para ver si el ajuste la encuentra. */
+  function observacionesSinteticas(verdad: { setupMin: number; perLineMin: number; perUnitMin: number }, n: number, ruido = 0) {
+    const out: any[] = [];
+    let semilla = 7;
+    const rnd = () => { semilla = (semilla * 1103515245 + 12345) % 2147483648; return semilla / 2147483648; };
+    const base = Date.parse('2026-09-20T12:00:00.000Z');
+    for (let i = 0; i < n; i++) {
+      const lines = 1 + Math.floor(rnd() * 8);
+      const units = 1 + Math.floor(rnd() * 40);
+      const exacto = verdad.setupMin + verdad.perLineMin * lines + verdad.perUnitMin * units;
+      out.push({
+        stage: 'PICK', operator: 'pedro',
+        minutos: Math.max(0.6, exacto + (rnd() - 0.5) * 2 * ruido),
+        lines, units, at: new Date(base - i * 3600000).toISOString(),
+      });
+    }
+    return out;
+  }
+
+  await test('aprendizaje: recupera los coeficientes reales de la bodega', () => {
+    // Una bodega donde caminar cuesta caro (2 min por parada) y manipular es barato.
+    const verdad = { setupMin: 3, perLineMin: 2, perUnitMin: 0.15 };
+    const obs = observacionesSinteticas(verdad, 120, 1.5);
+    const fit = ajustarCoeficientes(obs, Date.parse('2026-09-20T13:00:00.000Z'))!;
+    assert.ok(fit, 'el ajuste converge');
+    assert.ok(Math.abs(fit.coef.setupMin - verdad.setupMin) < 1, 'setup: ' + fit.coef.setupMin);
+    assert.ok(Math.abs(fit.coef.perLineMin - verdad.perLineMin) < 0.5, 'por parada: ' + fit.coef.perLineMin);
+    assert.ok(Math.abs(fit.coef.perUnitMin - verdad.perUnitMin) < 0.2, 'por unidad: ' + fit.coef.perUnitMin);
+    // Y aprender tiene que servir: el error contra el modelo declarado debe bajar.
+    const errorDeclarado = obs.reduce((s, o) => s + Math.abs(estimarMinutos(modeloPorDefecto('PICK').coef, o) - o.minutos), 0) / obs.length;
+    assert.ok(fit.errorMedioMin < errorDeclarado, `aprendido ${fit.errorMedioMin} min vs declarado ${errorDeclarado.toFixed(2)} min`);
+  });
+
+  await test('aprendizaje: prefiere no aprender antes que aprender un disparate', () => {
+    // Todas las tareas idénticas: no hay variación de la que sacar tres coeficientes.
+    const planas = Array.from({ length: 50 }, (_, i) => ({
+      stage: 'PICK', operator: 'pedro', minutos: 10, lines: 2, units: 10,
+      at: new Date(Date.parse('2026-09-20T12:00:00.000Z') - i * 3600000).toISOString(),
+    }));
+    assert.equal(ajustarCoeficientes(planas, Date.parse('2026-09-20T13:00:00.000Z')), null, 'sin variación no se inventa un ajuste');
+    // Tiempos que BAJAN con las unidades: un artefacto, no un hallazgo.
+    const absurdas = Array.from({ length: 60 }, (_, i) => ({
+      stage: 'PICK', operator: 'pedro', minutos: Math.max(1, 60 - i), lines: 1 + (i % 3), units: i,
+      at: new Date(Date.parse('2026-09-20T12:00:00.000Z') - i * 3600000).toISOString(),
+    }));
+    assert.equal(ajustarCoeficientes(absurdas, Date.parse('2026-09-20T13:00:00.000Z')), null, 'un coeficiente negativo invalida el ajuste');
+  });
+
+  await test('aprendizaje: la higiene deja fuera lo que no describe a una persona', () => {
+    const base = { stage: 'PICK', lines: 2, units: 10, at: '2026-09-20T12:00:00.000Z' };
+    const { utiles, descartes } = filtrarObservaciones([
+      { ...base, operator: 'pedro', minutos: 12 },
+      { ...base, operator: 'agente', minutos: 0.9 },     // el agente de IA, no una persona
+      { ...base, operator: 'system', minutos: 11 },      // movimientos del sistema
+      { ...base, operator: 'copiloto', minutos: 8 },
+      { ...base, operator: 'carla', minutos: 0.2 },      // dos segundos: un toque accidental
+      { ...base, operator: 'carla', minutos: 300 },      // cinco horas: la dejó abierta
+      { ...base, operator: 'carla', minutos: 9, units: 0, lines: 0 }, // nada que explicar
+    ] as any);
+    assert.equal(utiles.length, 1, 'solo la tarea humana y plausible sobrevive');
+    assert.equal(descartes.actor_no_humano, 3, 'agente, sistema y copiloto quedan fuera');
+    assert.equal(descartes.duracion_imposible, 2);
+    assert.equal(descartes.sin_trabajo, 1);
+  });
+
+  await test('aprendizaje: el p90 cubre la cola, no el promedio', () => {
+    const coef = { setupMin: 2, perLineMin: 1, perUnitMin: 0.3 };
+    // Mayoría puntual y una cola de tareas que se complicaron.
+    const obs: any[] = [];
+    for (let i = 0; i < 90; i++) obs.push({ stage: 'PICK', operator: 'p', minutos: estimarMinutos(coef, { lines: 2, units: 10 }), lines: 2, units: 10, at: '2026-09-20T12:00:00.000Z' });
+    for (let i = 0; i < 10; i++) obs.push({ stage: 'PICK', operator: 'p', minutos: estimarMinutos(coef, { lines: 2, units: 10 }) * 2.5, lines: 2, units: 10, at: '2026-09-20T12:00:00.000Z' });
+    const f = factorP90(obs, coef);
+    assert.ok(f > 1, 'el p90 estira la estimación: ' + f);
+    assert.ok(f <= 2.5, 'pero no se va al máximo de la cola');
+  });
+
+  await test('aprendizaje: la jerarquía nunca deja a nadie sin estimación', () => {
+    const coefBodega = { setupMin: 3, perLineMin: 2, perUnitMin: 0.15 };
+    const coefPlat = { setupMin: 2, perLineMin: 1.2, perUnitMin: 0.25 };
+    // Bodega con datos propios: manda lo suyo.
+    const propio = resolverModelo('PICK', { operacion: { coef: coefBodega, samples: 200 }, plataforma: { coef: coefPlat, samples: 9000 } });
+    assert.equal(propio.source, 'operacion');
+    assert.deepEqual(propio.coef, coefBodega);
+    // Bodega nueva: hereda de la plataforma en vez de caer a una constante.
+    const heredado = resolverModelo('PICK', { operacion: { coef: coefBodega, samples: 4 }, plataforma: { coef: coefPlat, samples: 9000 } });
+    assert.equal(heredado.source, 'plataforma');
+    assert.deepEqual(heredado.coef, coefPlat);
+    // Plataforma sin datos: el declarado, y se dice que es el declarado.
+    const declarado = resolverModelo('PICK', {});
+    assert.equal(declarado.source, 'defecto');
+    assert.equal(declarado.samples, 0);
+    // Con factor personal, el origen lo refleja.
+    const suyo = resolverModelo('PICK', { operacion: { coef: coefBodega, samples: 200 }, factorOperario: 0.8 });
+    assert.equal(suyo.source, 'operario');
+    assert.equal(suyo.factor, 0.8);
+  });
+
+  await test('aprendizaje: el factor personal usa la mediana, no el promedio', () => {
+    const coef = { setupMin: 2, perLineMin: 1, perUnitMin: 0.3 };
+    const est = estimarMinutos(coef, { lines: 2, units: 10 });
+    const obs: any[] = [];
+    // Once tareas a 0,8× y una que quedó abierta toda la tarde.
+    for (let i = 0; i < 11; i++) obs.push({ stage: 'PICK', operator: 'p', minutos: est * 0.8, lines: 2, units: 10, at: '2026-09-20T12:00:00.000Z' });
+    obs.push({ stage: 'PICK', operator: 'p', minutos: est * 20, lines: 2, units: 10, at: '2026-09-20T12:00:00.000Z' });
+    const f = factorDeOperario(obs, coef)!;
+    assert.equal(f, 0.8, 'la tarea olvidada no mueve el factor: ' + f);
+    // Con pocas tareas no se inventa un factor.
+    assert.equal(factorDeOperario(obs.slice(0, 5), coef), null);
+  });
+
+  await test('aprendizaje: el ciclo completo mejora la estimación de una bodega real', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Bodega' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    // Una bodega lenta para caminar: 4 min por parada, muy lejos de los 1,0 declarados.
+    const verdad = { setupMin: 2, perLineMin: 4, perUnitMin: 0.2 };
+    const t0 = Date.parse('2026-09-20T08:00:00.000Z');
+    let k = 0;
+    for (const o of observacionesSinteticas(verdad, 60, 1)) {
+      const ini = new Date(t0 + (k++) * 3600000);
+      const fin = new Date(ini.getTime() + o.minutos * 60000);
+      await f.taskLedger.create({
+        operationId: 'op1', sellerId: 'acme', type: 'PICK', orderId: null, orderRef: null,
+        entityId: 'e-' + k, entityRef: 'E' + k, state: 'done',
+        unitsEstimate: o.units, linesEstimate: o.lines, unitsDone: o.units,
+        assignmentId: null, operator: 'pedro',
+        createdAt: ini.toISOString(), createdBy: 'jefe',
+        startedAt: ini.toISOString(), completedAt: fin.toISOString(), completedBy: 'pedro', note: null,
+      } as any);
+    }
+    f.clock.set('2026-09-23T03:00:00.000Z');
+
+    const antes = await f.facade.estimateTask('op1', 'PICK', { units: 10, lines: 6 });
+    assert.equal(antes.source, 'defecto', 'antes de aprender, el modelo es el declarado');
+
+    const r = await f.facade.learnTaskTimes('op1');
+    const pick = r.etapas.find((e: any) => e.stage === 'PICK')!;
+    assert.equal(pick.ajustado, true, pick.motivo || '');
+    assert.ok(pick.errorMedioMin! < pick.errorAnteriorMin!, `el error baja de ${pick.errorAnteriorMin} a ${pick.errorMedioMin} min`);
+    assert.ok(Math.abs(pick.coef!.perLineMin - verdad.perLineMin) < 0.7, 'aprendió que caminar cuesta: ' + pick.coef!.perLineMin);
+
+    const despues = await f.facade.estimateTask('op1', 'PICK', { units: 10, lines: 6 });
+    assert.equal(despues.source, 'operacion', 'ahora el modelo es el de la bodega');
+    assert.ok(despues.samples >= MIN_MUESTRAS);
+    assert.ok(despues.p90Min > despues.p50Min, 'el p90 es más conservador que la mediana');
+    // Una tarea de 6 paradas: el declarado decía ~10,5 min y la bodega tarda ~28.
+    assert.ok(despues.p50Min > antes.p50Min * 1.5, `la estimación se corrige de ${antes.p50Min} a ${despues.p50Min} min`);
+  });
+
+  await test('cancelación: el stock vuelve a una ubicación con código, no a un id suelto', async () => {
+    const f = buildFacade();
+    // La ubicación de reposición existe desde que nace la operación, no desde la
+    // primera cancelación: antes aparecía a mitad de turno y el panel, que arma su
+    // índice al entrar, mostraba su UUID en la tabla de inventario.
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    const repoInicial = (await f.facade.listLocations('op1')).find((l) => l.code === 'DEV-REPOSICION');
+    assert.ok(repoInicial, 'la operación nace con su ubicación de reposición');
+    assert.equal(repoInicial!.zoneType, ZoneType.RECEIVING, 'en recepción: existe y se ve, pero no es reservable');
+
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01-1-A', zoneType: ZoneType.STORAGE, capacity: 500, pickRank: 1 });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 20, locationId: stg.id });
+    const o = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-CANC-1', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 6 }],
+    });
+    await f.facade.allocateOrder('acme', o.id);
+    await f.facade.confirmPick('acme', o.id, 'pedro');   // ya salió físicamente del rack
+    await f.facade.cancelOrder('acme', o.id, 'ana');
+
+    const stock = await f.facade.getStock({ sellerId: 'acme', sku: 'CAM' });
+    const enRepo = stock.filter((b: any) => b.locationId === repoInicial!.id).reduce((s: number, b: any) => s + b.qty, 0);
+    assert.equal(enRepo, 6, 'lo recolectado vuelve a reposición, no desaparece');
+
+    // Y lo que importa para el panel: TODA ubicación con stock está en el maestro.
+    const conocidas = new Set((await f.facade.listLocations('op1')).map((l) => l.id));
+    const huerfanas = stock.filter((b: any) => b.qty > 0 && !conocidas.has(b.locationId));
+    assert.deepEqual(huerfanas, [], 'ninguna ubicación con stock queda fuera del maestro de ubicaciones');
+
+    // No es reservable hasta que alguien la reponga: es mercadería en el dock.
+    const o2 = await f.facade.createOrder('acme', {
+      externalOrderId: 'WEB-CANC-2', salesChannel: 'web', shipTo: { name: 'x' } as any,
+      lines: [{ sku: 'CAM', qty: 20 }],
+    });
+    await expectThrows(() => f.facade.allocateOrder('acme', o2.id), StockShortageError);
+  });
+
+  await test('alta self-serve: el celular es obligatorio y queda guardado con la cuenta', async () => {
+    const { facade } = buildFacade();
+    // Sin celular no hay cuenta: es la única vía de contacto que no depende del correo.
+    await expectThrows(
+      () => facade.registerSelfServe({ companyName: 'Sin Fono', name: 'N', email: 'sin@fono.cl', phone: '', password: 'clave12345', track: 'brand' }),
+      ValidationError,
+    );
+    // Un campo mal llenado tampoco pasa.
+    await expectThrows(
+      () => facade.registerSelfServe({ companyName: 'Malo', name: 'N', email: 'malo@fono.cl', phone: 'no tengo', password: 'clave12345', track: 'brand' }),
+      ValidationError,
+    );
+    const res = await facade.registerSelfServe({
+      companyName: 'Tienda Aurora', name: 'Camila Rojas', email: 'camila@aurora.cl',
+      phone: '+56 9 8765 4321', password: 'clave12345', track: 'brand',
+    });
+    const op = await facade.getOperation(res.operationId);
+    // El formulario completo viaja a la ficha del tenant: es lo que ve el super-admin.
+    assert.equal(op?.contactName, 'Camila Rojas');
+    assert.equal(op?.contactEmail, 'camila@aurora.cl');
+    assert.equal(op?.contactPhone, '+56 9 8765 4321', 'se guarda tal cual lo escribieron');
+    assert.ok(op?.createdAt, 'queda la fecha de alta');
+  });
+
+  await test('alta self-serve: un celular extranjero no se rechaza (México entra este año)', async () => {
+    const { facade } = buildFacade();
+    const res = await facade.registerSelfServe({
+      companyName: 'Bodega Azteca', name: 'Luis', email: 'luis@azteca.mx',
+      phone: '+52 55 1234 5678', password: 'clave12345', track: 'operator',
+    });
+    const op = await facade.getOperation(res.operationId);
+    assert.equal(op?.contactPhone, '+52 55 1234 5678');
+  });
+
+  await test('ficha del tenant: editar el nombre no borra el contacto', async () => {
+    const { facade } = buildFacade();
+    const res = await facade.registerSelfServe({
+      companyName: 'Antes', name: 'Ana', email: 'ana@antes.cl',
+      phone: '+56 9 1111 2222', password: 'clave12345', track: 'brand',
+    });
+    // El panel manda solo el nombre al renombrar. Si el patch tratara `undefined` como
+    // "borrar", el teléfono del cliente desaparecería sin que nadie lo pidiera.
+    await facade.updateOperation(res.operationId, { name: 'Después' });
+    const op = await facade.getOperation(res.operationId);
+    assert.equal(op?.name, 'Después');
+    assert.equal(op?.contactPhone, '+56 9 1111 2222');
+    // El string vacío SÍ borra, que es lo que hace el formulario al limpiar el campo.
+    await facade.updateOperation(res.operationId, { contactPhone: '' });
+    assert.equal((await facade.getOperation(res.operationId))?.contactPhone, null);
   });
 
   await test('esquema de Prisma: sintaxis válida (lo que tumbó el despliegue v125)', () => {

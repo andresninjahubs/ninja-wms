@@ -28,6 +28,11 @@ model Operation {
   autoBalance Boolean  @default(false) // auto-balanceo continuo
   operatorSelfPickup Boolean @default(false) // operarios pueden tomar tareas disponibles desde la app
   deadlineConfig Json? // deadlines de preparación: { offsetHoras, riesgoHoras, cortes: [{courier, hora, dias}] }
+  /// Contacto del alta: quien llenó el formulario de registro. El teléfono es
+  /// obligatorio en el alta self-serve y no existe en User, así que vive acá.
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
   createdAt   DateTime  @default(now())
 
   packagingMaterials PackagingMaterial[] // FK PackagingMaterial → Operation (G8)
@@ -44,6 +49,9 @@ model WorkAssignment {
   operator      String
   status        String // assigned | in_progress | done | released
   unitsEstimate Int       @default(0)
+  /// Ubicaciones distintas a visitar: el término del modelo de tiempo que explica el
+  /// desplazamiento. 8 un de una ubicación y 8 un de ocho ubicaciones no pesan igual.
+  linesEstimate Int       @default(1)
   assignedBy    String
   assignedAt    DateTime
   /// Cuándo el operario EMPEZÓ a trabajarla, no cuándo se la dieron. La diferencia
@@ -117,6 +125,8 @@ model WorkTask {
   entityRef     String?
   state         String // pending | assigned | in_progress | done | cancelled
   unitsEstimate Int       @default(0)
+  /// Ubicaciones distintas a visitar (ver WorkAssignment.linesEstimate).
+  linesEstimate Int       @default(1)
   /// Unidades REALMENTE ejecutadas (unitsEstimate es lo que se creyó antes de empezar).
   unitsDone     Int       @default(0)
   assignmentId  String?
@@ -134,6 +144,42 @@ model WorkTask {
   /// Productividad por persona: sin este índice, cada consulta recorría la tabla entera.
   @@index([operationId, operator, completedAt])
   @@index([operationId, completedAt])
+}
+
+/// Coeficientes de tiempo aprendidos por (operación, etapa). Se recalculan de noche
+/// desde el libro de eventos. `operationId = '__plataforma__'` guarda el modelo global,
+/// que es el que hereda una bodega nueva mientras junta sus propias muestras.
+model TaskTimeModel {
+  operationId   String
+  stage         String
+  setupMin      Float
+  perLineMin    Float
+  perUnitMin    Float
+  /// Multiplicador sobre el p50 para cubrir al 90% de los casos. Los deadlines usan
+  /// el p90: prometer la mediana es incumplir la mitad de las veces.
+  p90Factor     Float  @default(1.5)
+  /// Tareas que respaldan estos coeficientes, y cuánto se equivoca el modelo.
+  samples       Int    @default(0)
+  errorMedioMin Float  @default(0)
+  /// Descartadas por higiene, con su motivo (JSON). Se guarda para poder explicarlo.
+  descartes     Json?
+  updatedAt     DateTime
+
+  @@id([operationId, stage])
+  @@index([operationId])
+}
+
+/// Factor personal de cada operario sobre el modelo de su bodega (1 = el promedio).
+model OperatorTimeFactor {
+  operationId String
+  operator    String
+  stage       String
+  factor      Float
+  samples     Int      @default(0)
+  updatedAt   DateTime
+
+  @@id([operationId, operator, stage])
+  @@index([operationId, operator])
 }
 
 /// Libro de eventos de tarea: append-only, una fila por transición.

@@ -15,6 +15,8 @@ import {
   AuthTokenKind,
   CountAudit,
   DomainEvent,
+  StoredTaskTimeModel,
+  StoredOperatorFactor,
   DomainEntityType,
   DailyInventorySnapshot,
   DailyDemand,
@@ -200,6 +202,19 @@ export interface TaskEventRepository {
   listByEntity(operationId: string, entityId: string, opts?: { stage?: string | null }): Promise<TaskEvent[]>;
   /** Consulta general: qué pasó, quién lo hizo y cuándo, dentro de una ventana. */
   query(operationId: string, opts?: { actor?: string | null; subject?: string | null; stage?: string | null; type?: TaskEventType | null; from?: string; to?: string; limit?: number }): Promise<TaskEvent[]>;
+}
+
+/**
+ * Modelos de tiempo aprendidos. Se sobrescriben en cada reajuste: acá NO hace falta
+ * historial —lo que importa se puede recalcular desde el libro de eventos, que sí es
+ * append-only—, así que guardar versiones del modelo sería ruido.
+ */
+export interface TaskTimeModelRepository {
+  save(m: StoredTaskTimeModel): Promise<void>;
+  get(operationId: string, stage: string): Promise<StoredTaskTimeModel | null>;
+  list(operationId: string): Promise<StoredTaskTimeModel[]>;
+  saveFactor(f: StoredOperatorFactor): Promise<void>;
+  listFactors(operationId: string, opts?: { operator?: string | null }): Promise<StoredOperatorFactor[]>;
 }
 
 /** Configuración por operación de las reglas del agente proactivo. */

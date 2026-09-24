@@ -247,6 +247,19 @@ export interface Operation {
   track?: 'brand' | 'operator' | null;
   // true si la operación nació de un registro self-serve (no creada por el PLATFORM_ADMIN).
   selfServe?: boolean;
+  /**
+   * Contacto con el que se dio de alta la cuenta. Es la persona que llenó el formulario
+   * de registro, no un usuario más: el super-admin necesita saber a quién llamar sin
+   * tener que cruzar la tabla de usuarios, y el teléfono no existe en `User`.
+   *
+   * Se guarda tal como lo escribieron, sin normalizar el formato: un número guardado
+   * "arreglado" a un formato que el dueño no reconoce es peor que uno tal cual vino.
+   */
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  /** Cuándo nació la cuenta (ISO). En las operaciones antiguas puede venir null. */
+  createdAt?: string | null;
   // Plan del SaaS (PLG · Fase 1). Ausente = 'internal' (sin límites): super-admin / semilla.
   planId?: string | null;
   // Reverse-trial: plan y vencimiento del período de prueba (efectivo mientras esté vigente).
@@ -1107,6 +1120,12 @@ export interface WorkAssignment {
   operator: string; // id del operario asignado
   status: WorkAssignmentStatus;
   unitsEstimate: number; // unidades estimadas de trabajo (para balancear por tiempo)
+  /**
+   * Ubicaciones distintas que hay que visitar. El modelo de tiempo viejo solo miraba
+   * unidades, así que 8 unidades de una ubicación y 8 de ocho ubicaciones pesaban
+   * igual al balancear la carga, cuando en el piso la segunda toma varias veces más.
+   */
+  linesEstimate: number;
   assignedBy: string;
   assignedAt: string;
   /**
@@ -1152,6 +1171,8 @@ export interface WorkTask {
   entityRef: string | null; // texto legible
   state: WorkTaskState;
   unitsEstimate: number;
+  /** Ubicaciones distintas a visitar (ver WorkAssignment.linesEstimate). */
+  linesEstimate: number;
   /**
    * Unidades REALMENTE ejecutadas, que no es lo mismo que `unitsEstimate`: ese es lo
    * que se creyó antes de empezar y nunca se corregía. Sin este campo no hay forma de
@@ -1167,6 +1188,32 @@ export interface WorkTask {
   completedAt: string | null;
   completedBy: string | null;
   note: string | null;
+}
+
+/** Coeficientes de tiempo aprendidos para una etapa de una operación. */
+export interface StoredTaskTimeModel {
+  operationId: string;
+  stage: string;
+  setupMin: number;
+  perLineMin: number;
+  perUnitMin: number;
+  /** Multiplicador del p50 para llegar al p90 (el que usan los compromisos de salida). */
+  p90Factor: number;
+  samples: number;
+  errorMedioMin: number;
+  /** Muestras dejadas fuera y por qué. Se guarda para poder explicar el ajuste. */
+  descartes: Record<string, number> | null;
+  updatedAt: string;
+}
+
+/** Cuánto se desvía un operario del modelo de su bodega (1 = el promedio). */
+export interface StoredOperatorFactor {
+  operationId: string;
+  operator: string;
+  stage: string;
+  factor: number;
+  samples: number;
+  updatedAt: string;
 }
 
 // ---- Agente proactivo (Nivel 3): reglas y alertas -----------------------------
