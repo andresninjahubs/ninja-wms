@@ -419,11 +419,22 @@
     if(videoManifest)return Promise.resolve(videoManifest);
     return fetch('videos/manifest.json',{cache:'no-cache'}).then(function(r){return r.ok?r.json():{};}).then(function(j){videoManifest=j||{};return videoManifest;}).catch(function(){videoManifest={};return videoManifest;});
   }
-  function hasVideo(pg){ return !!(videoManifest&&videoManifest[pg]); }
+  /**
+   * Videos que muestran tarifas de plan en pantalla y que, por lo tanto, solo puede ver
+   * la plataforma. El video de "Plan" se grabó con el comparador de precios abierto;
+   * mientras no se regrabe sin esa tarjeta, no se ofrece a un 3PL ni a un seller.
+   */
+  var VIDEOS_SOLO_PLATAFORMA={plan:1,pkgmatrix:1};
+  function videoPermitido(pg){
+    if(!VIDEOS_SOLO_PLATAFORMA[pg])return true;
+    var role=ctx.getRole?ctx.getRole():null;
+    return role==='PLATFORM_ADMIN';
+  }
+  function hasVideo(pg){ return !!(videoManifest&&videoManifest[pg])&&videoPermitido(pg); }
   function openVideo(pg){
     var g=GUIDES()[pg]||{title:pg};
     var ov=document.createElement('div'); ov.className='nt-center';
-    var v=videoManifest&&videoManifest[pg];
+    var v=(videoManifest&&videoManifest[pg]&&videoPermitido(pg))?videoManifest[pg]:null;
     ov.innerHTML='<div class="nt-vpanel">'
       +(v?'<video controls autoplay playsinline src="videos/'+v.file+'"></video>':'<div class="nt-vempty">El video de esta sección aún no está disponible. Puedes ver el tutorial interactivo.</div>')
       +'<div class="nt-vbar"><div><b>'+(g.icon||'')+' '+g.title+'</b><div class="d">'+(g.summary||'')+(v&&v.duration?' · '+v.duration:'')+'</div></div><span class="sp"></span>'

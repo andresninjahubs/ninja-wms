@@ -2704,7 +2704,7 @@ export class WmsFacade {
   }
 
   /** Estado completo del plan de una operación (para la UI: plan, trial, uso vs límite). */
-  async getPlanState(operationId: string): Promise<any> {
+  async getPlanState(operationId: string, conPrecios = true): Promise<any> {
     const op = await this.operationsService.get(operationId);
     const nowMs = this.planNow();
     const catalog = await this.resolveCatalog();
@@ -2714,7 +2714,13 @@ export class WmsFacade {
     const usage = op ? await this.usageFor(operationId) : { ordersPerMonth: 0, sellers: 0, users: 0, warehouses: 0 };
     const row = (k: keyof PlanLimits) => ({ used: usage[k], limit: plan.limits[k] });
     return {
-      plan: { id: plan.id, name: plan.name, prices: plan.prices, blurb: plan.blurb, features: plan.features },
+      // El precio del plan solo viaja hacia la plataforma. Para un 3PL o un seller la
+      // tarifa que Ninja Hubs le cobra no es información de su operación: es de la
+      // relación comercial, se negocia fuera del producto, y aparecer en pantalla
+      // mientras el 3PL le muestra el panel a SU cliente no le hace ningún favor.
+      // Se omite en el servidor, no en la vista: esconderlo solo en el navegador deja
+      // la cifra en la respuesta para cualquiera que abra las herramientas del navegador.
+      plan: { id: plan.id, name: plan.name, ...(conPrecios ? { prices: plan.prices } : {}), blurb: plan.blurb, features: plan.features },
       basePlan: { id: base.id, name: base.name },
       trial,
       usage: { ordersPerMonth: row('ordersPerMonth'), sellers: row('sellers'), users: row('users'), warehouses: row('warehouses') },
@@ -2722,10 +2728,17 @@ export class WmsFacade {
     };
   }
 
-  /** Catálogo público de planes (efectivo) para el comparador de precios. */
-  async planCatalog(): Promise<PlanDef[]> {
+  /**
+   * Catálogo de planes (efectivo) para el comparador.
+   *
+   * `conPrecios` en false devuelve los mismos planes sin la tarifa: sirve para saber
+   * qué incluye cada uno sin exponer cuánto cuesta.
+   */
+  async planCatalog(conPrecios = true): Promise<PlanDef[]> {
     const catalog = await this.resolveCatalog();
-    return (['free', 'growth', 'scale', 'enterprise'] as PlanId[]).map((id) => catalog[id]);
+    const planes = (['free', 'growth', 'scale', 'enterprise'] as PlanId[]).map((id) => catalog[id]);
+    if (conPrecios) return planes;
+    return planes.map((p) => { const { prices, ...resto } = p; return resto as PlanDef; });
   }
 
   /** Grant manual de plan por el super-admin (sin pagos aún). */

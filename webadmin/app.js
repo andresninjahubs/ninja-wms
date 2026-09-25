@@ -188,7 +188,17 @@
     opts=opts||{};
     var h={'Content-Type':'application/json'}; if(token)h['Authorization']='Bearer '+token;
     return fetch(API+path,{method:opts.method||'GET',headers:h,body:opts.body?JSON.stringify(opts.body):undefined})
-      .then(function(r){return r.text().then(function(t){var d=t?JSON.parse(t):{};if(!r.ok){if(r.status===401&&token)sesionExpirada();var m=(d&&(d.detail||d.message))||('Error '+r.status);if(typeof m==='object')m=JSON.stringify(m);var e=new Error(m);e.status=r.status;e.data=d&&d.data;throw e;}return d;});});
+      .then(function(r){return r.text().then(function(t){var d=t?JSON.parse(t):{};if(!r.ok){
+        if(r.status===401&&token)sesionExpirada();
+        // 402 = el servidor rechazó por plan (PlanLimitError). Es la red de seguridad
+        // del muro: el candado del menú y la intercepción de clicks cubren lo que el
+        // panel conoce, y esto cubre lo que no — una pantalla nueva, un atajo, una
+        // llamada que nadie recordó marcar. Solo en escrituras: un GET que devuelve 402
+        // al entrar a la sección no es un intento de operar y no debe abrir el popup.
+        if(r.status===402&&(opts.method||'GET')!=='GET'&&role!=="PLATFORM_ADMIN"&&typeof openPaywall==='function'){
+          try{ openPaywall(pgActual); }catch(x){}
+        }
+        var m=(d&&(d.detail||d.message))||('Error '+r.status);if(typeof m==='object')m=JSON.stringify(m);var e=new Error(m);e.status=r.status;e.data=d&&d.data;throw e;}return d;});});
   }
 
   // ---- Login ----------------------------------------------------------------
@@ -233,7 +243,154 @@
   var planFeatures=null; // null = desconocido/interno (sin candados)
   var MODULE_FEATURE={returns:'returns',assembly:'kitting',counts:'cycle_count',packaging:'packaging_materials',asignaciones:'task_assignment',billing:'billing_3pl',costos:'cost_profitability',copilot:'ai_copilot',voz:'ai_voice',webhooks:'webhooks',branding:'white_label',chat:'client_chat',voicechannel:'voice_channel',announcements:'announcements'};
   var FEATURE_NAME={returns:'Devoluciones',kitting:'Armado de kits',cycle_count:'Conteo cíclico',packaging_materials:'Insumos de embalaje',lot_serial:'Lote/serie',task_assignment:'Asignación de tareas',reslotting:'Re-slotting',billing_3pl:'Facturación 3PL',cost_profitability:'Costos y rentabilidad',advanced_analytics:'Analítica avanzada',ai_copilot:'Copiloto IA',ai_voice:'Copiloto de voz',webhooks:'Webhooks',api:'API',white_label:'Marca propia',multi_courier:'Multi-courier',client_chat:'Mensajería con clientes',voice_channel:'Canal de voz',announcements:'Anuncios'};
-  function moduleLocked(pg){ if(!planFeatures)return false; var f=MODULE_FEATURE[pg]; return !!(f && planFeatures.indexOf(f)<0); }
+  function moduleLocked(pg){
+    // La plataforma no se topa con el muro. Está mirando la operación de un cliente y
+    // su plan, no el suyo: ponerle un candado y ofrecerle escribir por WhatsApp a su
+    // propio número no tiene ningún sentido. Si el servidor rechaza por plan, verá el
+    // error tal cual, que es lo que un soporte necesita leer.
+    if(role==="PLATFORM_ADMIN")return false;
+    if(!planFeatures)return false;
+    var f=MODULE_FEATURE[pg];
+    return !!(f && planFeatures.indexOf(f)<0);
+  }
+
+  // ---- Muro de plan ---------------------------------------------------------
+  // Un módulo fuera de plan ya no se esconde: el usuario entra, lo recorre y solo se
+  // topa con el muro cuando intenta OPERAR. Mostrar la puerta cerrada vende mucho más
+  // que no mostrar la puerta; y el momento del clic es el único en que alguien está
+  // dispuesto a escribir por WhatsApp.
+  var WA_TEL='56940254230';
+  var planActualNombre=null;   // lo llena loadPlanFeatures(); solo para el texto del muro
+  /** Qué hace cada módulo, en una línea. Es el argumento de venta, no el nombre. */
+  var MODULE_PITCH={
+    returns:'Recibir devoluciones, revisar su estado y decidir si vuelven a stock, se reparan o se dan de baja.',
+    assembly:'Armar y desarmar kits desde sus componentes, con el stock cuadrando solo.',
+    counts:'Conteo cíclico dirigido: el sistema propone qué contar cada día y registra las diferencias.',
+    packaging:'Controlar el stock de cajas, film y etiquetas, y cobrarlos a cada cliente.',
+    asignaciones:'Repartir el trabajo entre operarios por carga real y tiempo proyectado.',
+    billing:'Tarifario por cliente y facturas 3PL calculadas con lo que de verdad se hizo.',
+    costos:'Costo por actividad, margen por cliente y eficiencia estándar contra la real.',
+    copilot:'Preguntarle a tu operación en lenguaje natural, con datos en vivo.',
+    voz:'Conversar por voz con la operación y dejar que ejecute por ti.',
+    webhooks:'Avisar a tus sistemas por HTTP cada vez que ocurre un despacho o una recepción.',
+    branding:'Tu marca en el panel y en los documentos que ve tu cliente.',
+    chat:'Un canal de mensajes con cada cliente de la bodega, dentro del WMS.',
+    voicechannel:'Mensajes de voz entre los operarios en piso y la administración.',
+    announcements:'Publicar avisos en la barra superior del panel de tus usuarios.'
+  };
+
+  /** El enlace de WhatsApp, con el módulo ya escrito en el mensaje. */
+  function waLink(modulo){
+    var txt='Hola, quiero activar '+(modulo?('«'+modulo+'»'):'un módulo')+' en mi cuenta de Ninja WMS.';
+    return 'https://api.whatsapp.com/send?phone='+WA_TEL+'&text='+encodeURIComponent(txt);
+  }
+  function abrirWhatsApp(modulo){
+    try{ window.open(waLink(modulo),'_blank','noopener'); }
+    catch(e){ location.href=waLink(modulo); }
+  }
+  var WA_SVG='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.5 14.4c-.3-.2-1.7-.9-2-1-.3-.1-.5-.2-.7.1s-.8 1-.9 1.2c-.2.2-.3.2-.6.1-.3-.2-1.2-.5-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.5.1-.6l.5-.5c.1-.2.2-.3.3-.5 0-.2 0-.4 0-.5 0-.2-.7-1.6-.9-2.2-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.2.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.2-1.4-.1-.1-.3-.2-.6-.3zM12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.4 1.3 4.9L2 22l5.3-1.4c1.4.8 3 1.2 4.7 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2zm0 18.2c-1.6 0-3-.4-4.3-1.2l-.3-.2-3.1.8.8-3-.2-.3c-.8-1.3-1.3-2.8-1.3-4.4 0-4.5 3.7-8.2 8.2-8.2s8.2 3.7 8.2 8.2-3.6 8.3-8.2 8.3z"/></svg>';
+
+  /**
+   * El muro. Se abre al intentar operar un módulo que el plan no incluye.
+   *
+   * No dice cuánto cuesta el plan superior a propósito: esa cifra no se muestra a un
+   * 3PL ni a un seller (ver `verTarifas`). Dice qué se gana y abre la conversación.
+   */
+  function openPaywall(pg){
+    var f=MODULE_FEATURE[pg], nombre=FEATURE_NAME[f]||(TITLES[pg]&&TITLES[pg][0])||'Este módulo';
+    var pitch=MODULE_PITCH[pg]||'';
+    // A quién le corresponde pedir el módulo depende de con quién tiene el contrato.
+    // El dueño de la cuenta (el 3PL o la marca) contrata con Ninja Hubs. Un usuario
+    // CLIENT es el cliente DE ESA BODEGA: su proveedor es el 3PL, no nosotros. Mandarlo
+    // a escribirle a Ninja Hubs lo manda a la puerta equivocada y, en una cuenta con
+    // marca propia, le revela un proveedor que no debería estar viendo.
+    var esCliente = role==="CLIENT";
+    openModal(esCliente?'Módulo no habilitado':'Disponible en un plan superior',
+      '<div class="paywall">'
+      +'<div class="pw-ic">🔒</div>'
+      +'<h4>'+esc(nombre)+'</h4>'
+      +(pitch?'<p class="pw-txt">'+esc(pitch)+'</p>':'')
+      +(esCliente
+        ? '<p class="pw-txt">Tu operador logístico aún no tiene este módulo habilitado. Puedes recorrer la sección, pero no operarla. Escríbele si te interesa usarla.</p>'
+          +'<div style="height:14px"></div>'
+          +'<div class="pw-acts"><button class="pw-close" id="pw-close" type="button">Entendido</button></div>'
+        : '<p class="pw-txt">Puedes recorrer la sección para ver cómo funciona, pero para operarla necesitas un plan que la incluya.</p>'
+          +(planActualNombre?'<div class="pw-plan">Tu plan actual: <b>'+esc(planActualNombre)+'</b></div>':'<div style="height:14px"></div>')
+          +'<div class="pw-acts">'
+          +'<button class="pw-wa" id="pw-wa" type="button">'+WA_SVG+'Hablar por WhatsApp</button>'
+          +'<button class="pw-close" id="pw-close" type="button">Ahora no</button>'
+          +'</div>'
+          +'<div class="pw-foot">Te responde el equipo de Ninja Hubs · +56 9 4025 4230</div>')
+      +'</div>');
+    var wa=document.getElementById('pw-wa');
+    if(wa)wa.addEventListener('click',function(){ abrirWhatsApp(nombre); closeModal(); });
+    var cerrar=document.getElementById('pw-close');
+    if(cerrar)cerrar.addEventListener('click',closeModal);
+  }
+
+  /** Pinta (o esconde) la barra de aviso del módulo bloqueado que se está mirando. */
+  var pgActual=null;
+  function syncLockBar(pg){
+    pgActual=pg;
+    var bar=document.getElementById('lockbar'); if(!bar)return;
+    var bloqueado=moduleLocked(pg);
+    bar.classList.toggle('off',!bloqueado);
+    var sec=document.querySelector('.page[data-pg="'+pg+'"]');
+    if(sec)sec.classList.toggle('locked',bloqueado);
+    if(!bloqueado)return;
+    var f=MODULE_FEATURE[pg];
+    var m=document.getElementById('lb-mod');
+    if(m)m.textContent=FEATURE_NAME[f]||(TITLES[pg]&&TITLES[pg][0])||'Este módulo';
+    var esCliente=role==="CLIENT";
+    // Para un seller no es "tu plan": es el de la bodega que le presta el servicio.
+    var why=document.getElementById('lb-why');
+    if(why)why.textContent=esCliente?'no está habilitado por tu operador logístico':'no está incluido en tu plan';
+    var wa=document.getElementById('lb-wa');
+    if(wa){
+      wa.textContent=esCliente?'Por qué no puedo usarlo':'Hablar por WhatsApp';
+      wa.style.background=esCliente?'var(--surface)':'#25D366';
+      wa.style.color=esCliente?'var(--ink-2)':'#0b2e18';
+      wa.style.border=esCliente?'1px solid var(--line)':'0';
+    }
+  }
+
+  /**
+   * Intercepta cualquier intento de operar dentro de un módulo bloqueado.
+   *
+   * Va en fase de CAPTURA sobre el contenedor de páginas: así se adelanta a los
+   * manejadores de cada botón sin tener que enumerar los cientos que hay repartidos
+   * por catorce módulos. Enumerarlos sería la vía segura de olvidar uno.
+   */
+  (function muroDeClicks(){
+    var cont=document.querySelector('.content'); if(!cont)return;
+    var OPERABLES='button,select,input,textarea,a[data-pg],[data-action],[role="button"]';
+    function interceptar(e){
+      if(!pgActual||!moduleLocked(pgActual))return;
+      var sec=e.target.closest?e.target.closest('.page'):null;
+      if(!sec||sec.getAttribute('data-pg')!==pgActual)return;
+      var ctl=e.target.closest(OPERABLES);
+      if(!ctl)return;                       // leer, desplazarse y mirar sigue permitido
+      e.preventDefault(); e.stopPropagation();
+      if(e.stopImmediatePropagation)e.stopImmediatePropagation();
+      openPaywall(pgActual);
+    }
+    cont.addEventListener('click',interceptar,true);
+    // Un <select> o un checkbox no siempre pasan por 'click' en todos los navegadores.
+    cont.addEventListener('change',interceptar,true);
+    // Enter dentro de un campo dispara submits que no son clicks.
+    cont.addEventListener('keydown',function(e){ if(e.key==='Enter')interceptar(e); },true);
+  })();
+
+  // La barra de aviso lleva el mismo WhatsApp, para quien decide antes de tocar nada.
+  (function wireLockBar(){
+    var b=document.getElementById('lb-wa'); if(!b)return;
+    b.addEventListener('click',function(){
+      if(role==="CLIENT"){ openPaywall(pgActual); return; }   // su proveedor es el 3PL
+      var f=pgActual?MODULE_FEATURE[pgActual]:null;
+      abrirWhatsApp(f?FEATURE_NAME[f]:null);
+    });
+  })();
+
   // ---- Módulos ocultos en esta versión (GET /ui-config; env HIDDEN_MODULES) ------
   // Se quitan del menú, del Centro de aprendizaje y de la navegación directa. Por defecto
   // el super-admin de plataforma sí los ve (para revisarlos antes de mostrarlos al cliente).
@@ -266,8 +423,12 @@
   function loadPlanFeatures(){
     return api('/plan?operationId='+encodeURIComponent(op||'')).then(function(st){
       planFeatures=(st&&st.plan&&Array.isArray(st.plan.features))?st.plan.features:null;
+      // El nombre del plan (no su precio) se guarda para el muro: "Tu plan actual:
+      // Growth" le dice a la persona desde dónde está mirando.
+      planActualNombre=(st&&st.plan&&st.plan.name)||null;
       applyNavLocks();
-    }).catch(function(){ planFeatures=null; applyNavLocks(); });
+      if(pgActual)syncLockBar(pgActual);   // el plan llega después del primer render
+    }).catch(function(){ planFeatures=null; planActualNombre=null; applyNavLocks(); });
   }
 
   // ---- Init tras login ------------------------------------------------------
@@ -2815,6 +2976,15 @@
 
   // ===== Plan del SaaS (PLG · Fase 1) =====
   var PLAN_LABEL={free:"Free",growth:"Growth",scale:"Scale",enterprise:"Enterprise",internal:"Interno"};
+  /**
+   * ¿Se muestran tarifas de plan en esta sesión?
+   *
+   * Solo a la plataforma. Un administrador 3PL y un usuario de seller ven qué incluye
+   * su plan y cuánto están usando, nunca cuánto cuesta: esa conversación es comercial
+   * y ocurre fuera del producto. El servidor ya omite el precio para ellos (ver
+   * `puedeVerPrecios` en plan.controller.ts); esto evita además pintar el hueco.
+   */
+  function verTarifas(){ return role==="PLATFORM_ADMIN"; }
   var planCurrency="CLP"; // moneda mostrada en el comparador (Chile por defecto)
   var planLast=null;      // último estado+catálogo, para re-render al cambiar de moneda
   function fmtLimit(v){ return v==null ? "ilimitado" : fmtInt(v); }
@@ -2851,7 +3021,7 @@
     }
     // Plan actual
     $("#plan-current").innerHTML=''
-      +'<div class="plan-hero"><span class="nm">'+esc(st.plan.name)+'</span><span class="pr">'+esc(planMoney(st.plan.prices,planCurrency))+'</span>'
+      +'<div class="plan-hero"><span class="nm">'+esc(st.plan.name)+'</span>'+(verTarifas()?('<span class="pr">'+esc(planMoney(st.plan.prices,planCurrency))+'</span>'):'')
       +(st.trial&&st.trial.active?'<span class="plan-badge">En prueba</span>':'')+'</div>'
       +'<div class="muted" style="margin-top:4px">'+esc(st.plan.blurb||'')+'</div>'
       +'<div style="font-size:12.5px;color:var(--ink-2);margin-top:12px;font-weight:600">Incluye</div>'
@@ -2862,7 +3032,13 @@
       +planMeter("Clientes (sellers)", st.usage.sellers)
       +planMeter("Usuarios", st.usage.users)
       +planMeter("Ubicaciones", st.usage.warehouses);
-    // Catálogo comparativo
+    // Comparador de planes. Es una tabla de precios: se oculta ENTERA, no solo la
+    // cifra. Un comparador sin importes deja a la vista los planes de más arriba y el
+    // botón "Mejorar", que es exactamente la conversación comercial que no queremos
+    // tener desde el panel de un cliente.
+    var comparador = document.getElementById('plan-compare');
+    if(comparador) comparador.style.display = verTarifas() ? '' : 'none';
+    if(!verTarifas()){ $("#plan-catalog").innerHTML=''; return; }
     var canGrant = role==="PLATFORM_ADMIN";
     if($("#plan-admin-hint")) $("#plan-admin-hint").textContent = canGrant ? "Como plataforma, puedes asignar un plan directamente." : "";
     $("#plan-catalog").innerHTML=(catalog||[]).map(function(p){
@@ -7653,8 +7829,14 @@
 
   var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],consignees:["Destinatarios","Libreta de direcciones frecuentes del cliente"],mcp:["Conexión MCP","Llaves para que agentes externos operen este WMS"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
-    if(moduleLocked(pg)){var f=MODULE_FEATURE[pg];toast('🔒 '+(FEATURE_NAME[f]||f)+' no está incluido en tu plan. Mejóralo para habilitarlo.');if(allowed.indexOf('plan')>=0)pg='plan';else return;}
+    // Un módulo fuera de plan ya NO devuelve al usuario a otra página: entra, lo ve
+    // con los datos reales de su bodega y se topa con el muro recién al operar.
     if(mcMode){mcMode=false;if($("#seller")&&$("#seller").value==='__all__')$("#seller").value=seller||'';}$$(".nav").forEach(function(n){n.classList.toggle("on",n.getAttribute("data-pg")===pg);});$$(".page").forEach(function(p){p.classList.toggle("on",p.getAttribute("data-pg")===pg);});$("#pg-title").textContent=TITLES[pg][0];$("#pg-sub").textContent=TITLES[pg][1];window.scrollTo(0,0);if(pg==="dashboard"){loadDash().then(dashTick);}else{clearTimeout(dashTimer);}
+    syncLockBar(pg);
+    // Ojo: la sección bloqueada SÍ carga sus datos. La mayoría de los candados del
+    // servidor están sobre las escrituras, así que la pantalla se ve con el contenido
+    // real de la bodega — que es justamente lo que hace que valga la pena activarla.
+    // Ver una tabla vacía no convence a nadie de nada.
     if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="consignees")renderConsignees();if(pg==="mcp")renderMcp();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.

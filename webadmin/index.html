@@ -1072,6 +1072,44 @@
   .verifybar .vb-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
   .verifybar .vb-btn{background:var(--primary);color:#fff;border:0;border-radius:7px;padding:5px 11px;font-size:12px;font-weight:600;cursor:pointer}
   .verifybar .vb-x{background:none;border:0;color:var(--ink-2);cursor:pointer;font-size:15px;line-height:1}
+  /* ---- Módulo bloqueado por plan ---------------------------------------------
+     Antes un módulo fuera de plan era invisible: el candado en el menú devolvía al
+     usuario a la página de Plan y nunca llegaba a ver qué se estaba perdiendo. Ahora
+     entra, recorre la pantalla y solo se topa con el muro al intentar operar — que es
+     el momento en que la conversación comercial tiene sentido. */
+  .lockbar{display:flex;align-items:center;gap:12px;padding:10px 16px;font-size:13px;
+    background:var(--warn-wash,#fff8e6);border-bottom:1px solid var(--warn,#c78a00);color:var(--ink);flex-wrap:wrap}
+  .lockbar.off{display:none}
+  .lockbar .lb-ic{font-size:15px;line-height:1}
+  .lockbar .lb-txt{flex:1;min-width:200px}
+  .lockbar .lb-wa{margin-left:auto;flex:none;border:0;border-radius:8px;padding:7px 13px;cursor:pointer;
+    background:#25D366;color:#0b2e18;font-weight:700;font-size:12.5px;font-family:inherit;display:inline-flex;align-items:center;gap:6px}
+  .lockbar .lb-wa:hover{filter:brightness(1.06)}
+  /* Un control de un módulo bloqueado se ve, pero se ve apagado: el muro no puede ser
+     una sorpresa total al hacer clic. */
+  .page.locked .btn,.page.locked .mini,.page.locked .segbtn,.page.locked select,
+  .page.locked input,.page.locked textarea,.page.locked .rowacts button,.page.locked .tbtn{opacity:.6}
+  .page.locked .btn.pri{filter:grayscale(.55)}
+
+  /* ---- Muro de plan (popup) --------------------------------------------------- */
+  .paywall{text-align:center;padding:4px 2px 0}
+  .paywall .pw-ic{font-size:40px;line-height:1;margin-bottom:10px}
+  .paywall h4{font-family:"Sora",sans-serif;font-size:19px;margin:0 0 8px;letter-spacing:-.01em}
+  .paywall .pw-txt{color:var(--ink-2);font-size:13.5px;line-height:1.55;margin:0 auto 6px;max-width:400px}
+  .paywall .pw-plan{display:inline-flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:999px;padding:5px 13px;font-size:12px;color:var(--ink-2);margin:10px 0 18px}
+  .paywall .pw-plan b{color:var(--ink)}
+  .paywall .pw-acts{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .paywall .pw-wa{border:0;border-radius:11px;padding:13px 22px;cursor:pointer;background:#25D366;color:#0b2e18;
+    font-weight:800;font-size:14.5px;font-family:inherit;display:inline-flex;align-items:center;gap:9px;
+    box-shadow:0 10px 22px -12px rgba(37,211,102,.9);text-decoration:none}
+  .paywall .pw-wa:hover{filter:brightness(1.06)}
+  .paywall .pw-wa svg{width:19px;height:19px;fill:currentColor}
+  .paywall .pw-close{border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:11px;
+    padding:13px 20px;font-weight:600;font-size:14px;font-family:inherit;cursor:pointer}
+  .paywall .pw-foot{margin-top:14px;font-size:11.5px;color:var(--ink-3)}
+  .paywall .pw-foot a{color:var(--ink-3)}
+
   /* Plan (PLG) */
   .plan-hero{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
   .plan-hero .nm{font-family:"Sora",sans-serif;font-weight:800;font-size:26px}
@@ -1281,6 +1319,13 @@
       <div class="sel" id="seller-wrap"><label>Cliente</label><select id="seller"></select></div>
       <div class="who"><div><div class="nm" id="who-nm">—</div><div class="rl" id="who-rl">—</div></div><span class="av" id="who-av">A</span></div>
       <button class="btn" id="btn-mypass" title="Cambiar mi contraseña">🔑</button>
+    </div>
+
+    <!-- Módulo que el plan no incluye: se puede mirar, no operar. -->
+    <div class="lockbar off" id="lockbar">
+      <span class="lb-ic">🔒</span>
+      <span class="lb-txt"><b id="lb-mod">Este módulo</b> <span id="lb-why">no está incluido en tu plan</span>. Puedes recorrerlo, pero no operarlo.</span>
+      <button class="lb-wa" id="lb-wa" type="button">Hablar por WhatsApp</button>
     </div>
 
     <div class="content">
@@ -1837,7 +1882,7 @@
           <div class="card"><div class="b" id="plan-current"></div></div>
           <div class="card"><div class="h"><h3>Uso este mes</h3></div><div class="b" id="plan-usage"></div></div>
         </div>
-        <div class="card"><div class="h"><h3>Compara los planes</h3><div class="sp" style="flex:1"></div><span class="muted" id="plan-admin-hint" style="margin-right:10px"></span><div class="billtabs" id="plan-cur" style="margin:0"><button class="segbtn on" data-cur="CLP">CLP</button><button class="segbtn" data-cur="USD">USD</button></div></div><div class="b"><div class="tiers" id="plan-catalog"></div></div></div>
+        <div class="card" id="plan-compare"><div class="h"><h3>Compara los planes</h3><div class="sp" style="flex:1"></div><span class="muted" id="plan-admin-hint" style="margin-right:10px"></span><div class="billtabs" id="plan-cur" style="margin:0"><button class="segbtn on" data-cur="CLP">CLP</button><button class="segbtn" data-cur="USD">USD</button></div></div><div class="b"><div class="tiers" id="plan-catalog"></div></div></div>
       </section>
 
       <!-- Actividad por usuario (auditoría operativa; admin/supervisor) -->

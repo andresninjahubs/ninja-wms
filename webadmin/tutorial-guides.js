@@ -238,11 +238,13 @@ window.NINJA_TOUR_GUIDES = {
 
   plan: {
     icon:'◆', title:'Plan',
-    summary:'Tu plan de Ninja WMS: qué módulos incluye, cuánto has usado este mes y cómo compararlo con los otros planes.',
+    summary:'Tu plan de Ninja WMS: qué módulos incluye y cuánto has usado este mes.',
     steps:[
       {el:'#plan-current', place:'right', title:'Tu plan actual', text:'Muestra el plan contratado, los módulos habilitados y los límites. Los módulos que no incluye aparecen con un <b>candado</b> en el menú.'},
-      {el:'#plan-usage', place:'left', title:'Uso este mes', text:'Órdenes, SKUs, usuarios y otros contadores frente a su límite. Si te acercas al tope, es momento de evaluar un plan superior.'},
-      {el:'#plan-catalog', place:'top', title:'Compara los planes', text:'Todos los planes lado a lado con sus módulos y precios en CLP o USD. Desde aquí solicitas el cambio de plan.'}
+      {el:'#plan-usage', place:'left', title:'Uso este mes', text:'Órdenes, SKUs, usuarios y otros contadores frente a su límite. Si te acercas al tope, habla con tu ejecutivo para revisar el plan.'},
+      // El comparador solo existe para la plataforma: es una tabla de tarifas. El paso
+      // se filtra por rol para que el tour no apunte a una tarjeta que no está.
+      {el:'#plan-catalog', place:'top', roles:['PLATFORM_ADMIN'], title:'Compara los planes', text:'Todos los planes lado a lado con sus módulos, límites y tarifas en CLP o USD. Desde aquí asignas un plan a la cuenta.'}
     ]
   },
 

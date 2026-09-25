@@ -6841,6 +6841,41 @@ async function run() {
     assert.equal((await facade.getOperation(res.operationId))?.contactPhone, null);
   });
 
+  await test('tarifas del plan: solo viajan a la plataforma, no al 3PL ni al seller', async () => {
+    const { facade } = buildFacade();
+    const res = await facade.registerSelfServe({
+      companyName: 'Bodega Halcón', name: 'Iván', email: 'ivan@halcon.cl',
+      phone: '+56 9 3333 4444', password: 'clave12345', track: 'operator',
+    });
+    // La plataforma sí ve el precio: lo necesita para asignar planes.
+    const conPrecio = await facade.getPlanState(res.operationId, true);
+    assert.ok(conPrecio.plan.prices, 'la plataforma ve la tarifa');
+    // El administrador del 3PL recibe el MISMO estado sin la tarifa. Que el precio se
+    // omita en el servidor y no en la vista es el punto: esconderlo solo en el panel
+    // deja la cifra en la respuesta para cualquiera que abra las herramientas del navegador.
+    const sinPrecio = await facade.getPlanState(res.operationId, false);
+    assert.equal(sinPrecio.plan.prices, undefined, 'el 3PL no recibe la tarifa');
+    // Lo que sí necesita para operar sigue estando: qué plan tiene, qué incluye y
+    // cuánto lleva usado contra el límite.
+    assert.equal(sinPrecio.plan.id, conPrecio.plan.id);
+    assert.equal(sinPrecio.plan.name, conPrecio.plan.name);
+    assert.deepEqual(sinPrecio.plan.features, conPrecio.plan.features);
+    assert.deepEqual(sinPrecio.usage, conPrecio.usage);
+    assert.deepEqual(sinPrecio.trial, conPrecio.trial);
+  });
+
+  await test('catálogo de planes: sin tarifas conserva límites y módulos', async () => {
+    const { facade } = buildFacade();
+    const conPrecio = await facade.planCatalog(true);
+    const sinPrecio = await facade.planCatalog(false);
+    assert.equal(conPrecio.length, sinPrecio.length);
+    assert.ok(conPrecio.every((p) => 'prices' in p), 'la plataforma ve todas las tarifas');
+    assert.ok(sinPrecio.every((p) => !Object.prototype.hasOwnProperty.call(p, 'prices')), 'ninguna tarifa se filtra');
+    // Un plan sin tarifa sigue siendo comparable por lo que entrega.
+    const growth = sinPrecio.find((p) => p.id === 'growth')!;
+    assert.ok(growth.limits && growth.features.length, 'quedan límites y módulos');
+  });
+
   await test('esquema de Prisma: sintaxis válida (lo que tumbó el despliegue v125)', () => {
     // Un comentario de bloque en schema.prisma es válido en TypeScript y NO en
     // Prisma, y solo se descubre cuando el build del contenedor corre

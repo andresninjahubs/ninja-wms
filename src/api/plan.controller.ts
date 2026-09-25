@@ -3,8 +3,21 @@ import { WmsFacade } from '../app/wms.facade';
 import { PlanConfigDto, PlanDto } from './dto';
 import { actorOperation, CurrentUser } from './auth/current-user.decorator';
 import { RequirePermission } from './auth/permissions.decorator';
-import { User } from '../domain/types';
+import { ROLE_PERMISSIONS, User } from '../domain/types';
 import { WMS_FACADE } from './tokens';
+
+/**
+ * ¿Este usuario puede ver cuánto cuesta un plan?
+ *
+ * Solo la plataforma (Ninja Hubs). El administrador de un 3PL y el usuario de un
+ * seller ven qué incluye su plan y cuánto están usando; la tarifa la conversan con
+ * comercial, no la leen en una pantalla. Sin usuario (modo demo sin auth) se asume
+ * plataforma, que es el comportamiento que ya tenía el resto del panel.
+ */
+function puedeVerPrecios(user: User | null): boolean {
+  if (!user) return true;
+  return ROLE_PERMISSIONS[user.role]?.includes('operation:manage') ?? false;
+}
 
 /**
  * Plan del SaaS (PLG · Fase 1): estado del plan de la operación, catálogo público
@@ -19,14 +32,17 @@ export class PlanController {
   @RequirePermission('stock:read')
   state(@CurrentUser() user: User | null, @Query('operationId') operationId?: string) {
     const op = actorOperation(user, operationId);
-    return this.wms.getPlanState(op);
+    return this.wms.getPlanState(op, puedeVerPrecios(user));
   }
 
-  /** Catálogo público de planes (para el comparador). */
+  /**
+   * Catálogo de planes (para el comparador). Los precios solo viajan a la plataforma;
+   * los demás reciben el mismo catálogo sin tarifas.
+   */
   @Get('catalog')
   @RequirePermission('stock:read')
-  async catalog() {
-    return { plans: await this.wms.planCatalog() };
+  async catalog(@CurrentUser() user: User | null) {
+    return { plans: await this.wms.planCatalog(puedeVerPrecios(user)) };
   }
 
   /** Cambia el plan de una operación (grant manual del super-admin). */
