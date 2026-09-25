@@ -1,0 +1,913 @@
+/* ============================================================================
+   THEME PAGES · Ninja WMS renovado
+   Estilos propios de cada sección del panel. Se carga después de
+   theme-base.css (tokens y primitivos) y theme-shell.css (menú y barra), y
+   antes de mobile.css: el móvil sigue mandando en ≤860px.
+   Regla de la casa: nada de lógica. Solo se re-pinta lo que app.js ya arma
+   (mismas clases, ids y data-*). Donde app.js escribe un style="" inline que
+   rompe el look o el modo oscuro, se vence con !important y se deja anotado.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   0. ÍCONOS EN CSS
+   Algunos bloques traen un emoji dentro del HTML/JS que no se puede tocar.
+   Se ocultan con font-size:0 y se dibuja un ícono de trazo (estilo lucide)
+   con mask, que toma el color del texto (currentColor).
+   ------------------------------------------------------------------------- */
+:root{
+  --ic-lock:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='11' width='18' height='11' rx='2'/><path d='M7 11V7a5 5 0 0 1 10 0v4'/></svg>");
+  --ic-mic:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z'/><path d='M19 10v2a7 7 0 0 1-14 0v-2'/><path d='M12 19v3'/></svg>");
+  --ic-clock:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='M12 6v6l4 2'/></svg>");
+  --ic-alert:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3'/><path d='M12 9v4'/><path d='M12 17h.01'/></svg>");
+  --ic-target:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='6'/><circle cx='12' cy='12' r='2'/></svg>");
+  --ic-timer:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M10 2h4'/><path d='M12 14l3-3'/><circle cx='12' cy='14' r='8'/></svg>");
+  --ic-warehouse:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M22 8.35V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8.35A2 2 0 0 1 3.26 6.5l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35Z'/><path d='M6 18h12'/><path d='M6 14h12'/><path d='M6 22V10h12v12'/></svg>");
+  --ic-search:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>");
+  --ic-check:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M20 6 9 17l-5-5'/></svg>");
+}
+
+/* ---------------------------------------------------------------------------
+   1. RITMO GENERAL DE LAS PÁGINAS
+   El inline no separaba tarjetas apiladas (Actividad, Agente, Costos…):
+   quedaban pegadas. Todas llevan el mismo aire vertical del canvas (20px).
+   ------------------------------------------------------------------------- */
+.page > .card + .card,
+.page > .card + .kpis,
+.page > .kpis + .card,
+.page > div:not(.grid2):not(.dashsplit):not(.dashgrid3):not(.sectionrow):not(.torre):not(.chatwrap):not(.voz-wrap):not(.tiers) > .card + .card,
+.page > .grid2 + .card,
+.page > .card + .grid2,
+.page > .card + .sectionrow{margin-top:20px}
+.page > .kpis{margin-bottom:20px}
+.grid2,.sectionrow,.dashsplit,.dashgrid3{gap:20px}
+.dashsplit,.dashgrid3,.sectionrow{margin-top:20px}
+.page .toolbar > .muted{font-size:14px;color:var(--ink-2);line-height:1.5;max-width:78ch}
+.page > p.muted{font-size:14px;color:var(--ink-2)}
+.card .h .muted{font-size:13px;color:var(--ink-3)}
+/* Los botones que el JS agranda con style="padding:8px 14px" conservan la
+   altura estándar de 42px del sistema (min-height en base), no se achican. */
+
+/* Acciones de fila: alineadas a la derecha; si no caben pasan a una segunda
+   línea (como el original) en vez de empujar la tabla a scroll horizontal.
+   Los .mini de fila son algo más compactos que los sueltos. */
+@media(min-width:861px){
+  td > .card-actions,td .rowacts{flex-wrap:wrap;margin-top:0;justify-content:flex-end;gap:6px}
+  td > .card-actions .mini,td .rowacts .mini,td > .card-actions .btn{white-space:nowrap}
+  td > .card-actions .mini,td .rowacts .mini{min-height:28px;padding:0 9px;font-size:12px}
+}
+/* Con pantalla ancha la columna de acciones reserva lo justo para ~3 botones
+   por línea; así la fila no se estira a un botón por renglón. */
+@media(min-width:1280px){ td > .card-actions,td .rowacts{min-width:230px} }
+.loc-chip{white-space:nowrap}
+
+/* Buscador de toolbar: ancho mínimo útil y lupa de trazo en vez del glifo ⌕. */
+.toolbar .search{min-width:240px;flex:1 1 240px;max-width:420px}
+.search .i{font-size:0;width:16px;height:16px;background:var(--ink-3);
+  -webkit-mask:var(--ic-search) center/contain no-repeat;mask:var(--ic-search) center/contain no-repeat}
+
+/* .who es también la píldora de usuario de la barra superior (regla global
+   del inline). Dentro del chat, del Dashboard AI y de la voz es solo un
+   rótulo: se le quita la píldora. */
+.chat-irow .who,.voz-msg .who{display:block;background:none;border:0;border-radius:0;padding:0;gap:0}
+.aid-b .who{border:0;padding:0}
+
+/* Selects y campos dentro de tablas: más bajos para no inflar las filas. */
+td select,td input:not([type=checkbox]):not([type=radio]),
+table.matrix td select{min-height:34px;padding-top:5px;padding-bottom:5px;font-size:13px}
+td .inp,td input.inp{min-height:34px}
+/* Casillas y archivos dentro de .fld: el primitivo de campo les ponía borde y
+   42px de alto; una casilla no es un campo de texto. */
+.fld>input[type=checkbox],.fld>input[type=radio],
+.form .fld input[type=checkbox],.form .fld input[type=radio]{
+  width:auto;min-height:0;padding:0;border:0;box-shadow:none;background:none}
+.fld>input[type=file],.form .fld input[type=file]{
+  padding:9px 12px;background:var(--surface-2);border-style:dashed;cursor:pointer;font-size:13.5px}
+input[type=file]::file-selector-button{font:inherit;font-weight:600;font-size:13px;margin-right:12px;
+  border:1px solid var(--line-2);border-radius:8px;background:var(--surface);color:var(--ink);padding:6px 12px;cursor:pointer}
+
+/* El texto de marca sobre blanco: #12F093 como texto no se lee (contraste
+   ~1.5:1). El JS/HTML escribe color:var(--primary) inline en montos y nombres;
+   se pasa al derivado legible. !important porque vence un style="" inline. */
+.page [style^="color:var(--primary)"],
+.page [style*=";color:var(--primary)"],
+.page [style*=" color:var(--primary)"],
+.drawer [style*=";color:var(--primary)"],
+.modal [style*=";color:var(--primary)"],
+/* Cuando el JS asigna el estilo por el DOM (el.style.cssText, p. ej. la
+   flecha de orden .sar de las tablas) el navegador lo guarda con espacio:
+   "color: var(--primary)". Mismo motivo y mismo !important. */
+.page [style^="color: var(--primary)"],
+.page [style*="; color: var(--primary)"],
+.drawer [style^="color:var(--primary)"],
+.drawer [style^="color: var(--primary)"],
+.drawer [style*="; color: var(--primary)"],
+.modal [style^="color:var(--primary)"],
+.modal [style^="color: var(--primary)"],
+.modal [style*="; color: var(--primary)"]{color:var(--primary-ink)!important}
+
+/* ---------------------------------------------------------------------------
+   2. DASHBOARD
+   ------------------------------------------------------------------------- */
+/* Actividad operativa: tarjeta blanca con los selectores a la derecha. */
+.opmetrics{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
+  box-shadow:var(--shadow);padding:22px 24px;margin-bottom:20px}
+.opm-head{gap:14px;margin-bottom:18px}
+.opm-head h3{font-size:16px;font-weight:700;letter-spacing:-.02em}
+.opm-head .muted{display:block;margin-top:2px;font-size:13px}
+.metricrow{gap:16px}
+.mtile{padding:18px 20px;border:1px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:none}
+.mtile .ml{font-size:14px;font-weight:500;color:var(--ink-2);min-height:0;line-height:1.35}
+.mtile .mv{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-top:10px;color:var(--ink)}
+.mtile .mdelta{margin-top:10px;font-size:12.5px}
+.mtile .mdelta .chg{min-height:22px;padding:0 8px;font-weight:600}
+.mtile .mdelta .chg.up{background:var(--c-green-wash);color:var(--c-green)}
+.mtile .mdelta .chg.down{background:var(--c-red-wash);color:var(--c-red)}
+.mtile .mdelta .prev{color:var(--ink-3)}
+#opm-range .fld,#usg-range .fld{min-width:170px}
+
+/* Sello "en vivo": el inline lo fijaba en verde #0E9F6E; pasa al semántico
+   para leerse en ambos temas. */
+.dash-live{color:var(--good);font-size:12.5px;font-weight:600}
+.dash-live::before{background:var(--good)}
+
+/* Cinco tarjetas de control (#dash-cards): el look del canvas, con la
+   pastilla de ícono arriba a la derecha en vez de la franja lateral gruesa.
+   El ícono se dibuja con mask y toma el color del estado de la tarjeta. */
+.dashcards{gap:16px;margin-top:20px}
+.dcard{position:relative;border:1px solid var(--line);border-left-width:1px;padding:20px 22px 18px;
+  background:var(--surface);--dc:var(--ink-3);--dc-wash:var(--surface-2)}
+.dcard.good{--dc:var(--c-green);--dc-wash:var(--c-green-wash);border-left-color:var(--line)}
+.dcard.warn{--dc:var(--c-amber);--dc-wash:var(--c-amber-wash);border-left-color:var(--line)}
+.dcard.crit{--dc:var(--c-red);--dc-wash:var(--c-red-wash);border-left-color:var(--line)}
+.dcard.info{--dc:var(--c-blue);--dc-wash:var(--c-blue-wash);border-left-color:var(--line)}
+.dcard::before{content:"";position:absolute;top:18px;right:18px;width:36px;height:36px;border-radius:10px;background:var(--dc-wash)}
+.dcard::after{content:"";position:absolute;top:27px;right:27px;width:18px;height:18px;background:var(--dc);
+  -webkit-mask:var(--ic-clock) center/contain no-repeat;mask:var(--ic-clock) center/contain no-repeat}
+.dcard:nth-child(2)::after{-webkit-mask-image:var(--ic-alert);mask-image:var(--ic-alert)}
+.dcard:nth-child(3)::after{-webkit-mask-image:var(--ic-target);mask-image:var(--ic-target)}
+.dcard:nth-child(4)::after{-webkit-mask-image:var(--ic-timer);mask-image:var(--ic-timer)}
+.dcard:nth-child(5)::after{-webkit-mask-image:var(--ic-warehouse);mask-image:var(--ic-warehouse)}
+.dcard .l{padding-right:44px;min-height:38px;font-size:14px;font-weight:500;color:var(--ink-2);line-height:1.35}
+.dcard .v{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:10px 0 4px;color:var(--ink)}
+.dcard.crit .v{color:var(--c-red)}
+.dcard .v small{font-size:15px;font-weight:700;color:var(--ink-3)}
+.dcard .s{font-size:13px;color:var(--ink-3);line-height:1.4}
+.dcard .duo{gap:22px}
+.dcard .duo .v{font-size:26px}
+
+/* Filas con barra (pre-facturación, carga por cliente, estados, embalaje). */
+.dbar{gap:12px;padding:9px 0;font-size:14px}
+.dbar .n{color:var(--ink);font-weight:500}
+.dbar .t,.torre-bar .t,.occ,.occbar,.meter .track,.onb-prog .track,.aid-row .b{
+  height:8px;border-radius:999px;background:var(--surface-3)}
+.dbar .t i,.meter .fill,.onb-prog .fill,.aid-row .b i{background:var(--primary)}
+.dbar .t i.ok{background:var(--c-green)} .dbar .t i.warn{background:var(--c-amber)}
+.dbar .t i.crit{background:var(--c-red)} .dbar .t i.mute{background:var(--ink-3)}
+.dbar .q{font-weight:700;color:var(--ink)}
+.dbar .chip{font-size:11.5px!important;min-height:22px} /* el JS fija font-size:10px inline en la etiqueta de estado */
+.dashnote{font-size:12.5px;color:var(--ink-3);margin-top:12px}
+
+/* Ranking (productividad, cola por courier). */
+.drank{gap:12px;padding:10px 0;font-size:14px;border-bottom:1px solid var(--row-line)}
+.drank:last-child{border-bottom:0}
+.drank .p{width:26px;height:26px;border-radius:8px;background:var(--surface-2);color:var(--ink-2);font-size:12px;font-weight:700}
+.drank:first-child .p{background:var(--primary-wash);color:var(--primary-ink)}
+.drank .nm{font-weight:600;color:var(--ink)}
+.drank .d{font-size:13px;color:var(--ink-3)}
+
+/* Excepciones: lista limpia con punto de color y pastilla de cliente. */
+.dexc{gap:12px;padding:13px 0;border-bottom:1px solid var(--row-line);font-size:14px}
+.dexc .dot{width:8px;height:8px}
+.dexc .dot.warn{background:var(--c-amber)} .dexc .dot.crit{background:var(--c-red)}
+.dexc .tx{color:var(--ink)}
+.dexc .tx small{font-size:12.5px;color:var(--ink-3);margin-top:2px}
+.dexc .cl{font-size:12px;font-weight:600;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:999px;padding:3px 10px;color:var(--ink-2)}
+.dexc .ag{font-size:12.5px;color:var(--ink-3)}
+.dpill{min-height:22px;display:inline-flex;align-items:center}
+.dpill.warn{color:var(--c-amber);background:var(--c-amber-wash)}
+.dpill.ok{color:var(--c-green);background:var(--c-green-wash)}
+
+/* Unidades por zona: barras finas en vez de bloques de 24px. */
+.chart{gap:14px}
+.bar-row{grid-template-columns:130px 1fr 60px;gap:14px}
+.bar-row .cap{font-size:14px;color:var(--ink-2)}
+.bar-track{height:10px;border-radius:999px;background:var(--surface-3)}
+.bar-fill{border-radius:999px;background:var(--primary)}
+.bar-row .val{font-size:14px;font-weight:700}
+
+/* Alertas (cuando aparecen en dashboard u otras vistas). */
+.alert{border:1px solid var(--line);border-left-width:1px;padding:18px 20px;position:relative;background:var(--surface)}
+.alert::before{content:"";position:absolute;left:0;top:18px;bottom:18px;width:3px;border-radius:0 3px 3px 0;background:var(--ink-3)}
+.alert.good::before{background:var(--c-green)} .alert.warn::before{background:var(--c-amber)} .alert.crit::before{background:var(--c-red)}
+.alert.good,.alert.warn,.alert.crit{border-left-color:var(--line)}
+.alert.crit .n{color:var(--c-red)} .alert.warn .n{color:var(--c-amber)} .alert.good .n{color:var(--c-green)}
+.alert .x{font-size:13px;color:var(--ink-3)}
+
+/* Onboarding (#onboard-card): tarjeta limpia, progreso de marca. */
+.onb{border:1px solid var(--line);border-left-width:1px;border-radius:var(--r-card);box-shadow:var(--shadow);
+  padding:22px 24px;margin-bottom:20px;background:var(--surface)}
+.onb.done{border-left-color:var(--line)}
+.onb-head h3{font-size:18px;font-weight:700;letter-spacing:-.02em}
+.onb-prog .pct{font-size:13px;font-weight:700;color:var(--ink-2)}
+.onb-steps{margin-top:16px}
+.onb-step{padding:12px 4px;border-top:1px solid var(--row-line);gap:14px}
+.onb-tick{width:24px;height:24px;border:1.5px solid var(--line-2);color:transparent;font-size:0;position:relative}
+.onb-tick.on{background:var(--c-green);border-color:var(--c-green)}
+.onb-tick.on::after{content:"";position:absolute;inset:5px;background:#fff;
+  -webkit-mask:var(--ic-check) center/contain no-repeat;mask:var(--ic-check) center/contain no-repeat}
+.onb-step .lbl{font-size:14.5px;color:var(--ink)}
+.onb-step.done .lbl{color:var(--ink-3)}
+.onb-step .go{min-height:34px;padding:0 14px;border-radius:var(--r-ctl);border:0;background:var(--primary);color:var(--on-primary);font-weight:700;font-size:13px}
+.onb-step .go:hover{filter:brightness(.95)}
+.onb-sample{min-height:42px;padding:0 16px;border-radius:var(--r-ctl);border:1px solid var(--line-2);background:var(--surface);font-size:14px}
+.onb-sample:hover{background:var(--surface-2)}
+.onb-x{font-size:13px;color:var(--ink-3)}
+.onb-x:hover{color:var(--ink)}
+.onb-celebrate{color:var(--c-green)}
+
+/* ---------------------------------------------------------------------------
+   3. VISTA MULTICLIENTE
+   ------------------------------------------------------------------------- */
+#mc-table th[data-mcsort]{cursor:pointer;user-select:none}
+#mc-table th[data-mcsort]:hover{color:var(--ink)}
+#mc-table tbody tr{cursor:pointer}
+#mc-table tbody td:first-child{font-weight:600;color:var(--ink)}
+#mc-month,#cos-month{min-height:42px}
+
+/* ---------------------------------------------------------------------------
+   4. COPILOTO (insights, chat, acciones propuestas)
+   El JS arma todo con style="" inline. Lo que se ajusta acá es lo que chocaba
+   con el lenguaje nuevo: campos redondos de 22px, botones chicos inflados a
+   42px por el primitivo, y fondos que no cambiaban en oscuro.
+   ------------------------------------------------------------------------- */
+#cop-insights > div{background:var(--surface);border-radius:12px!important;padding:14px 16px!important;
+  border-color:var(--line)!important;margin-bottom:10px!important} /* vence el style inline; la franja de severidad (border-left) se conserva */
+#cop-insights > div > div:first-child{font-size:18px!important}
+#cop-insights .btn,#cop-answer .btn,#cop-chips .btn,#cop-chips button{min-height:32px;font-size:13px}
+#cop-chips button{border-radius:999px}
+/* Campo de pregunta y botón Enviar: 44px, radio 10 (el inline traía 22px). */
+#cop-q,.aid-prompt input{min-height:44px;border-radius:var(--r-ctl)!important;border:1px solid var(--line-2)!important;
+  background:var(--surface)!important;color:var(--ink);padding:0 14px!important;font-size:14px!important}
+#cop-q:focus{outline:none;border-color:var(--primary)!important;box-shadow:0 0 0 3px var(--primary-ring)}
+#cop-ask{border-radius:var(--r-ctl)!important;min-height:44px}
+#cop-answer > div > div{font-size:14px!important;line-height:1.55} /* el JS fija 13.5px inline en las burbujas */
+#cop-answer table td{border-bottom:1px solid var(--row-line);height:auto}
+#cop-answer tbody tr:hover{background:transparent}
+#cop-ai-status{font-size:13px}
+
+/* ---------------------------------------------------------------------------
+   5. DASHBOARD AI (lienzo, widgets, plantillas, conversación)
+   ------------------------------------------------------------------------- */
+.aid-bar{gap:10px;margin-bottom:16px}
+.aid-selbox{min-width:220px;font-weight:600}
+.aid-live{font-size:12.5px;color:var(--good)}
+.aid-live .dot{background:var(--good)}
+.aid-prompt{gap:10px;margin-bottom:16px}
+.aid-prompt .btn{min-height:44px}
+.aid-msg{border-radius:12px;padding:12px 16px;font-size:14px}
+.aid-canvas{gap:16px}
+.aid-canvas.drag{background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);border-radius:16px}
+.aid-w{border-radius:var(--r-card);box-shadow:var(--shadow);border-color:var(--line)}
+/* El .sel genérico del inline (pensado para el selector de la barra superior)
+   trae "align-items:center;gap:7px" y por especificidad de clase empata con
+   el propio .aid-w: al arrastrar (el JS agrega .sel al widget) el encabezado
+   dejaba de estirarse a lo ancho y se centraba por su contenido, empujando
+   los botones ⓘ/✎/⧉ fuera de la fila (el click de mouseup ya no caía en el
+   correcto). Se restablece el layout de columna propio del widget. */
+.aid-w.sel{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring);align-items:stretch;gap:0}
+.aid-w .wh{padding:12px 16px;border-bottom-color:var(--line)}
+.aid-w .wt{font-size:14px;font-weight:700;color:var(--ink);min-width:0}
+/* Al arrastrar (.wh data-drag) .wa saltaba con el título: min-width:0 arriba y
+   flex:none acá lo dejan fijo, así el clic real cae sobre el botón correcto
+   (ver «no se abre modal ⓘ» en Dashboard AI). */
+.aid-w .wa{flex:none}
+.aid-w .wa button{border-radius:8px;min-width:26px;min-height:26px}
+.aid-w .wb{padding:12px 16px}
+.aid-w .wfoot{font-size:12px;padding:0 16px 10px}
+.aid-kpi .n{font-size:32px;font-weight:800;letter-spacing:-.02em}
+.aid-kpi .u{font-size:13px}
+.aid-tbl{font-size:13.5px}
+.aid-tbl th{background:var(--surface);font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--ink-3);padding:6px 10px 8px}
+.aid-tbl td{padding:8px 10px;border-bottom-color:var(--row-line);height:auto}
+.aid-row{font-size:13.5px}
+.aid-spark i{background:var(--primary);border-radius:4px 4px 0 0}
+.aid-blank{border-radius:var(--r-card);border-color:var(--line-2);background:var(--surface);padding:44px 24px}
+.aid-blank b{font-size:16px;font-weight:700}
+.aid-chat{border-radius:var(--r-card);padding:16px 18px;margin-bottom:16px}
+.aid-b{font-size:14px}
+.aid-b .tx{border-radius:12px;padding:8px 12px}
+.aid-b.me .tx{background:var(--primary-wash);color:var(--ink)}
+.aid-b .who.ai{background:var(--primary);color:#0B1220}
+.aid-plan{border-radius:12px;border-left:3px solid var(--primary);background:var(--surface-2);padding:12px 14px}
+.aid-plan .l{font-size:11px;letter-spacing:.07em;font-weight:600}
+.aid-plan .p{font-size:14px}
+.aid-bul .lb{font-size:12.5px}
+.aid-bul .tr{background:var(--surface-3)}
+.aid-lat div{border-bottom-color:var(--row-line);font-size:13.5px}
+/* Tema torre: la sección se oscurece a sangre. El margen negativo copia el
+   relleno nuevo del contenido (26px 32px) para que el fondo llegue al borde. */
+.page.aid-torre{margin:-26px -32px -46px;padding:26px 32px 46px}
+.page.aid-torre .aid-w{border-radius:var(--r-card)}
+.page.aid-torre .btn{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12);color:#EAF0F7}
+.page.aid-torre .btn.pri{background:var(--primary);border-color:var(--primary);color:#0B1220}
+.page.aid-torre .btn.danger{color:#F2787C}
+/* Selector de plantillas (modal). */
+.tplg{gap:16px}
+.tpl{border-radius:14px;padding:16px;border-color:var(--line);font-family:inherit;color:var(--ink)}
+.tpl:hover{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
+.tpl .pv{border-radius:10px;border:1px solid var(--line)}
+.tpl h4{font-size:14.5px;font-weight:700}
+.tpl p{font-size:13px;color:var(--ink-2)}
+.tpl .meta{font-size:12px}
+
+/* ---------------------------------------------------------------------------
+   6. COPILOTO DE VOZ (orbe)
+   ------------------------------------------------------------------------- */
+.voz-wrap{gap:20px}
+.voz-stage{border-radius:var(--r-card);border-color:var(--line);box-shadow:var(--shadow);min-height:440px}
+.voz-orb{width:160px;height:160px;
+  background:radial-gradient(circle at 50% 42%,color-mix(in srgb,var(--primary) 22%,transparent),color-mix(in srgb,var(--primary) 3%,transparent))}
+.voz-orb-core{width:100px;height:100px;
+  background:radial-gradient(circle at 38% 32%,color-mix(in srgb,var(--primary) 70%,#fff),var(--primary) 55%,color-mix(in srgb,var(--primary) 60%,#0B1220));
+  box-shadow:0 14px 36px -10px color-mix(in srgb,var(--primary) 70%,transparent)}
+.voz-orb.thinking .voz-orb-core{background:radial-gradient(circle at 38% 32%,#FCD34D,#F59E0B 55%,#B45309)}
+.voz-orb.speaking .voz-orb-core{background:radial-gradient(circle at 38% 32%,#9DB8F7,#2A5FE4 55%,#1D3F9A)}
+.voz-state{font-size:16px;font-weight:600;color:var(--ink)}
+/* Botón de micrófono: el HTML trae un emoji; se reemplaza por ícono de trazo. */
+.voz-mic{width:64px;height:64px;border-radius:50%;border:1px solid var(--line-2);background:var(--surface);
+  color:var(--ink);font-size:0;display:inline-flex;align-items:center;justify-content:center;box-shadow:var(--shadow)}
+.voz-mic::before{content:"";width:26px;height:26px;background:currentColor;
+  -webkit-mask:var(--ic-mic) center/contain no-repeat;mask:var(--ic-mic) center/contain no-repeat}
+.voz-mic:hover{background:var(--surface-2)}
+.voz-mic.on{background:var(--c-red);border-color:var(--c-red);color:#fff;box-shadow:0 10px 24px -10px var(--c-red)}
+.voz-live{font-size:14px;color:var(--ink-3)}
+.voz-controls{gap:12px}
+.voz-toggle{font-size:13.5px;font-weight:500;color:var(--ink-2)}
+.voz-hint{font-size:13.5px;color:var(--ink-2);background:var(--surface-2);border-color:var(--line);border-radius:12px;padding:12px 14px}
+.voz-convo{gap:12px}
+.voz-msg{border-radius:14px;font-size:14px;padding:11px 14px}
+.voz-msg.user{background:var(--surface);border-color:var(--line)}
+.voz-msg.ai{background:var(--primary-wash);border:1px solid var(--primary-line)}
+.voz-msg .who{font-size:11px;font-weight:600;letter-spacing:.07em}
+.voz-act{color:var(--warn)} .voz-act.done{color:var(--good)}
+
+/* ---------------------------------------------------------------------------
+   7. ÓRDENES
+   Chips de estado de #ord-filters: los define theme-base (.fchip). Acá va la
+   barra masiva, la tabla, el detalle y los modales de la operación.
+   ------------------------------------------------------------------------- */
+.page[data-pg="orders"] .toolbar{row-gap:12px}
+.ordcli-f{font-size:13.5px;color:var(--ink-2);gap:8px}
+.ordcli-f select{min-width:180px}
+#ord-body td:nth-child(2){font-weight:600;color:var(--ink)}
+/* Las celdas pueden envolver (como el original): con nowrap la tabla medía
+   1377 px en 1134 y los botones de fila quedaban fuera de vista. */
+.ordcli-n{font-weight:600;color:var(--ink)}
+/* Ancho de columna fijo (a partir de la fila de cabecera): con auto-layout,
+   el número de orden en Inter+tabular-nums pesa más que el mono anterior y
+   la tabla se estira desproporcionado (medía 1208 px en 1134). Con
+   table-layout:fixed se reparte el ancho como el original y "Acciones"
+   (sin ancho fijo) se queda con lo que sobra para los botones de fila. */
+@media(min-width:861px){
+  .page[data-pg="orders"] .tablewrap table{table-layout:fixed}
+  .page[data-pg="orders"] thead th:nth-child(1){width:40px}
+  .page[data-pg="orders"] thead th:nth-child(2){width:100px}
+  .page[data-pg="orders"] thead th.ordcli{width:90px}
+  .page[data-pg="orders"] thead th:nth-child(4){width:150px}
+  .page[data-pg="orders"] thead th:nth-child(5){width:82px}
+  .page[data-pg="orders"] thead th:nth-child(6){width:108px}
+  .page[data-pg="orders"] thead th:nth-child(7){width:52px}
+  .page[data-pg="orders"] thead th:nth-child(8){width:78px}
+  .page[data-pg="orders"] thead th:nth-child(9){width:128px}
+  .page[data-pg="orders"] #ord-body td{overflow:hidden;text-overflow:ellipsis}
+  .page[data-pg="orders"] #ord-body td:last-child{overflow:visible;text-overflow:clip}
+  /* La regla general de más arriba (~línea 60) exige 230px para la columna de
+     acciones porque asumía auto-layout; con el ancho fijo de esta tabla la
+     columna ya reserva lo que corresponde y a 1280px sólo sobran ~146px, así
+     que ese mínimo viejo volvía a empujar la tabla a scroll horizontal. */
+  .page[data-pg="orders"] #ord-body .rowacts{min-width:0}
+}
+/* Entre 861 y 1279px hay menos espacio total: se resta a las columnas menos
+   críticas (checkbox, canal, estado) y se permite que Fecha envuelva en dos
+   líneas, para que Orden/Acciones no se achiquen más de la cuenta. */
+@media(min-width:861px) and (max-width:1279px){
+  .page[data-pg="orders"] thead th:nth-child(1){width:30px}
+  .page[data-pg="orders"] thead th:nth-child(4){width:112px}
+  .page[data-pg="orders"] thead th:nth-child(6){width:92px}
+  .page[data-pg="orders"] thead th:nth-child(9){width:112px}
+  .page[data-pg="orders"] #ord-body td:nth-child(4){white-space:normal!important}
+}
+/* Barra de acciones masivas: tarjeta flotante bajo la barra superior (88px). */
+.bulk-bar{top:96px;gap:12px;padding:10px 14px;border-radius:14px;
+  border:1px solid var(--primary-line);background:var(--surface);box-shadow:var(--shadow-lg);margin-bottom:16px}
+.bulk-bar .bb-count{font-size:14px;font-weight:700;color:var(--ink);padding-right:12px;border-right-color:var(--line)}
+.bulk-bar .bb-sel{min-width:260px}
+th.selcol,td.selcol{width:44px}
+.selcol input{width:17px;height:17px}
+
+/* Detalle de orden (#drawer.ordview): columna izquierda gris con la ficha,
+   derecha con líneas, reservas e historial. */
+.drawer.ordview .panel{border-radius:var(--r-modal)}
+.drawer.ordview .dh h3{font-size:18px;font-weight:800;letter-spacing:-.02em}
+.ordv-col{padding:20px 24px 24px}
+.ordv-col.left{border-right-color:var(--line)}
+.ordv .sec-t,.drawer .sec-t,.modal .sec-t{font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--ink-3);margin:18px 0 10px}
+.ordv-split{gap:24px}
+.ovline{padding:12px 0;border-bottom-color:var(--row-line)}
+.ovl-sku{font-size:14px;font-weight:600}
+.ovl-de{font-size:13px;color:var(--ink-2)}
+.ovl-lot{font-size:12px}
+.ovl-qty{font-size:15px;color:var(--ink)}
+.tl li{padding:0 0 16px 22px;border-left-color:var(--line-2)}
+.tl li::before{width:12px;height:12px;left:-7px;top:3px;border-width:2px;box-shadow:0 0 0 3px var(--primary-wash)}
+.tl .te{font-size:14px;font-weight:600}
+.tl .tw{font-size:12.5px}
+.tl .td{font-size:13px}
+/* Historia de una tarea (tiempos + bitácora). */
+.thist{border-radius:12px;background:var(--surface-2);border-color:var(--line);padding:12px 14px}
+.thist-tiempos span{font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--ink-3)}
+.thist-tiempos b{font-size:15px;color:var(--ink)}
+.thist-log{border-top:1px solid var(--line)}
+.thist-ev{font-size:13px}
+.thist-t{font-size:12px;color:var(--ink-3)}
+
+/* Modal de nueva orden / edición: líneas SKU-cantidad. */
+.ordline-h{font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--ink-3);margin-bottom:6px}
+.ordline{gap:10px;margin-bottom:10px}
+.ordline .ol-qty{font-weight:700;text-align:right}
+.ol-skuname{font-size:12.5px;margin:5px 2px 0}
+.cgdir{border-radius:12px;border-color:var(--line);background:var(--surface-2);padding:14px 16px}
+.callout-edit{background:var(--c-amber-wash);border-left:3px solid var(--c-amber);color:var(--ink);font-size:13.5px;border-radius:0 10px 10px 0;padding:12px 14px}
+
+/* Picking / empaque: resumen, nota de éxito y etiquetas. */
+.pk-sum{gap:4px;margin:4px 0 8px}
+.ok-note{color:var(--c-green);font-weight:700;font-size:14px}
+.lbl-grid{gap:14px}
+.lbl-card{background:var(--surface-2);border-color:var(--line);border-radius:12px;padding:10px}
+.lbl-card img{border-radius:8px;border-color:var(--line)}
+.lbl-card figcaption{font-size:12px;color:var(--ink-2)}
+
+/* Faltantes (short pick) y sugerencias de reposición. */
+.short-t{font-size:14px}
+.short-t th{font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--ink-3);padding:0 10px 8px;background:transparent}
+.short-t td{padding:12px 10px;border-bottom-color:var(--row-line);height:auto}
+.short-hint{min-height:22px;display:inline-flex;align-items:center;padding:0 9px;border-radius:999px;font-size:12px}
+.short-rec{font-size:13px}
+.short-rec .rq{color:var(--ink)}
+
+/* Deadlines: configuración de cortes (modal) y tarjeta de la cola. */
+.dl-row{gap:10px;margin-bottom:10px}
+.dl-d{font-size:12.5px;gap:10px}
+.dl-d label{gap:4px}
+
+/* Aprobación de factura, envío por correo, bitácora de envíos. */
+.apprv-box{border-radius:12px;padding:14px 16px}
+.apprv-box.ok{background:var(--c-green-wash);border:1px solid color-mix(in srgb,var(--c-green) 35%,var(--surface))}
+.apprv-box.warn{background:var(--c-amber-wash);border:1px solid color-mix(in srgb,var(--c-amber) 35%,var(--surface))}
+.apprv-box .apprv-t{font-size:14px;font-weight:700;color:var(--ink)}
+.apprv-row b{font-size:14px}
+.sendbox,.maillog{border-radius:12px;border-color:var(--line);background:var(--surface-2);padding:14px 16px}
+.sendbox-t,.mailog-t{font-size:11px;font-weight:600;letter-spacing:.07em}
+.sendrow{gap:10px}
+.mailog-r{border-bottom:1px solid var(--line);font-size:13px;padding:7px 0}
+
+/* Autocompletar de SKU dentro de modales. */
+.ac-it{padding:8px 10px}
+.ac-it .ac-sku{font-size:13px}
+.ac-it .ac-de{font-size:13px}
+
+/* ---------------------------------------------------------------------------
+   8. COLA DE PREPARACIÓN
+   Cada orden es una tarjeta (el JS las arma como .card con style inline);
+   se les da el radio y el hover del canvas.
+   ------------------------------------------------------------------------- */
+#pq-body{display:block}
+#pq-body > .hint{font-size:13.5px!important;color:var(--ink-2);line-height:1.55;margin-bottom:14px!important} /* vence el margin inline */
+#pq-body .card{border-radius:14px;padding:14px 18px!important;margin-bottom:10px!important;transition:border-color .12s ease} /* el JS fija padding/margin inline */
+#pq-body .card:hover{border-color:var(--line-2);box-shadow:0 1px 3px rgba(16,24,40,.06)}
+#pq-body > div:last-child > .card > div:first-child{font-size:18px!important;color:var(--ink-3)!important;min-width:34px}
+#pq-body .card .btn.mini{min-height:36px;padding:0 16px}
+/* La primera de la cola va destacada: es la que toca preparar ahora. */
+#pq-body > div:last-child > .card:first-child{border-color:var(--primary-line);background:linear-gradient(0deg,var(--primary-wash),var(--primary-wash))}
+#pq-body > div:last-child > .card:first-child > div:first-child{color:var(--primary-ink)!important}
+.page[data-pg="pickqueue"] > .card{background:transparent;border:0;box-shadow:none}
+.page[data-pg="pickqueue"] > .card > .b{padding:0}
+
+/* ---------------------------------------------------------------------------
+   9. RECEPCIÓN (cotejo, manifiesto, editor de líneas)
+   ------------------------------------------------------------------------- */
+/* Misma causa y solución que la tabla de Órdenes: sin ancho fijo el número
+   de recepción en Inter+tabular-nums desbordaba la tabla y los botones de
+   fila (Recepcionar/Editar/Cerrar/Eliminar) quedaban fuera de vista. */
+@media(min-width:861px){
+  .page[data-pg="inbound"] .tablewrap table{table-layout:fixed}
+  .page[data-pg="inbound"] thead th:nth-child(1){width:145px}
+  .page[data-pg="inbound"] thead th:nth-child(2){width:110px}
+  .page[data-pg="inbound"] thead th:nth-child(3){width:95px}
+  .page[data-pg="inbound"] thead th:nth-child(4){width:110px}
+  .page[data-pg="inbound"] thead th:nth-child(5){width:85px}
+  .page[data-pg="inbound"] thead th:nth-child(6){width:58px}
+  .page[data-pg="inbound"] thead th:nth-child(7){width:142px}
+  .page[data-pg="inbound"] thead th:nth-child(8){width:80px}
+  .page[data-pg="inbound"] #inb-body td{overflow:hidden;text-overflow:ellipsis}
+  .page[data-pg="inbound"] #inb-body td:last-child{overflow:visible;text-overflow:clip}
+  /* Mismo mínimo viejo de la regla general (~línea 60): con ancho fijo ya no
+     hace falta y a 1280px volvía a forzar scroll horizontal. */
+  .page[data-pg="inbound"] #inb-body .card-actions{min-width:0}
+}
+@media(min-width:861px) and (max-width:1279px){
+  .page[data-pg="inbound"] thead th:nth-child(2){width:96px}
+  .page[data-pg="inbound"] thead th:nth-child(3){width:80px}
+  .page[data-pg="inbound"] thead th:nth-child(4){white-space:normal}
+  .page[data-pg="inbound"] #inb-body td:nth-child(4){white-space:normal!important}
+}
+.reclines-head{font-size:11px;font-weight:600;letter-spacing:.07em;gap:10px;padding:0 2px 6px}
+.recline{gap:10px;margin-bottom:8px}
+.recline .rc-del{width:36px;height:36px;border-radius:var(--r-ctl)}
+.cotejo-tbl{font-size:14px}
+.cotejo-tbl th{font-size:11px;font-weight:600;letter-spacing:.07em;background:var(--th-bg);padding:10px 10px}
+.cotejo-tbl td{padding:10px;height:auto}
+/* Manifiesto dentro del modal: documento sobrio, acentos en marca legible. */
+.manifest{font-size:14px}
+.manifest .mf-head{border-bottom:2px solid var(--primary);padding-bottom:14px}
+.manifest .mf-brand{font-size:20px;font-weight:800;color:var(--primary-ink);letter-spacing:-.02em}
+.manifest .mf-sub{font-size:13px}
+.manifest .mf-idn{font-size:18px;font-weight:800}
+.manifest .mf-st{color:var(--primary-ink);font-weight:700}
+.manifest .mf-grid{gap:6px 24px}
+.manifest .mf-grid>div{border-bottom:1px solid var(--row-line);padding:6px 0}
+.manifest .mf-tbl th{font-size:11px;font-weight:600;letter-spacing:.07em;border-bottom:2px solid var(--primary);background:transparent}
+.manifest .mf-tbl td{padding:8px;border-bottom-color:var(--row-line);height:auto}
+.manifest .mf-tbl tfoot td{border-top:2px solid var(--primary)}
+.manifest .mf-notes{background:var(--surface-2);border-left:3px solid var(--primary);border-radius:0 10px 10px 0;font-size:13px;padding:10px 14px}
+.manifest .mf-line{border-top-color:var(--ink-2)}
+
+/* ---------------------------------------------------------------------------
+   10. DEVOLUCIONES (QA), ALMACENADO, ARMADO, CONTEO
+   Tablas estándar del sistema; se ajustan pestañas y textos de ayuda.
+   ------------------------------------------------------------------------- */
+#pw-tabs{margin-bottom:16px!important} /* el HTML fija margin-bottom:10px inline */
+#pw-help{font-size:14px;color:var(--ink-2)}
+#pw-body td:last-child .btn,#pw-body td:last-child .mini{white-space:nowrap}
+#asm-kits td:nth-child(3){font-size:13px;color:var(--ink-2)}
+#cc-body td:first-child .chip{min-width:64px;justify-content:center}
+/* Disposición QA: los tres números (stock/merma/cuarentena) en una fila. */
+.qa-row{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(3,minmax(0,1fr));gap:10px;align-items:center;
+  padding:10px 0;border-bottom:1px solid var(--row-line)}
+.qa-row:last-child{border-bottom:0}
+.qa-sku{font-weight:600;color:var(--ink)}
+
+/* ---------------------------------------------------------------------------
+   11. MOVIMIENTOS (kardex): barra de filtros
+   ------------------------------------------------------------------------- */
+.mvbar{gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
+  box-shadow:var(--shadow);padding:18px 20px;margin-bottom:16px}
+.field{gap:6px}
+.field label{font-size:12px;font-weight:600;color:var(--ink-2);text-transform:none;letter-spacing:0}
+.mvactions{gap:12px;margin-bottom:16px}
+#mv-count{font-size:13.5px;color:var(--ink-2)}
+/* Los .mvbar embebidos en Facturación (tarifario) van sin marco: el inline ya
+   lo pide con style=""; esto solo asegura el mismo aire entre campos. */
+.card .mvbar[style]{gap:14px}
+
+/* ---------------------------------------------------------------------------
+   12. INVENTARIO, PRODUCTOS, DESTINATARIOS, EMBALAJES
+   ------------------------------------------------------------------------- */
+#inv-views{gap:8px!important;flex-wrap:wrap} /* el HTML fija gap:6px inline */
+#inv-views .fchip::before{display:none}
+#inv-count,#loc-count,#cg-count{font-size:13.5px;color:var(--ink-2)}
+#inv-body td:first-child,#pr-body td:first-child,#pkg-body td:first-child{font-weight:600;color:var(--ink)}
+/* Carga masiva con diff (productos/ubicaciones/órdenes): el resultado viene
+   en tablas y pastillas estándar; solo se enmarca. */
+#imp-result:not(:empty),#pimp-result:not(:empty),#limp-result:not(:empty){margin-top:6px}
+.pkg-group{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--surface-2)}
+/* Destinatarios en tabla matrix dentro de card .b: sin doble relleno. */
+.page[data-pg="consignees"] .card > .b{padding:0}
+.page[data-pg="consignees"] .toolbar .search{max-width:360px}
+
+/* ---------------------------------------------------------------------------
+   13. UBICACIONES (vista tarjetas y lista)
+   ------------------------------------------------------------------------- */
+.locs{gap:16px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.locc{border-radius:14px;padding:16px 18px;border-color:var(--line);box-shadow:var(--shadow);transition:border-color .12s ease}
+.locc:hover{border-color:var(--line-2)}
+.locc .code{font-size:16px;font-weight:700;color:var(--ink)}
+.locc .zone{font-size:11px;font-weight:600;letter-spacing:.07em;margin-top:3px}
+.occ{margin-top:14px}
+.occ i,.occbar i{background:var(--primary);border-radius:999px}
+.occ i.hi,.occbar i.hi{background:var(--c-amber)} .occ i.full,.occbar i.full{background:var(--c-red)}
+.locc .u{font-size:12.5px;margin-top:8px}
+.occbar{height:8px}
+#loc-zone{min-width:180px}
+
+/* ---------------------------------------------------------------------------
+   14. FACTURACIÓN (resumen, tarifario, facturas, documento)
+   ------------------------------------------------------------------------- */
+#bill-tabs{margin-bottom:20px}
+/* Montos con moneda ("2.518.965 CLP") no caben a 30px en cinco columnas. */
+#bd-kpis .kpi .v,#cos-kpis .kpi .v,#mc-kpis .kpi .v{font-size:23px;overflow-wrap:anywhere}
+#bill-tabs .segbtn{font-size:14px}
+.page[data-pg="billing"] .toolbar .field{min-width:140px}
+/* Pila por concepto: barra de 14px con segmentos separados por 2px. */
+.stackbar{height:14px;border-radius:999px;gap:2px;margin-bottom:18px;background:var(--surface-3)}
+.stackseg:first-child{border-radius:999px 0 0 999px}
+.stackseg:last-child{border-radius:0 999px 999px 0}
+.dbar-row{grid-template-columns:170px 1fr 170px;gap:14px;margin-bottom:12px}
+.dbar-row .dcap{font-size:14px;color:var(--ink-2);gap:10px}
+.dbar-row .dcap .sw,.legend-item .sw{width:10px;height:10px;border-radius:3px}
+.dbar-track{height:10px;border-radius:999px;background:var(--surface-3)}
+.dbar-fill{border-radius:999px}
+.dbar-val{font-size:14px;font-weight:700}
+.dbar-val .pct{font-size:12.5px}
+.legend{gap:10px 18px}
+.legend-item{font-size:13px;color:var(--ink-2)}
+table.matrix thead th .sw{border-radius:3px}
+.udelta{font-size:11px;font-weight:600}
+.udelta.up{color:var(--c-green)} .udelta.down{color:var(--c-red)}
+.client-billing-note .b{font-size:14px}
+.client-billing-note .ic{display:none} /* emoji decorativo del HTML; el texto se sostiene solo */
+.apprv-row .hint{margin-top:4px;line-height:1.5}
+#rt-cur{color:var(--ink)}
+#bl-preview-box:not(:empty){border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--surface-2)}
+#bill-invoices td:first-child{font-weight:600;color:var(--ink)}
+/* Editor de líneas de factura (modal). */
+#ei-tbl td{height:auto;padding:8px 6px}
+#ei-tbl input{border-radius:8px}
+
+/* ---------------------------------------------------------------------------
+   15. COSTOS Y RENTABILIDAD
+   ------------------------------------------------------------------------- */
+#cos-rates-card .grid2{gap:16px!important} /* el HTML fija gap:14px inline */
+.chipin{display:inline-flex;align-items:center;gap:8px;margin:6px 14px 6px 0;font-size:13px;font-weight:600;color:var(--ink-2)}
+.chipin .inpmini{width:76px}
+#cos-prof-body td:first-child,#cos-eff-body td:first-child{font-weight:600;color:var(--ink)}
+
+/* ---------------------------------------------------------------------------
+   16. MENSAJES (chat cliente ↔ operaciones): bandeja + hilo
+   ------------------------------------------------------------------------- */
+/* Alto: pantalla menos barra superior (88), relleno del contenido y margen
+   para la franja de anuncios cuando aparece. */
+.chatwrap{gap:20px;height:calc(100vh - 210px);min-height:480px}
+.chat-inbox-pane,.chat-thread-pane{border-radius:var(--r-card);border-color:var(--line);box-shadow:var(--shadow)}
+.chat-inbox-head{padding:16px 18px;font-size:15px;font-weight:700;border-bottom-color:var(--line)}
+.chat-irow{padding:14px 18px;border-bottom-color:var(--row-line);position:relative;gap:4px}
+.chat-irow:hover{background:var(--row-hover)}
+.chat-irow.on{background:var(--primary-wash)}
+.chat-irow.on::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--primary)}
+.chat-irow .cli{font-size:14px;font-weight:600;color:var(--ink)}
+.chat-irow .prev{font-size:13px}
+.chat-irow .who{font-size:12px}
+.chat-thread-head{padding:16px 20px;border-bottom-color:var(--line)}
+.chat-th-title{font-size:16px;font-weight:700}
+.chat-msgs{padding:20px;gap:12px;background:var(--bg)}
+.cbub{font-size:14px;padding:10px 14px;border-radius:14px;box-shadow:none;max-width:72%}
+.cbub .cmeta{font-size:11.5px;font-weight:700}
+.cbub .ctime{font-size:11px}
+/* Burbuja propia: verde suave con texto oscuro. Blanco sobre #12F093 no se lee. */
+.cbub.mine{background:var(--primary-wash);color:var(--ink);border:1px solid var(--primary-line);border-bottom-right-radius:4px}
+.cbub.mine .ctime{color:var(--ink-3)}
+.cbub.theirs{background:var(--surface);border-color:var(--line)}
+.chat-composer{padding:14px 16px;gap:10px;border-top-color:var(--line)}
+.chat-composer textarea{min-height:44px;border-radius:var(--r-ctl);background:var(--surface);border-color:var(--line-2);padding:11px 14px;font-size:14px}
+.chat-composer .btn{min-height:44px}
+
+/* ---------------------------------------------------------------------------
+   17. CANAL DE VOZ OPERADOR ↔ ADMIN (grabación, burbujas, bandeja, stats)
+   Las burbujas las arma msgHtml() con fondos fijos #d9fdd3/#ffffff y textos
+   grises fijos: en oscuro quedaba texto claro sobre blanco. Se reemplazan por
+   los tokens; !important porque son style="" inline.
+   ------------------------------------------------------------------------- */
+#voc-rec-btn{min-height:48px;padding:0 22px!important;font-size:15px!important;border-radius:12px} /* el HTML fija padding inline */
+#voc-rec-status{font-size:13.5px}
+#voc-mythread,#voc-thread-view{max-height:60vh;overflow-y:auto}
+#voc-mythread [style*="background:#d9fdd3"],#voc-thread-view [style*="background:#d9fdd3"]{
+  background:var(--primary-wash)!important;border:1px solid var(--primary-line)!important;color:var(--ink);box-shadow:none!important}
+#voc-mythread [style*="background:#ffffff"],#voc-thread-view [style*="background:#ffffff"]{
+  background:var(--surface)!important;border:1px solid var(--line)!important;color:var(--ink);box-shadow:none!important}
+#voc-mythread [style*="color:#7a8894"],#voc-thread-view [style*="color:#7a8894"]{color:var(--ink-3)!important}
+#voc-mythread .pill[style],#voc-thread-view .pill[style]{background:var(--surface-3)!important;color:var(--ink-2)!important}
+#voc-mythread .btn,#voc-thread-view .btn{min-height:32px}
+/* Bandeja de operadores: cada hilo es un .btn a lo ancho. */
+#voc-thread-list .btn{min-height:0;border-radius:12px;padding:11px 13px!important;margin-bottom:8px!important} /* vence padding/margin inline */
+#voc-thread-list .btn:hover{border-color:var(--line-2)}
+#voc-thread-list .btn[style*="border-color:var(--primary)"]{background:var(--primary-wash);border-color:var(--primary-line)!important}
+#voc-thread-list .btn b{color:var(--ink)}
+#voc-reply-box{border-top-color:var(--line)!important}
+#voc-reply-send{margin-top:10px!important} /* borde y margen vienen inline en el HTML */
+#voc-topics .dbar,#voc-byoperator .dbar{padding:8px 0}
+/* KPIs del canal: el JS usa .kpi-v/.kpi-l (sin estilo en el inline). Se
+   igualan a las cifras del resto del panel: rótulo arriba, número grande. */
+#voc-kpis .kpi{display:flex;flex-direction:column-reverse;justify-content:flex-end}
+#voc-kpis .kpi-l{font-size:14.5px;font-weight:500;color:var(--ink-2)}
+#voc-kpis .kpi-v{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-top:10px;line-height:1.05;color:var(--ink)}
+
+/* ---------------------------------------------------------------------------
+   18. WEBHOOKS · MCP
+   ------------------------------------------------------------------------- */
+#wh-notice:not(:empty){margin-bottom:16px}
+#wh-list td:first-child{font-weight:600;color:var(--ink);word-break:break-all}
+.mcpsec{gap:10px;margin-bottom:20px}
+.mcpsec b{font-size:14px;font-weight:700}
+.mcpcode{font-family:var(--font-mono);font-size:13px;background:var(--surface-2);border-color:var(--line);border-radius:12px;padding:14px 16px;color:var(--ink)}
+.mcpkey{font-family:var(--font-mono);background:var(--c-amber-wash);border:1px solid color-mix(in srgb,var(--c-amber) 40%,var(--surface));border-radius:12px;padding:14px 16px}
+.page[data-pg="mcp"] .card > .b > .tablewrap{margin:-20px -22px 0}
+#mcp-body td:nth-child(2){font-family:var(--font-mono);font-size:13px}
+
+/* ---------------------------------------------------------------------------
+   19. AGENTE · DIARIO · TORRE · ALERTAS · AUDITORÍA IA
+   El inline pintaba con verdes/naranjos fijos (#12B886, #0E9F6E, #B45309):
+   se pasan a marca y semánticos para seguir la operación y el tema oscuro.
+   ------------------------------------------------------------------------- */
+/* Ventanas horarias. */
+.agw{border-radius:12px;background:var(--surface-2);border-color:var(--line);padding:14px 16px;gap:12px}
+.agw-dia{min-height:32px;padding:0 11px;border-radius:8px;border-color:var(--line-2);background:var(--surface);color:var(--ink-2);font-size:12.5px;font-weight:600}
+.agw-dia.on{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+.agw-estado{font-size:14px;font-weight:600}
+.agw-estado.on{color:var(--good)} .agw-estado.off{color:var(--warn)}
+/* Reglas: filas limpias con borde de fila del sistema. */
+.agr{border-bottom-color:var(--row-line)!important;padding:14px 2px!important} /* el JS fija el borde/padding inline */
+.agr:last-child{border-bottom:0!important} /* el borde lo pone el JS inline */
+.agr b{color:var(--ink);font-size:14px}
+.agr-ctl label{font-size:12.5px;color:var(--ink-2)}
+/* Diario: un bloque por ciclo. */
+.agj{border-radius:14px;border-color:var(--line);padding:16px 18px;margin-bottom:14px;background:var(--surface)}
+.agj-when{font-size:14px;font-weight:700}
+.agj-tag{min-height:22px;display:inline-flex;align-items:center;padding:0 9px;font-size:11px;font-weight:600;letter-spacing:.05em;
+  background:var(--c-green-wash);color:var(--c-green)}
+.agj-tag.pend{background:var(--c-amber-wash);color:var(--c-amber)}
+.agj-tag.llm{background:var(--c-purple-wash);color:var(--c-purple)}
+.agj-by{font-size:12.5px}
+.agj-txt{font-size:14px;color:var(--ink-2)}
+.agj-kpis{font-size:13px;gap:16px}
+.agj-kpis b{font-size:14px}
+.agj-t{font-size:13.5px}
+.agj-t th{background:transparent;font-size:11px;font-weight:600;letter-spacing:.07em;padding:8px 12px 8px 0}
+.agj-t td{padding:9px 12px 9px 0;height:auto;border-bottom-color:var(--row-line)}
+.agj-notas{font-size:13px}
+/* Torre en vivo. */
+.torre{gap:20px}
+.torre-col{gap:20px}
+.torre-bar{gap:10px;margin:8px 0}
+.torre-bar .t i{background:var(--primary)}
+.torre-bar.hot .t i{background:var(--c-red)}
+.torre-bar .n{font-size:13px;font-weight:700}
+.torre-pend{gap:10px}
+.torre-pend span{min-height:34px;padding:0 14px;border-color:var(--line-2);font-size:13.5px;color:var(--ink-2);background:var(--surface)}
+.torre-pend b{color:var(--ink)}
+/* Alertas activas: cada alerta es una fila del contenedor (inline style). */
+#agt-alerts .btn,#agt-rules .btn,#agt-status .btn,#agt-instr .btn{min-height:34px}
+#agt-status .kv{font-size:14px}
+
+/* ---------------------------------------------------------------------------
+   20. ACTIVIDAD POR USUARIO · ASIGNACIONES
+   ------------------------------------------------------------------------- */
+.page[data-pg="activity"] .fld select{min-width:220px}
+#act-feed{padding-top:6px}
+#act-feed > div{border-bottom-color:var(--row-line)}
+/* Asignaciones: la barra tiene muchos segmentados; que respire al envolver. */
+.page[data-pg="asignaciones"] .toolbar{row-gap:12px}
+.page[data-pg="asignaciones"] .toolbar .btn{margin-left:0!important} /* el HTML separa con margin-left inline; el gap de la toolbar ya separa */
+#asg-type{margin-left:0!important} /* margin inline del HTML; separa el gap */
+#asg-op-sel{min-height:42px!important;border-radius:var(--r-ctl)!important;border-color:var(--line-2)!important;background-color:var(--surface)!important} /* vence el style inline del select */
+#tt-msg{padding:12px 20px 16px!important} /* padding inline alineado al nuevo relleno de tarjeta */
+.page[data-pg="asignaciones"] .card > p.muted{margin:0 20px 14px!important;font-size:13.5px!important}
+#asg-pool-body select{min-width:170px}
+
+/* ---------------------------------------------------------------------------
+   21. MARCA (branding) · CLIENTES · USUARIOS
+   ------------------------------------------------------------------------- */
+#brand-form{display:block}
+#brand-form .form{max-width:760px}
+#brand-form input[type=color]{width:56px;height:42px;padding:4px;border:1px solid var(--line-2);border-radius:var(--r-ctl);background:var(--surface);cursor:pointer}
+#brand-form img{border-radius:10px;border:1px solid var(--line);background:#fff}
+#cli-body td:first-child,#usr-body td:first-child{font-weight:600;color:var(--ink)}
+#usr-body td:nth-child(2){color:var(--ink-2)}
+
+/* ---------------------------------------------------------------------------
+   22. PLAN (tiers, uso, prueba) y MURO DE PLAN (popup, look Bloqueado)
+   ------------------------------------------------------------------------- */
+#plan-trial:not(:empty){margin-bottom:20px}
+.plan-trialbar{background:var(--primary-wash);border:1px solid var(--primary-line);color:var(--ink);border-radius:14px;padding:14px 18px;font-size:14px}
+.plan-trialbar b{color:var(--primary-ink)}
+.page[data-pg="plan"] > .grid2{margin-bottom:20px}
+.plan-hero .nm{font-size:28px;font-weight:800}
+.plan-hero .pr{font-size:15px;color:var(--ink-2)}
+.plan-badge{min-height:24px;padding:0 10px;font-size:12px;font-weight:600;background:var(--primary-wash);color:var(--primary-ink)}
+.featchips{gap:8px;margin-top:10px}
+.featchip{font-size:12.5px;font-weight:500;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:4px 11px;color:var(--ink-2)}
+.meter{margin:14px 0}
+.meter .lbl{font-size:14px;margin-bottom:7px;color:var(--ink-2)}
+.meter .lbl b{color:var(--ink)}
+.meter .fill.warn{background:var(--c-amber)} .meter .fill.crit{background:var(--c-red)}
+.tiers{gap:16px}
+.ptier{border-radius:var(--r-card);border-color:var(--line);padding:20px;gap:12px;background:var(--surface)}
+.ptier.cur{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
+.ptier .tn{font-size:17px;font-weight:700}
+.ptier .tp{font-size:15px;font-weight:700;color:var(--ink)}
+.ptier li{font-size:13.5px;color:var(--ink-2);gap:8px}
+.ptier li::before{content:"";width:14px;height:14px;flex:none;margin-top:3px;background:var(--c-green);
+  -webkit-mask:var(--ic-check) center/contain no-repeat;mask:var(--ic-check) center/contain no-repeat}
+.ptier .tbtn{min-height:42px;border-radius:var(--r-ctl);border-color:var(--line-2);font-size:14px;font-weight:600}
+.ptier .tbtn:hover{background:var(--surface-2)}
+.ptier .tbtn.pri{background:var(--primary);border-color:var(--primary);color:var(--on-primary);font-weight:700}
+.ptier .tbtn.pri:hover{filter:brightness(.95)}
+.ptier .tbtn.cur{background:var(--surface-2);color:var(--ink-3);opacity:1}
+
+/* Muro de plan: ícono candado en pastilla ámbar, título 21px, WhatsApp. */
+.paywall{padding:10px 8px 2px}
+.paywall .pw-ic{width:60px;height:60px;margin:0 auto 16px;border-radius:16px;background:#FFF8EB;border:1px solid #F6D9A8;
+  color:#C2690C;font-size:0;display:flex;align-items:center;justify-content:center}
+.paywall .pw-ic::before{content:"";width:26px;height:26px;background:currentColor;
+  -webkit-mask:var(--ic-lock) center/contain no-repeat;mask:var(--ic-lock) center/contain no-repeat}
+.paywall h4{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 8px}
+.paywall .pw-txt{font-size:14px;color:var(--ink-2);max-width:380px}
+.paywall .pw-plan{min-height:30px;padding:0 14px;font-size:13px;background:var(--bg);border-color:var(--line);margin:18px 0 22px}
+.paywall .pw-wa{min-height:48px;padding:0 22px;border-radius:12px;background:#25D366;color:#0B2E18;font-size:15px;font-weight:800;
+  box-shadow:0 12px 24px -14px rgba(37,211,102,.95)}
+.paywall .pw-close{min-height:48px;padding:0 20px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2);font-size:14.5px;font-weight:600}
+.paywall .pw-close:hover{background:var(--surface-2)}
+.paywall .pw-foot{margin-top:16px;font-size:12px}
+
+/* ---------------------------------------------------------------------------
+   23. PLATAFORMA · matriz de empaquetado, uso, operaciones, anuncios
+   ------------------------------------------------------------------------- */
+/* Matriz módulo × plan. */
+.pkg{font-size:14px}
+.pkg th,.pkg td{padding:12px 14px;border-bottom-color:var(--row-line);height:auto}
+.pkg thead th{background:var(--th-bg);border-bottom:1px solid var(--line);z-index:1}
+.pkg .rowlbl{font-size:14px;color:var(--ink);font-weight:500}
+.pkg .rowlbl .d{font-size:12.5px}
+.pkg .secrow td{background:var(--surface-2);font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--ink-3)}
+.pkg .pname{border-radius:8px;border-color:var(--line-2);font-size:14.5px;min-height:36px}
+.pkg .pprice,.pkg .lim{border-radius:8px;border-color:var(--line-2);min-height:30px}
+.pkg tbody tr:hover{background:transparent}
+.page[data-pg="pkgmatrix"] .card > .tablewrap{border-radius:var(--r-card)}
+
+/* Operaciones: tarjeta con iniciales, ficha de alta y acciones. */
+#ops-grid{gap:20px}
+#ops-grid .card{display:flex;flex-direction:column}
+.opcard{gap:16px;padding:20px 22px 14px}
+.opcard .oi{width:48px;height:48px;border-radius:14px;background:var(--primary-wash);color:var(--primary-ink);font-size:17px;font-weight:800;border:1px solid var(--primary-line)}
+.opcard .on{font-size:16px;font-weight:700;color:var(--ink)}
+.opcard .om{font-size:13px;color:var(--ink-3)}
+.opficha{margin:0 22px 14px;padding:12px 14px;border-radius:12px;background:var(--surface-2);border-color:var(--line)}
+.opficha .ofi-h{font-size:11px;font-weight:600;letter-spacing:.07em}
+.opficha .ofi-r{font-size:13px;padding:3px 0}
+.opficha .ofi-r a{color:var(--primary-ink)}
+.card-actions{gap:8px;margin-top:10px}
+#ops-grid .card-actions{margin:auto 0 0;padding:14px 22px 18px;border-top:1px solid var(--line)}
+
+/* Anuncios: tabla de clics dentro del modal. */
+.ann-clickrow{padding:10px 0;border-bottom-color:var(--row-line);font-size:13.5px;gap:12px}
+.ann-clickrow.head{font-size:11px;font-weight:600;letter-spacing:.07em;background:var(--th-bg);padding:8px 10px;border-radius:8px}
+#ann-list td:first-child{font-weight:600;color:var(--ink)}
+
+/* Uso de la plataforma: la matriz lleva la primera columna fija al hacer scroll. */
+#usg-mx-body td:first-child{font-weight:600;color:var(--ink)}
+
+/* ---------------------------------------------------------------------------
+   24. MODALES · contenido común
+   (el marco del modal/drawer lo define theme-base).
+   ------------------------------------------------------------------------- */
+.modal .form .acts{padding-top:14px;border-top:1px solid var(--line);margin-top:6px}
+.modal .db > .muted:first-child,.modal .db > .hint:first-child{font-size:13.5px;color:var(--ink-2);line-height:1.55}
+.modal table{font-size:13.5px}
+.modal tbody td{height:auto;padding:10px 12px}
+.modal thead th{padding:9px 12px}
+.fgrid{gap:10px}
+.fgrid label{font-size:12.5px;font-weight:600;color:var(--ink-2);text-transform:none;letter-spacing:0}
+
+/* ---------------------------------------------------------------------------
+   25. MÓDULO BLOQUEADO (controles apagados en la página)
+   ------------------------------------------------------------------------- */
+.page.locked .btn.pri{filter:none;opacity:.45}
+
+/* ---------------------------------------------------------------------------
+   26. MODO OSCURO · ajustes propios de páginas
+   Casi todo sale solo de los tokens. Estos son los pocos colores fijos que
+   no tienen token (pastilla ámbar del muro de plan).
+   ------------------------------------------------------------------------- */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .paywall .pw-ic{background:var(--c-amber-wash);border-color:color-mix(in srgb,var(--c-amber) 40%,var(--surface));color:var(--c-amber)}
+  :root:not([data-theme="light"]) #brand-form img{background:var(--surface-2)}
+}
+:root[data-theme="dark"] .paywall .pw-ic{background:var(--c-amber-wash);border-color:color-mix(in srgb,var(--c-amber) 40%,var(--surface));color:var(--c-amber)}
+:root[data-theme="dark"] #brand-form img{background:var(--surface-2)}
+
+/* ---------------------------------------------------------------------------
+   27. RESPONSIVO (antes de mobile.css, que manda en ≤860px)
+   ------------------------------------------------------------------------- */
+@media(max-width:1200px){
+  .dbar-row{grid-template-columns:130px 1fr 140px}
+}
+@media(max-width:860px){
+  .page.aid-torre{margin:-16px -12px -40px;padding:16px 12px 40px}
+  .dcard .l{min-height:0}
+  .bulk-bar{top:0}
+  .chatwrap{height:auto}
+  .qa-row{grid-template-columns:1fr 1fr}
+  .dbar-row{grid-template-columns:1fr;gap:6px}
+  #ops-grid .card-actions{padding:12px 16px 16px}
+  .opficha{margin:0 16px 12px}
+}

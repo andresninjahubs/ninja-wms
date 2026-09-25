@@ -6,9 +6,11 @@
 <meta name="theme-color" content="#12B76A">
 <meta name="theme-color" content="#12B76A">
 <title>WMS · Panel</title>
+<script>/* Tema guardado (claro/oscuro) antes de pintar, para que no parpadee. Lo alterna theme-shell.js. */
+(function(){try{var t=localStorage.getItem('wms.admin.theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <style>
   /* ============================================================
      AURORA CLEAN — claro, luminoso, premium. Verde Ninja + acentos
@@ -1196,6 +1198,9 @@
   @keyframes live-spin{to{transform:rotate(360deg)}}
   @media(max-width:1560px){.live-btn .lbl{display:none}.live-btn{padding:6px 7px}}
 </style>
+<link rel="stylesheet" href="./theme-base.css">
+<link rel="stylesheet" href="./theme-shell.css">
+<link rel="stylesheet" href="./theme-pages.css">
 <link rel="stylesheet" href="./mobile.css">
 </head>
 <body>
@@ -1203,110 +1208,150 @@
 
 <div class="layout">
   <aside class="side">
+    <!-- El JS escribe « / » en este botón; el CSS lo esconde y dibuja un chevron. -->
     <button class="sidetoggle" id="side-toggle" type="button" title="Colapsar el menú" aria-label="Colapsar el menú">«</button>
+    <div class="side-head">
     <div class="brand"><div class="brandlogo" id="brandLogo" title="Ninja WMS"><svg class="brandlogo-svg" viewBox="0 0 240 46" preserveAspectRatio="xMinYMid meet" role="img" aria-label="Ninja WMS" xmlns="http://www.w3.org/2000/svg"><text x="0" y="35" font-family="Sora, sans-serif" font-weight="800" font-size="40" letter-spacing="0.5"><tspan class="wm-a">Ninja</tspan><tspan class="wm-b" dx="8">WMS</tspan></text></svg></div></div>
-    <button class="nav on" data-pg="dashboard"><span class="ic">◧</span> Dashboard</button>
-    <button class="nav" data-pg="copilot"><span class="ic">✨</span> Copiloto</button>
-    <button class="nav" data-pg="aidash"><span class="ic">🧩</span> Dashboard AI</button>
-    <button class="nav" data-pg="voz"><span class="ic">🎧</span> Copiloto de voz</button>
+      <!-- Saludo: los ids who-* venían de la barra superior; app.js y mobile.js los llenan por id. -->
+      <div class="side-who">
+        <span class="av" id="who-av">A</span>
+        <div class="side-who-t"><div class="nm">Hola, <span id="who-nm">—</span></div><div class="rl" id="who-rl">—</div></div>
+      </div>
+    </div>
+    <!-- "Carga tus órdenes": atajo a Órdenes → Carga masiva (theme-shell.js). Se oculta si el rol no puede cargar. -->
+    <div class="side-account" id="side-account" hidden>
+      <div class="side-acc-lbl">Mi Cuenta</div>
+      <button class="side-upload" id="side-upload" type="button" title="Carga masiva de órdenes"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12"/></svg><span>Carga tus órdenes</span></button>
+    </div>
+    <div class="side-nav">
+    <button class="nav on" data-pg="dashboard"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h7v9H3z M14 3h7v5h-7z M14 12h7v9h-7z M3 16h7v5H3z"/></svg></span> Dashboard</button>
 
-    <div class="navcat" data-cat="workflows">
-      <button class="navcat-h" data-cat-toggle="workflows"><span class="ic">⚙</span> Workflows <span class="navcat-arrow">▾</span></button>
+    <div class="navcat collapsed" data-cat="ninjaia">
+      <button class="navcat-h" data-cat-toggle="ninjaia"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z M19 15l.8 1.9 1.9.8-1.9.8L19 20.4l-.8-1.9-1.9-.8 1.9-.8z"/></svg></span> <span class="navcat-lbl">Inteligencia</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
       <div class="navcat-body">
-        <button class="nav sub" data-pg="orders"><span class="ic">🗎</span> Órdenes</button>
-        <button class="nav sub" data-pg="pickqueue"><span class="ic">▶</span> Cola de preparación</button>
-        <button class="nav sub" data-pg="inbound"><span class="ic">▼</span> Recepción</button>
-        <button class="nav sub" data-pg="returns"><span class="ic">↩</span> Devoluciones</button>
-        <button class="nav sub" data-pg="putaway"><span class="ic">⇲</span> Almacenado</button>
-        <button class="nav sub" data-pg="assembly"><span class="ic">⊞</span> Armado de kit</button>
-        <button class="nav sub" data-pg="movements"><span class="ic">↹</span> Movimientos</button>
-        <button class="nav sub" data-pg="counts"><span class="ic">◎</span> Conteo cíclico <span class="badge" id="nav-counts"></span></button>
+        <button class="nav sub" data-pg="copilot"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2 M20 14h2 M15 13v2 M9 13v2"/></svg></span> Copiloto</button>
+        <button class="nav sub" data-pg="aidash"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12A9 9 0 1 1 12 3v9z M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg></span> Dashboard AI</button>
+        <button class="nav sub" data-pg="voz"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg></span> Copiloto de voz</button>
+        <button class="nav sub" data-pg="agente"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4 M7.8 16.2a6 6 0 0 1 0-8.4 M19.1 4.9a10 10 0 0 1 0 14.2 M4.9 19.1a10 10 0 0 1 0-14.2"/></svg></span> Agente</button>
+        <button class="nav sub" data-pg="agdiario"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4a2 2 0 0 1 2-2h12v20H6a2 2 0 0 1-2-2z M8 7h6 M8 11h6"/></svg></span> Diario del agente</button>
+        <button class="nav sub" data-pg="torre"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span> Torre en vivo</button>
+        <button class="nav sub" data-pg="agalertas"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9 M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span> Alertas activas <span class="badge" id="nav-agente"></span></button>
+        <button class="nav sub" data-pg="aiaudit"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z M9 12l2 2 4-4"/></svg></span> Auditoría IA</button>
       </div>
     </div>
 
-    <div class="navcat" data-cat="invloc">
-      <button class="navcat-h" data-cat-toggle="invloc"><span class="ic">▦</span> Inventario y ubicaciones <span class="navcat-arrow">▾</span></button>
+    <div class="navcat collapsed" data-cat="workflows">
+      <button class="navcat-h" data-cat-toggle="workflows"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5 M12 22V12"/></svg></span> <span class="navcat-lbl">Workflows</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
       <div class="navcat-body">
-        <button class="nav sub" data-pg="inventory"><span class="ic">▦</span> Inventario</button>
-        <button class="nav sub" data-pg="products"><span class="ic">◲</span> Productos</button>
-        <button class="nav sub" data-pg="consignees"><span class="ic">🏷️</span> Destinatarios</button>
-        <button class="nav sub" data-pg="packaging"><span class="ic">▧</span> Embalajes</button>
-        <button class="nav sub" data-pg="locations"><span class="ic">▤</span> Ubicaciones</button>
+        <button class="nav sub" data-pg="orders"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8"/></svg></span> Órdenes</button>
+        <button class="nav sub" data-pg="pickqueue"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l1.5 1.5L7 5 M3 12l1.5 1.5L7 11 M3 18l1.5 1.5L7 17 M11 6h10 M11 12h10 M11 18h10"/></svg></span> Cola de preparación</button>
+        <button class="nav sub" data-pg="inbound"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2 M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span> Recepción</button>
+        <button class="nav sub" data-pg="returns"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></span> Devoluciones</button>
+        <button class="nav sub" data-pg="putaway"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12 M7 10l5 5 5-5 M5 21h14"/></svg></span> Almacenado</button>
+        <button class="nav sub" data-pg="assembly"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7 M14 17.5h7"/></svg></span> Armado de kit</button>
+        <button class="nav sub" data-pg="movements"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3 4 7l4 4 M4 7h16 M16 21l4-4-4-4 M20 17H4"/></svg></span> Movimientos</button>
+        <button class="nav sub" data-pg="counts"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2 M9 14l2 2 4-4"/></svg></span> Conteo cíclico <span class="badge" id="nav-counts"></span></button>
       </div>
     </div>
 
-    <div class="navcat" data-cat="finanzas">
-      <button class="navcat-h" data-cat-toggle="finanzas"><span class="ic">$</span> Finanzas <span class="navcat-arrow">▾</span></button>
+    <div class="navcat collapsed" data-cat="invloc">
+      <button class="navcat-h" data-cat-toggle="invloc"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 8.35V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8.35A2 2 0 0 1 3.26 6.5l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35Z M6 18h12 M6 14h12 M6 22V10h12v12"/></svg></span> <span class="navcat-lbl">Inventario y ubicaciones</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
       <div class="navcat-body">
-        <button class="nav sub" data-pg="billing"><span class="ic">🧾</span> Facturación</button>
-        <button class="nav sub" data-pg="costos"><span class="ic">📊</span> Rentabilidad</button>
-      </div>
-    </div>
-    <button class="nav" data-pg="chat"><span class="ic">💬</span> Canal clientes <span class="badge" id="nav-chat"></span></button>
-    <button class="nav" data-pg="voicechannel"><span class="ic">🎙️</span> Canal operaciones</button>
-    <button class="nav" data-pg="webhooks"><span class="ic">🔗</span> Webhooks</button>
-    <div class="navgroup" data-admin>Administración</div>
-
-    <div class="navcat" data-cat="ninjaia">
-      <button class="navcat-h" data-cat-toggle="ninjaia"><span class="ic">🛰️</span> Ninja IA <span class="navcat-arrow">▾</span></button>
-      <div class="navcat-body">
-        <button class="nav sub" data-pg="agente"><span class="ic">🛰️</span> Agente</button>
-        <button class="nav sub" data-pg="agdiario"><span class="ic">📓</span> Diario del agente</button>
-        <button class="nav sub" data-pg="torre"><span class="ic">📡</span> Torre en vivo</button>
-        <button class="nav sub" data-pg="agalertas"><span class="ic">🔔</span> Alertas activas <span class="badge" id="nav-agente"></span></button>
-        <button class="nav sub" data-pg="aiaudit"><span class="ic">🧠</span> Auditoría IA</button>
-        <button class="nav sub" data-pg="mcp"><span class="ic">🔌</span> Conexión MCP</button>
+        <button class="nav sub" data-pg="inventory"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 10 5-10 5L2 7z M2 17l10 5 10-5 M2 12l10 5 10-5"/></svg></span> Inventario</button>
+        <button class="nav sub" data-pg="products"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z M7 7h.01"/></svg></span> Productos</button>
+        <button class="nav sub" data-pg="consignees"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg></span> Destinatarios</button>
+        <button class="nav sub" data-pg="packaging"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v13H3V8 M1 3h22v5H1z M10 12h4"/></svg></span> Embalajes</button>
+        <button class="nav sub" data-pg="locations"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18 M3 15h18 M9 3v18 M15 3v18"/></svg></span> Ubicaciones</button>
       </div>
     </div>
 
-    <button class="nav" data-pg="activity"><span class="ic">📋</span> Actividad</button>
-    <button class="nav" data-pg="asignaciones"><span class="ic">🧑‍🏭</span> Asignaciones</button>
-    <button class="nav" data-pg="branding"><span class="ic">🎨</span> Marca</button>
-    <button class="nav" data-pg="clients"><span class="ic">🏢</span> Clientes</button>
-    <button class="nav" data-pg="users"><span class="ic">◍</span> Usuarios</button>
-
-    <div class="navcat" data-cat="comercial">
-      <button class="navcat-h" data-cat-toggle="comercial"><span class="ic">◆</span> Comercial Ninja <span class="navcat-arrow">▾</span></button>
+    <div class="navcat collapsed" data-cat="finanzas">
+      <button class="navcat-h" data-cat-toggle="finanzas"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8 M12 17.5v-11"/></svg></span> <span class="navcat-lbl">Finanzas</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
       <div class="navcat-body">
-        <button class="nav sub" data-pg="plan"><span class="ic">◆</span> Plan</button>
-        <button class="nav sub" data-pg="pkgmatrix" data-platform><span class="ic">▦</span> Empaquetado</button>
-        <button class="nav sub" data-pg="usage" data-platform><span class="ic">📈</span> Uso</button>
+        <button class="nav sub" data-pg="billing"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v20 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span> Facturación</button>
+        <button class="nav sub" data-pg="costos"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 7 13.5 15.5 8.5 10.5 2 17 M16 7h6v6"/></svg></span> Rentabilidad</button>
       </div>
     </div>
 
-    <button class="nav" data-pg="operations" data-platform><span class="ic">◈</span> Operaciones</button>
-    <button class="nav" data-pg="announcements" data-platform><span class="ic">📣</span> Anuncios</button>
+    <div class="navcat collapsed" data-cat="comunicacion">
+      <button class="navcat-h" data-cat-toggle="comunicacion"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> <span class="navcat-lbl">Comunicación</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="chat"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg></span> Canal clientes <span class="badge" id="nav-chat"></span></button>
+        <button class="nav sub" data-pg="voicechannel"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1 M12 18v4"/></svg></span> Canal operaciones</button>
+      </div>
+    </div>
+
+    <div class="navcat collapsed" data-cat="integraciones">
+      <button class="navcat-h" data-cat-toggle="integraciones"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22v-5 M9 8V2 M15 8V2 M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z"/></svg></span> <span class="navcat-lbl">Integraciones</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="webhooks"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span> Webhooks</button>
+        <button class="nav sub" data-pg="mcp"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01 M6 18h.01"/></svg></span> Conexión MCP</button>
+      </div>
+    </div>
+
+    <div class="navcat collapsed" data-cat="equipo">
+      <button class="navcat-h" data-cat-toggle="equipo"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75"/></svg></span> <span class="navcat-lbl">Equipo</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="activity"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01"/></svg></span> Actividad</button>
+        <button class="nav sub" data-pg="asignaciones"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg></span> Asignaciones</button>
+      </div>
+    </div>
+
+    <div class="navcat collapsed" data-cat="control">
+      <button class="navcat-h" data-cat-toggle="control"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z"/></svg></span> <span class="navcat-lbl">Panel de Control</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="clients"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4 M8 6h.01 M12 6h.01 M16 6h.01 M8 10h.01 M12 10h.01 M16 10h.01 M8 14h.01 M12 14h.01 M16 14h.01"/></svg></span> Clientes</button>
+        <button class="nav sub" data-pg="users"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 0 0-16 0"/></svg></span> Usuarios</button>
+        <button class="nav sub" data-pg="branding"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2a10 10 0 0 0 0 20c.9 0 1.6-.7 1.6-1.6 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6H16a6 6 0 0 0 6-6c0-4.9-4.5-8.6-10-8.6z"/></svg></span> Marca</button>
+        <button class="nav sub" data-pg="plan"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12l4 6-10 13L2 9z M11 3 8 9l4 13 4-13-3-6 M2 9h20"/></svg></span> Plan</button>
+      </div>
+    </div>
+
+    <!-- "comercial" conserva su data-cat de siempre; hoy agrupa lo exclusivo del super admin (data-platform). -->
+    <div class="navcat collapsed" data-cat="comercial">
+      <button class="navcat-h" data-cat-toggle="comercial"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20 M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> <span class="navcat-lbl">Plataforma</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="operations" data-platform><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18z M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2 M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2 M10 6h4 M10 10h4 M10 14h4 M10 18h4"/></svg></span> Operaciones</button>
+        <button class="nav sub" data-pg="pkgmatrix" data-platform><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18 M3 12h18"/></svg></span> Empaquetado</button>
+        <button class="nav sub" data-pg="usage" data-platform><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18 M18 17V9 M13 17V5 M8 17v-3"/></svg></span> Uso</button>
+        <button class="nav sub" data-pg="announcements" data-platform><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span> Anuncios</button>
+      </div>
+    </div>
+    </div>
     <div class="spacer"></div>
-    <button class="navlearn" id="nt-navcenter" title="Tutoriales y videos de cada sección"><span class="ic">🎓</span> Centro de aprendizaje <span class="cnt"></span></button>
-    <button class="navout" id="side-logout" title="Cerrar sesión"><span class="ic">⏻</span> Salir</button>
-    <div class="poweredby" id="poweredby">
-      <span class="pb-label">Tecnología</span>
-      <span class="pb-chip"><img src="brand/ninjahubs.png" alt="Ninja Hubs"></span>
+    <div class="side-foot">
+      <button class="navlearn" id="nt-navcenter" title="Tutoriales y videos de cada sección"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 10 12 5 2 10l10 5 10-5z M6 12v5c3 3 9 3 12 0v-5"/></svg></span> Centro de aprendizaje <span class="cnt"></span></button>
+      <button class="navout" id="side-logout" title="Cerrar sesión"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9"/></svg></span> Cerrar sesión</button>
+      <div class="poweredby" id="poweredby">
+        <span class="pb-label">Tecnología</span>
+        <span class="pb-chip"><img src="brand/ninjahubs.png" alt="Ninja Hubs"></span>
+      </div>
     </div>
   </aside>
 
   <div class="main">
     <div class="ann-bar" id="ann-bar" style="display:none">
-      <span class="ann-ic">📣</span>
+      <span class="ann-ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span>
       <span class="ann-text" id="ann-text"></span>
       <button class="ann-link" id="ann-link">Ver más</button>
-      <button class="ann-x" id="ann-x" title="Ocultar">✕</button>
+      <button class="ann-x" id="ann-x" title="Ocultar" aria-label="Ocultar"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18 M6 6l12 12"/></svg></button>
     </div>
     <div class="verifybar off" id="verifybar">
-      <span>✉️ Verifica tu email para asegurar tu cuenta. Te enviamos un enlace a <b id="vb-email"></b>.</span>
+      <span class="vb-ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></svg></span>
+      <span class="vb-txt">Verifica tu email para asegurar tu cuenta. Te enviamos un enlace a <b id="vb-email"></b>.</span>
       <div class="vb-actions">
         <span class="hint" id="vb-status" style="font-size:12px"></span>
         <button class="vb-btn" id="vb-devverify" hidden title="Solo en local: verifica sin salir de aquí">Verificar ahora</button>
         <button class="vb-btn" id="vb-resend">Reenviar</button>
-        <button class="vb-x" id="vb-x" title="Ocultar">✕</button>
+        <button class="vb-x" id="vb-x" title="Ocultar" aria-label="Ocultar"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18 M6 6l12 12"/></svg></button>
       </div>
     </div>
     <div class="topbar">
-      <div><h2 id="pg-title">Dashboard</h2><div class="sub" id="pg-sub">Resumen operativo</div></div>
-      <button class="nt-topbtn hide" id="nt-topbtn" title="Tutorial guiado de esta sección"><span class="pl">▶</span><span class="lbl">Tutorial</span></button>
-      <button class="live-btn hidden" id="live-btn" type="button"><span class="dot"></span><span class="lbl">al día</span></button>
+      <div class="tb-title"><h2 id="pg-title">Dashboard</h2><div class="sub" id="pg-sub">Resumen operativo</div></div>
       <div class="sp"></div>
-      <div class="gsearch"><span class="i">⌕</span><input id="gq" placeholder="Buscar SKU, orden, ubicación…" autocomplete="off"><div class="res" id="gres"></div></div>
+      <button class="nt-topbtn hide" id="nt-topbtn" title="Tutorial guiado de esta sección"><span class="pl"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg></span><span class="lbl">Tutorial</span></button>
+      <button class="live-btn hidden" id="live-btn" type="button"><span class="dot"></span><span class="lbl">al día</span></button>
+      <div class="gsearch"><span class="i"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span><input id="gq" placeholder="Buscar SKU, orden, ubicación…" autocomplete="off"><div class="res" id="gres"></div></div>
       <div class="sel" id="sess-wrap"><label>Sesión</label>
         <select id="session">
           <option value="root">Ninja Hubs · Plataforma</option>
@@ -1315,15 +1360,16 @@
           <option value="carla">Carla · Cliente (ACME)</option>
         </select>
       </div>
-      <div class="sel" id="op-wrap"><label>Operación</label><select id="op"></select></div>
-      <div class="sel" id="seller-wrap"><label>Cliente</label><select id="seller"></select></div>
-      <div class="who"><div><div class="nm" id="who-nm">—</div><div class="rl" id="who-rl">—</div></div><span class="av" id="who-av">A</span></div>
-      <button class="btn" id="btn-mypass" title="Cambiar mi contraseña">🔑</button>
+      <div class="sel" id="op-wrap"><label for="op">Operación</label><select id="op"></select></div>
+      <div class="sel" id="seller-wrap"><label for="seller">Cliente</label><select id="seller"></select></div>
+      <!-- Modo oscuro: lo maneja theme-shell.js (data-theme en <html>, recordado en localStorage). -->
+      <button class="iconbtn" id="theme-toggle" type="button" title="Modo oscuro" aria-label="Modo oscuro" aria-pressed="false"><span class="th-moon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></span><span class="th-sun"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2 M12 20v2 M4.93 4.93l1.41 1.41 M17.66 17.66l1.41 1.41 M2 12h2 M20 12h2 M6.34 17.66l-1.41 1.41 M19.07 4.93l-1.41 1.41"/></svg></span></button>
+      <button class="btn iconbtn" id="btn-mypass" title="Cambiar mi contraseña" aria-label="Cambiar mi contraseña"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6 M15.5 7.5l3 3L22 7l-3-3"/></svg></button>
     </div>
 
     <!-- Módulo que el plan no incluye: se puede mirar, no operar. -->
     <div class="lockbar off" id="lockbar">
-      <span class="lb-ic">🔒</span>
+      <span class="lb-ic"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5z M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
       <span class="lb-txt"><b id="lb-mod">Este módulo</b> <span id="lb-why">no está incluido en tu plan</span>. Puedes recorrerlo, pero no operarlo.</span>
       <button class="lb-wa" id="lb-wa" type="button">Hablar por WhatsApp</button>
     </div>
@@ -2289,19 +2335,23 @@
 
     <!-- Vista: iniciar sesión -->
     <div class="lgview" data-view="login">
-      <h1>WMS · Panel</h1>
-      <p>Inicia sesión para administrar tu bodega.</p>
+      <div class="lg-head">
+        <span class="lg-mark"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5 M12 22V12"/></svg></span>
+        <div class="lg-app"><span class="a">Ninja</span> WMS</div>
+        <div class="lg-tag">Torre de control de tu bodega</div>
+      </div>
+      <h1>Iniciar Sesión</h1>
       <div class="err" id="lg-err"></div>
-      <label>Email</label>
+      <label for="lg-email">Correo electrónico</label>
       <input id="lg-email" type="email" placeholder="tu@empresa.cl" autocomplete="username">
-      <label>Contraseña</label>
+      <label for="lg-pass">Contraseña</label>
       <input id="lg-pass" type="password" placeholder="••••••••" autocomplete="current-password">
-      <button class="b" id="lg-btn">Entrar</button>
+      <button class="b" id="lg-btn">Entrar al panel</button>
       <div class="lgrow"><button class="lg-link" data-go="forgot">¿Olvidaste tu contraseña?</button></div>
       <div class="lgcta">
         <p class="lgcta-q">¿Todavía no tienes cuenta?</p>
         <button class="lgcta-btn" type="button" data-go="register">
-          <span>Crea tu cuenta gratis</span><span class="lgcta-ic" aria-hidden="true">→</span>
+          <span>Crea tu cuenta gratis</span><span class="lgcta-ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14 M12 5l7 7-7 7"/></svg></span>
         </button>
         <p class="lgcta-sub">Empieza gratis. Sin tarjeta. Listo en un minuto.</p>
       </div>
@@ -2377,6 +2427,7 @@
 <script src="./tutorial-guides.js"></script>
 <script src="./tutorial.js"></script>
 <script src="./app.js"></script>
+<script src="./theme-shell.js"></script>
 <script>
   /* White-label: aplica la marca servida por el backend (GET /branding).
      Defensivo: si algo falla, se queda con el logo/tema por defecto (Ninja WMS). */

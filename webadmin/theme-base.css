@@ -1,0 +1,487 @@
+/* ============================================================================
+   THEME BASE · Ninja WMS renovado
+   Tokens, tipografía y primitivos genéricos que usan todas las páginas.
+   Se carga DESPUÉS del <style> inline: a igual especificidad gana por orden,
+   así que acá se redefinen los mismos nombres de variables y clases sin tocar
+   app.js. Las hojas theme-shell.css (menú/barra) y theme-pages.css (páginas)
+   vienen después y afinan lo suyo.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   1. TOKENS · modo claro
+   Se redefinen los nombres que ya existen (el JS y el CSS inline los leen) y
+   se agregan los nuevos. Todo color de marca sale de var(--primary): la
+   operación puede cambiarlo con applyOperationBranding() (style inline en
+   <html>), y los derivados se recalculan solos porque usan color-mix.
+   ------------------------------------------------------------------------- */
+:root{
+  --font:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+
+  --bg:#F8F9FC; --surface:#FFFFFF; --surface-2:#F4F6F9; --surface-3:#EEF1F5;
+  --ink:#0B1220; --ink-2:#4B5563; --ink-3:#8A93A3;
+  --line:#ECEEF3; --line-2:#E6E8EE;
+  /* Nombres que el CSS inline usa pero nunca definió: se resuelven acá. */
+  --muted:var(--ink-3); --text:var(--ink); --sunken:var(--surface-2);
+
+  --primary:#12F093;
+  /* Texto sobre relleno --primary: tinta oscura (AA ~12:1; #fff daba 1.5:1). */
+  --on-primary:#0B1220; --th-ink:#697281;
+  --primary-ink:color-mix(in srgb, var(--primary) 72%, #0B1220);
+  --primary-wash:color-mix(in srgb, var(--primary) 10%, var(--surface));
+  --primary-line:color-mix(in srgb, var(--primary) 30%, var(--surface));
+  --primary-ring:color-mix(in srgb, var(--primary) 18%, transparent);
+
+  /* Semánticos del canvas (texto / fondo suave). */
+  --c-blue:#2A5FE4;   --c-blue-wash:#EEF3FE;
+  --c-purple:#864BEF; --c-purple-wash:#F4EFFF;
+  --c-green:#0E9F63;  --c-green-wash:#E8FCF3;
+  --c-sky:#2F7BC8;    --c-sky-wash:#EEF6FF;
+  --c-orange:#C2410C; --c-orange-wash:#FFF1EA;
+  --c-amber:#B45309;  --c-amber-wash:#FEF3C7;
+  --c-red:#E5484D;    --c-red-wash:#FDECEC;
+  --c-red-ink:#D93A3A;
+
+  /* Los nombres viejos apuntan a los semánticos nuevos. */
+  --good:var(--c-green);   --good-wash:var(--c-green-wash);
+  --warn:var(--c-amber);   --warn-wash:var(--c-amber-wash);
+  --crit:var(--c-red);     --crit-wash:var(--c-red-wash);
+  --signal:var(--c-orange);--signal-wash:var(--c-orange-wash);
+
+  /* Sombras casi planas: el volumen lo dan los bordes, no la sombra. */
+  --shadow:0 1px 2px rgba(16,24,40,.04);
+  --shadow-lg:0 24px 48px -24px rgba(16,24,40,.18);
+
+  /* Aurora deja de ser degradé: queda el verde de marca plano. Se mantiene
+     como gradiente (y no como color) porque varias reglas lo usan en
+     `background` y en `background-clip:text`. */
+  --aurora:linear-gradient(var(--primary),var(--primary));
+  --aurora-2:linear-gradient(var(--primary),var(--primary));
+  --glow-teal:transparent; --glow-violet:transparent;
+
+  --radius:16px; --r-card:16px; --r-ctl:10px; --r-pill:999px; --r-modal:18px;
+
+  --th-bg:#FAFBFC; --row-line:#F1F2F6; --row-hover:#FAFBFC;
+  --seg-bg:#F1F2F6;
+  --dark-btn:#0B1220; --dark-btn-ink:#FFFFFF;
+  --scrim:rgba(11,18,32,.42);
+  --toast-bg:#0B1220; --toast-ink:#FFFFFF;
+}
+
+/* ---------------------------------------------------------------------------
+   2. TOKENS · modo oscuro
+   Mismas dos guardas que el inline: preferencia del sistema (si el usuario no
+   eligió claro) y elección explícita con data-theme="dark". --primary se
+   mantiene; lo que cambia es el derivado de texto (más claro para leerse).
+   ------------------------------------------------------------------------- */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B111A; --surface:#121A26; --surface-2:#172131; --surface-3:#1C2839;
+    --line:#1F2A3A; --line-2:#26334A;
+    --ink:#E8EDF5; --ink-2:#A9B4C6; --ink-3:#7C8799;
+    --primary:#12F093;
+    --primary-ink:color-mix(in srgb, var(--primary) 80%, #FFFFFF);
+    --primary-wash:color-mix(in srgb, var(--primary) 12%, var(--surface));
+    --primary-line:color-mix(in srgb, var(--primary) 34%, var(--surface));
+    --c-blue:#7EA2F5;   --c-blue-wash:color-mix(in srgb,#2A5FE4 20%, #121A26);
+    --c-purple:#B794FA; --c-purple-wash:color-mix(in srgb,#864BEF 20%, #121A26);
+    --c-green:#3DDC97;  --c-green-wash:color-mix(in srgb,#0E9F63 22%, #121A26);
+    --c-sky:#7DB8EE;    --c-sky-wash:color-mix(in srgb,#2F7BC8 22%, #121A26);
+    --c-orange:#F59E6B; --c-orange-wash:color-mix(in srgb,#C2410C 22%, #121A26);
+    --c-amber:#F2B64C;  --c-amber-wash:color-mix(in srgb,#B45309 24%, #121A26);
+    --c-red:#F2787C;    --c-red-wash:color-mix(in srgb,#E5484D 20%, #121A26);
+    --c-red-ink:#F2787C;
+    --shadow:0 1px 2px rgba(0,0,0,.3);
+    --shadow-lg:0 24px 48px -24px rgba(0,0,0,.6);
+    --glow-teal:transparent; --glow-violet:transparent;
+    --th-bg:var(--surface-2); --th-ink:var(--ink-3); --row-line:var(--line); --row-hover:var(--surface-2);
+    --seg-bg:var(--surface-2);
+    --dark-btn:#E8EDF5; --dark-btn-ink:#0B1220;
+    --scrim:rgba(3,6,12,.62);
+    --toast-bg:#E8EDF5; --toast-ink:#0B1220;
+    /* Controles nativos (calendario, scroll, casillas) en su versión oscura. */
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0B111A; --surface:#121A26; --surface-2:#172131; --surface-3:#1C2839;
+  --line:#1F2A3A; --line-2:#26334A;
+  --ink:#E8EDF5; --ink-2:#A9B4C6; --ink-3:#7C8799;
+  --primary:#12F093;
+  --primary-ink:color-mix(in srgb, var(--primary) 80%, #FFFFFF);
+  --primary-wash:color-mix(in srgb, var(--primary) 12%, var(--surface));
+  --primary-line:color-mix(in srgb, var(--primary) 34%, var(--surface));
+  --c-blue:#7EA2F5;   --c-blue-wash:color-mix(in srgb,#2A5FE4 20%, #121A26);
+  --c-purple:#B794FA; --c-purple-wash:color-mix(in srgb,#864BEF 20%, #121A26);
+  --c-green:#3DDC97;  --c-green-wash:color-mix(in srgb,#0E9F63 22%, #121A26);
+  --c-sky:#7DB8EE;    --c-sky-wash:color-mix(in srgb,#2F7BC8 22%, #121A26);
+  --c-orange:#F59E6B; --c-orange-wash:color-mix(in srgb,#C2410C 22%, #121A26);
+  --c-amber:#F2B64C;  --c-amber-wash:color-mix(in srgb,#B45309 24%, #121A26);
+  --c-red:#F2787C;    --c-red-wash:color-mix(in srgb,#E5484D 20%, #121A26);
+  --c-red-ink:#F2787C;
+  --shadow:0 1px 2px rgba(0,0,0,.3);
+  --shadow-lg:0 24px 48px -24px rgba(0,0,0,.6);
+  --glow-teal:transparent; --glow-violet:transparent;
+  --th-bg:var(--surface-2); --th-ink:var(--ink-3); --row-line:var(--line); --row-hover:var(--surface-2);
+  --seg-bg:var(--surface-2);
+  --dark-btn:#E8EDF5; --dark-btn-ink:#0B1220;
+  --scrim:rgba(3,6,12,.62);
+  --toast-bg:#E8EDF5; --toast-ink:#0B1220;
+  color-scheme:dark;
+}
+:root[data-theme="light"]{color-scheme:light}
+
+/* ---------------------------------------------------------------------------
+   3. BASE Y TIPOGRAFÍA · Inter en todo
+   ------------------------------------------------------------------------- */
+body{font-family:var(--font);font-size:14px;line-height:1.5;color:var(--ink);
+  background:var(--bg);background-attachment:scroll}
+h1,h2,h3,h4{font-family:var(--font);font-weight:700;letter-spacing:-.02em}
+button,input,select,textarea{font-family:inherit}
+a{color:var(--primary-ink)}
+
+/* Todo lo que el inline pintaba con Sora o IBM Plex Mono pasa a Inter. Los
+   números conservan ancho fijo con tabular-nums, que es lo que aportaba la
+   mono. Los bloques de código (.mcpcode, .mcpkey) quedan en monoespaciada. */
+.brand .n,.brand .logo,.aid-kpi .n,.dcard .v,.kpi .v,.alert .n,.mtile .mv,
+.opcard .oi,.opcard .on,.lh-name,.loginbox h1,.lgview h1,.paywall h4,
+.plan-hero .nm,.ptier .tn,.onb-head h3,.pkg .pname{
+  font-family:var(--font);letter-spacing:-.02em}
+.mono,.side .navgroup,thead th,td.sku,td.mono2,td.num,.loc-chip,.thist-t,
+.manifest .mf-idn,.manifest .mf-tbl td.m,.locc .code,.form input.mono2,
+.short-rec .rc,.ovl-sku,.ptier .tp,.onb-prog .pct,.pkg .secrow td,
+.pkg .pricegrid label,.pkg .pprice,.pkg .lim,.ordline .ol-sku,.ac-it .ac-sku{
+  font-family:var(--font);font-variant-numeric:tabular-nums}
+
+.muted{color:var(--ink-3);font-size:13px}
+.hint{font-size:12.5px;color:var(--ink-3);font-weight:500}
+.ferr{color:var(--crit);font-size:13px;font-weight:600}
+.sec-t{font-size:11px;font-weight:600;color:var(--ink-3);letter-spacing:.07em;text-transform:uppercase}
+.empty{padding:32px 24px;text-align:center;color:var(--ink-3);font-size:14px}
+.warnrow{color:var(--crit)!important} /* ya venía con !important en el inline; se conserva igual */
+
+/* ---------------------------------------------------------------------------
+   4. TARJETAS
+   ------------------------------------------------------------------------- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow)}
+.card .h{padding:18px 22px;border-bottom:1px solid var(--line);gap:12px;min-height:60px}
+.card .h h3{font-size:16px;font-weight:700;letter-spacing:-.02em;color:var(--ink)}
+.card .b{padding:20px 22px}
+/* Una tabla dentro de la tarjeta llega a los bordes redondeados sin asomarse. */
+.card>.tablewrap:last-child,.card>table:last-child{border-radius:0 0 var(--r-card) var(--r-card)}
+
+/* ---------------------------------------------------------------------------
+   5. KPIs · tarjeta amplia, rótulo gris y cifra grande
+   ------------------------------------------------------------------------- */
+.kpis{gap:16px;margin-bottom:20px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
+  padding:20px 22px;box-shadow:var(--shadow);transition:border-color .15s ease}
+/* Fuera la franja de color lateral y el salto al pasar el cursor del look anterior. */
+.kpi::before{display:none}
+.kpi:hover{transform:none;box-shadow:var(--shadow);border-color:var(--line-2)}
+.kpi .l{font-size:14.5px;font-weight:500;color:var(--ink-2);text-transform:none;letter-spacing:0;line-height:1.35}
+.kpi .v{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-top:10px;line-height:1.05;color:var(--ink);font-variant-numeric:tabular-nums}
+.kpi .d{font-size:13px;margin-top:8px;color:var(--ink-3)}
+.kpi .d b.up{color:var(--good)} .kpi .d b.dn{color:var(--crit)}
+
+/* Variantes de cifra que comparten el mismo lenguaje. */
+.dcard{border-radius:var(--r-card);box-shadow:var(--shadow);border-color:var(--line);padding:20px 22px}
+.dcard .l{font-size:13px;font-weight:500;color:var(--ink-2);text-transform:none;letter-spacing:0}
+.dcard .v{font-size:30px;font-weight:800}
+.mtile{border-radius:12px;background:var(--surface);border-color:var(--line)}
+.mtile .ml{font-size:13px;font-weight:500;color:var(--ink-2);text-transform:none;letter-spacing:0}
+.mtile .mv{font-size:28px;font-weight:800;letter-spacing:-.02em}
+.alert{border-radius:var(--r-card);box-shadow:var(--shadow)}
+.alert .t{font-size:13px;font-weight:500;color:var(--ink-2);text-transform:none;letter-spacing:0}
+.alert .n{font-size:28px;font-weight:800;letter-spacing:-.02em}
+
+/* ---------------------------------------------------------------------------
+   6. BOTONES
+   Primario relleno de marca; secundario blanco con borde; .dark negro;
+   peligro en rojo. Alto 42px, radio 10.
+   ------------------------------------------------------------------------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;
+  padding:0 16px;border-radius:var(--r-ctl);border:1px solid var(--line-2);background:var(--surface);
+  color:var(--ink);font-size:14px;font-weight:600;line-height:1.2;white-space:nowrap;
+  box-shadow:none;transition:background .12s ease,border-color .12s ease,color .12s ease,filter .12s ease}
+.btn:hover{background:var(--surface-2);border-color:var(--line-2)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled,.mini:disabled{opacity:.55;cursor:not-allowed;transform:none}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:var(--on-primary);font-weight:700;box-shadow:none}
+.btn.pri:hover{background:var(--primary);filter:brightness(.95);transform:none;box-shadow:none}
+.btn.dark{background:var(--dark-btn);border-color:var(--dark-btn);color:var(--dark-btn-ink)}
+.btn.dark:hover{background:var(--dark-btn);filter:brightness(1.15)}
+.btn.danger{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%, var(--surface));background:var(--surface)}
+.btn.danger:hover{background:var(--crit-wash);border-color:var(--crit)}
+.btn.pri.danger{background:var(--crit);border-color:var(--crit);color:#fff}
+.btn svg,.mini svg{width:16px;height:16px;flex:none}
+
+.mini{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;
+  padding:0 11px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);
+  color:var(--ink-2);font-size:12.5px;font-weight:600;white-space:nowrap;line-height:1.2}
+.mini:hover{background:var(--surface-2);color:var(--ink)}
+.mini.pri{background:var(--primary);border-color:var(--primary);color:var(--on-primary);font-weight:700}
+.mini.pri:hover{background:var(--primary);filter:brightness(.95);color:var(--on-primary)}
+.mini.danger{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 35%, var(--surface))}
+.mini.danger:hover{background:var(--crit-wash)}
+td .rowacts{gap:6px}
+
+/* Enlace-botón del login y afines. */
+.lg-link{color:var(--primary-ink)}
+
+/* ---------------------------------------------------------------------------
+   7. CAMPOS · inputs, selects y textarea
+   Solo las clases/contenedores que ya existen: un selector de elemento
+   global le ganaría a reglas específicas (buscadores con ícono, login) y las
+   desarmaría.
+   ------------------------------------------------------------------------- */
+select,textarea,input.txt,.inp,
+.form .fld input,.form .fld select,.form .fld textarea,
+.fld>input,.fld>select,.fld>textarea,
+.field input,.field select,
+.ordcli-f select,.recline .rc input,.recline .rc select,.cotejo-in,
+.dl-row input,.fgrid input,.sendrow input,#ei-tbl input,
+.ordline select,.ordline input,.aid-selbox{
+  font-family:inherit;font-size:14px;font-weight:500;color:var(--ink);
+  background-color:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-ctl);
+  min-height:42px;padding:9px 12px;line-height:1.35;
+  transition:border-color .12s ease,box-shadow .12s ease}
+textarea{min-height:88px;font-size:14px;line-height:1.5}
+/* Chevron propio en los select simples. El selector lleva dos :not() a
+   propósito: sube la especificidad a (0,2,1) para ganarle a las reglas del
+   inline que usan el atajo `background:` (que borraría la imagen) sin tener
+   que usar !important. Los select múltiples conservan su forma nativa. */
+select:not([multiple]):not([size]){appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:34px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238A93A3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;background-size:14px}
+select:disabled{opacity:.55;cursor:not-allowed}
+/* Campos chicos que ya tenían su tamaño propio. */
+.inpmini{min-height:32px;padding:4px 8px;font-size:13px}
+#ei-tbl input,.recline .rc input,.recline .rc select,.cotejo-in{min-height:36px;padding:6px 10px;font-size:13.5px}
+.ordline .ol-qty{border-color:var(--line-2)}
+.ordline .ol-sku.bad,.form input.bad{border-color:var(--crit);background:var(--crit-wash)}
+::placeholder{color:var(--ink-3);opacity:1}
+
+/* Foco: borde de marca y anillo suave, sin el contorno del navegador. */
+select:focus,textarea:focus,input.txt:focus,.inp:focus,
+.form .fld input:focus,.form .fld select:focus,.form .fld textarea:focus,
+.fld>input:focus,.fld>select:focus,.fld>textarea:focus,
+.field input:focus,.field select:focus,.ordcli-f select:focus,
+.recline .rc input:focus,.recline .rc select:focus,.cotejo-in:focus,
+.dl-row input:focus,.fgrid input:focus,.sendrow input:focus,#ei-tbl input:focus,
+.ordline select:focus,.ordline input:focus,.aid-selbox:focus,
+.search input:focus,.aid-prompt input:focus{
+  outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
+
+/* Casillas y radios toman el color de marca. */
+input[type=checkbox],input[type=radio]{accent-color:var(--primary)}
+
+/* Buscador de toolbar: campo de 42px con la lupa adentro. */
+.search input{min-height:42px;padding:0 14px 0 38px;font-size:14px;border:1px solid var(--line-2);
+  border-radius:var(--r-ctl);background:var(--surface);color:var(--ink)}
+.search .i{left:13px;color:var(--ink-3)}
+.toolbar{gap:12px;margin-bottom:18px}
+
+/* Formularios */
+.form{gap:16px}
+.form .fld,.fld{gap:6px}
+.form .fld label,.fld>span,.field label,.fgrid label{
+  font-size:13px;font-weight:600;color:var(--ink-2);text-transform:none;letter-spacing:0}
+.form .fld .hint{font-size:12.5px}
+.form .row2{gap:14px}
+.form .acts{gap:10px;margin-top:8px}
+.form .ferr{min-height:18px}
+.chipin{font-size:13px;font-weight:600;color:var(--ink-2)}
+
+/* ---------------------------------------------------------------------------
+   8. TABLAS
+   Cabecera gris muy clara con rótulos en mayúscula pequeña; filas altas con
+   una línea superior tenue y hover apenas marcado.
+   ------------------------------------------------------------------------- */
+table{font-size:14px}
+thead th{background:var(--th-bg);font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--th-ink);padding:14px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+tbody td{padding:12px;border-bottom:1px solid var(--row-line);color:var(--ink-2);height:58px;vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background .1s ease}
+tbody tr:hover{background:var(--row-hover)}
+tbody tr.click:hover{background:var(--row-hover)}
+/* Los códigos no se parten en dos líneas (ACME-\n1015). */
+td.sku,td.mono2{font-weight:600;color:var(--ink);white-space:nowrap}
+td.num{font-weight:600;color:var(--ink)}
+#ord-body tr.selected{background:var(--primary-wash)}
+.tablewrap{overflow-x:auto}
+.card .tablewrap thead th:first-child,.card table thead th:first-child,
+.card .tablewrap tbody td:first-child,.card table tbody td:first-child{padding-left:20px}
+.card .tablewrap thead th:last-child,.card table thead th:last-child,
+.card .tablewrap tbody td:last-child,.card table tbody td:last-child{padding-right:20px}
+
+/* Matriz (facturación, uso): misma familia, más compacta porque es densa. */
+table.matrix{font-size:13.5px}
+table.matrix th,table.matrix td{padding:12px 14px;border-bottom:1px solid var(--row-line)}
+table.matrix thead th{background:var(--th-bg);font-size:11px;font-weight:600;letter-spacing:.07em;color:var(--th-ink)}
+table.matrix tbody tr:hover{background:var(--row-hover)}
+table.matrix tfoot td{border-top:1px solid var(--line-2);color:var(--ink)}
+table.matrix td.z{color:var(--ink-3)}
+
+/* Tablas secundarias del inline que ya tenían su estilo: solo se alinean. */
+.cotejo-tbl th,.short-t th,.agj-t th,.aid-tbl th,.manifest .mf-tbl th{
+  font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.short-t td,.cotejo-tbl td{border-bottom-color:var(--row-line)}
+
+/* ---------------------------------------------------------------------------
+   9. CHIPS DE ESTADO (tabla) · pastilla suave con punto
+   Recibida celeste, Reservada naranjo, Picking/Pickeada morado, Empacada
+   azul, Despachada verde, Cancelada rojo. Disponible/ok verde; Asignada ámbar.
+   ------------------------------------------------------------------------- */
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:25px;padding:0 10px;border-radius:var(--r-pill);
+  font-size:12.5px;font-weight:600;white-space:nowrap;line-height:1.2;background:var(--surface-3);color:var(--ink-2)}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.st-RECEIVED{background:var(--c-sky-wash);color:var(--c-sky)}
+.st-RESERVED{background:var(--c-orange-wash);color:var(--c-orange)}
+.st-ALLOCATED{background:var(--c-amber-wash);color:var(--c-amber)}
+.st-PICKING,.st-PICKED{background:var(--c-purple-wash);color:var(--c-purple)}
+.st-PACKED{background:var(--c-blue-wash);color:var(--c-blue)}
+.st-SHIPPED{background:var(--c-green-wash);color:var(--c-green)}
+.st-AVAILABLE,.st-ok{background:var(--c-green-wash);color:var(--c-green)}
+.st-CANCELLED{background:var(--c-red-wash);color:var(--c-red)}
+/* El punto hereda el color del texto de cada estado. */
+.st-RECEIVED .dot,.st-RESERVED .dot,.st-ALLOCATED .dot,.st-PICKING .dot,.st-PICKED .dot,
+.st-PACKED .dot,.st-SHIPPED .dot,.st-AVAILABLE .dot,.st-ok .dot,.st-CANCELLED .dot{background:currentColor}
+
+/* Etiquetas afines: ubicación, rol, pastilla genérica, deadline. */
+.loc-chip{font-size:12px;font-weight:600;background:var(--surface-2);border:1px solid var(--line);
+  padding:2px 8px;border-radius:6px;color:var(--ink-2)}
+.rolechip{display:inline-flex;align-items:center;min-height:22px;padding:0 9px;border-radius:var(--r-pill);font-size:11.5px;font-weight:600}
+.r-PLATFORM_ADMIN{background:var(--c-orange-wash);color:var(--c-orange)}
+.r-ADMIN{background:var(--primary-wash);color:var(--primary-ink)}
+.r-SUPERVISOR{background:var(--c-blue-wash);color:var(--c-blue)}
+.r-OPERATOR{background:var(--surface-3);color:var(--ink-2)}
+.r-CLIENT{background:var(--c-purple-wash);color:var(--c-purple)}
+.pill{display:inline-flex;align-items:center;min-height:20px;padding:0 8px;border-radius:var(--r-pill);font-size:11.5px;font-weight:600}
+.pill.ok{background:var(--good-wash);color:var(--good)}
+.pill.warn{background:var(--warn-wash);color:var(--warn)}
+.pill.neutral{background:var(--surface-3);color:var(--ink-2)}
+.dpill{border-radius:var(--r-pill);font-size:11.5px;font-weight:600;padding:2px 9px}
+.dpill.crit{color:#fff;background:var(--crit)}
+.dl{font-size:12px;font-weight:600;padding:3px 9px;border-radius:var(--r-pill)}
+.dl-vencido{color:#fff;background:var(--crit)}
+.dl-critico{color:var(--crit);background:var(--crit-wash)}
+.dl-riesgo{color:var(--warn);background:var(--warn-wash)}
+.dl-ok{color:var(--ink-3);background:var(--surface-2)}
+.short-hint{color:var(--warn);background:var(--warn-wash)}
+
+/* Badge: pastilla roja suave de 20px (contadores del menú y afines). El
+   inline pintaba el badge del menú con rojo sólido; acá se alinea al canvas. */
+.badge,.nav .badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;
+  padding:0 6px;border-radius:var(--r-pill);background:var(--c-red-wash);color:var(--c-red-ink);
+  font-size:11.5px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+/* Un contador vacío no debe verse como una pastilla roja sin número. */
+.badge:empty{display:none}
+.chat-unread{background:var(--c-red-wash);color:var(--c-red-ink);font-size:11.5px;min-width:20px;height:20px;
+  display:inline-flex;align-items:center;justify-content:center;padding:0 6px}
+
+/* ---------------------------------------------------------------------------
+   10. PASTILLAS DE FILTRO (.fchip) · 36px con borde y punto; activa rellena
+   de marca con texto blanco ("Todas: 12" del canvas).
+   ------------------------------------------------------------------------- */
+.filters{gap:10px}
+.fchip{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:0 14px;border-radius:var(--r-pill);
+  border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2);font-size:13.5px;font-weight:600;
+  line-height:1.2;box-shadow:none;transition:background .12s ease,border-color .12s ease,color .12s ease}
+.fchip::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex:none}
+.fchip:hover{border-color:var(--ink-3);color:var(--ink)}
+/* Punto con el color del estado que filtra (Órdenes, Recepción). */
+.fchip[data-f="RECEIVED"]::before{background:var(--c-sky)}
+.fchip[data-f="ALLOCATED"]::before,.fchip[data-f="PENDING"]::before{background:var(--c-amber)}
+.fchip[data-f="RESERVED"]::before,.fchip[data-f="PARTIAL"]::before{background:var(--c-orange)}
+.fchip[data-f="PICKING"]::before,.fchip[data-f="PICKED"]::before{background:var(--c-purple)}
+.fchip[data-f="PACKED"]::before{background:var(--c-blue)}
+.fchip[data-f="SHIPPED"]::before{background:var(--c-green)}
+.fchip[data-f="CANCELLED"]::before,.fchip.dl-v::before{background:var(--c-red)}
+.fchip.dl-r::before{background:var(--c-amber)}
+.fchip[data-f="ALL"]::before{background:var(--primary)}
+.fchip.on{background:var(--primary);border-color:var(--primary);color:var(--on-primary);box-shadow:none}
+.fchip.on::before{background:#fff}
+.fcount{font-size:12px;font-weight:700;padding:2px 7px;border-radius:var(--r-pill);background:var(--surface-3);color:var(--ink-2)}
+.fchip.on .fcount{background:rgba(11,18,32,.12);color:var(--on-primary)}
+.fchip.dlsep{margin-left:8px;padding-left:14px;border-left:1px solid var(--line-2);border-radius:var(--r-pill)}
+.fchip.dl-v{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 35%, var(--surface))}
+.fchip.dl-r{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%, var(--surface))}
+.fchip.dl-v.on{background:var(--crit);border-color:var(--crit);color:#fff;box-shadow:none}
+.fchip.dl-r.on{background:var(--warn);border-color:var(--warn);color:#fff;box-shadow:none}
+
+/* Chips de sugerencia (Dashboard AI y afines): misma pastilla, sin punto. */
+.aid-chips button,.aid-qs button{min-height:34px;border:1px solid var(--line-2);border-radius:var(--r-pill);
+  background:var(--surface);color:var(--ink-2);font-size:13px;font-weight:500}
+.aid-chips button:hover,.aid-qs button:hover{border-color:var(--primary);color:var(--ink)}
+
+/* ---------------------------------------------------------------------------
+   11. SEGMENTADOS · .billtabs/.segbtn y .viewtog
+   Se elige UN solo lenguaje para todo el panel: segmentado gris con la opción
+   activa en blanco. .billtabs se usa tanto para pestañas (Facturación) como
+   para interruptores chicos (24 h / 7 días), y el segmentado sirve a ambos.
+   ------------------------------------------------------------------------- */
+.billtabs{display:inline-flex;gap:2px;background:var(--seg-bg);border:0;border-radius:12px;padding:4px;
+  /* Integración: con muchas opciones (Asignaciones, #asg-type) desbordaba la
+     página a 1024 px; se deja envolver en vez de empujar el ancho. */
+  flex-wrap:wrap;max-width:100%}
+.segbtn{min-height:34px;padding:0 16px;border-radius:9px;border:0;background:transparent;color:var(--ink-2);
+  font-size:13.5px;font-weight:600;white-space:nowrap;transition:background .12s ease,color .12s ease}
+.segbtn:hover{color:var(--ink)}
+.segbtn.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(16,24,40,.08)}
+.viewtog{display:inline-flex;gap:2px;background:var(--seg-bg);border:0;border-radius:12px;padding:4px;overflow:visible}
+.viewtog .vt{min-height:34px;padding:0 14px;border:0;border-radius:9px;background:transparent;color:var(--ink-2);font-size:13.5px;font-weight:600}
+.viewtog .vt:last-child{border-right:0}
+.viewtog .vt.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(16,24,40,.08)}
+
+/* ---------------------------------------------------------------------------
+   12. MODAL Y DRAWER
+   El botón cerrar va acotado a .dh: .x también es el subtítulo de .alert.
+   ------------------------------------------------------------------------- */
+.drawer,.modal{background:var(--scrim)}
+.modal .panel{border-radius:var(--r-modal);border:1px solid var(--line);background:var(--surface);
+  box-shadow:0 32px 64px -24px rgba(11,18,32,.35)}
+.drawer .panel{background:var(--surface);border-left:1px solid var(--line);box-shadow:-24px 0 48px -24px rgba(11,18,32,.3)}
+.drawer.ordview .panel{border-radius:var(--r-modal);border:1px solid var(--line);box-shadow:0 32px 64px -24px rgba(11,18,32,.35)}
+.dh{padding:18px 22px;border-bottom:1px solid var(--line);gap:12px}
+.dh h3{font-size:16px;font-weight:700;letter-spacing:-.02em;color:var(--ink)}
+.db{padding:20px 22px}
+.dh .x{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
+  padding:0;border-radius:var(--r-ctl);border:1px solid var(--line-2);background:var(--surface);
+  color:var(--ink-3);font-size:14px;line-height:1;transition:background .12s ease,color .12s ease}
+.dh .x:hover{background:var(--surface-2);color:var(--ink)}
+.drawer.ordview .db{padding:0}
+.ordv-col.left{background:var(--surface-2)}
+.kv{border-bottom:1px solid var(--row-line);font-size:14px;padding:9px 0}
+.kv span{color:var(--ink-3)} .kv b{color:var(--ink);font-weight:600}
+.tl li::before{background:var(--primary);border-color:var(--surface)}
+
+/* Autocompletar (SKU) y popovers: tarjeta blanca radio 12. */
+.ac-box{border-radius:12px;border-color:var(--line);box-shadow:var(--shadow-lg);padding:6px}
+.ac-it{border-radius:8px}
+.ac-it b{color:var(--primary-ink)}
+
+/* ---------------------------------------------------------------------------
+   13. TOAST Y TOOLTIP · oscuros, radio 12
+   El toast mantiene su color fijo: app.js escribe solo el texto.
+   ------------------------------------------------------------------------- */
+.toast .i{background:var(--toast-bg);color:var(--toast-ink);border-radius:12px;padding:12px 18px;
+  font-size:14px;font-weight:600;box-shadow:0 18px 40px -16px rgba(11,18,32,.45)}
+.tooltip{background:var(--toast-bg);color:var(--toast-ink);border-radius:8px;font-size:12.5px;font-weight:500;padding:7px 10px}
+
+/* ---------------------------------------------------------------------------
+   14. SCROLLBARS Y FOCO VISIBLE
+   ------------------------------------------------------------------------- */
+*{scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:999px;border:3px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--ink-3);background-clip:padding-box;border:3px solid transparent}
+
+/* Foco por teclado: anillo de marca en cualquier control, sin molestar al clic. */
+button:focus-visible,a:focus-visible,[tabindex]:focus-visible,
+.btn:focus-visible,.mini:focus-visible,.fchip:focus-visible,.segbtn:focus-visible,.dh .x:focus-visible{
+  outline:2px solid var(--primary);outline-offset:2px}
+
+::selection{background:color-mix(in srgb,var(--primary) 28%, transparent)}
