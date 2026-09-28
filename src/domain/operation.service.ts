@@ -14,7 +14,7 @@ export class OperationService {
     private readonly ids: IdGenerator,
   ) {}
 
-  async create(input: { id?: string; name: string; track?: 'brand' | 'operator' | null; selfServe?: boolean; planId?: string | null; trialPlan?: string | null; trialEndsAt?: string | null; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null; createdAt?: string | null }): Promise<Operation> {
+  async create(input: { id?: string; name: string; track?: 'brand' | 'operator' | null; selfServe?: boolean; planId?: string | null; trialPlan?: string | null; trialEndsAt?: string | null; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null; leadSource?: string | null; createdAt?: string | null }): Promise<Operation> {
     if (!input.name || !input.name.trim()) throw new ValidationError('La operación necesita un nombre');
     const id = input.id ?? this.ids.next();
     if (await this.operations.findById(id)) throw new ValidationError(`Ya existe la operación ${id}`);
@@ -30,6 +30,7 @@ export class OperationService {
       contactName: input.contactName ?? null,
       contactEmail: input.contactEmail ?? null,
       contactPhone: input.contactPhone ?? null,
+      leadSource: input.leadSource ?? null,
       createdAt: input.createdAt ?? null,
     };
     await this.operations.save(operation);

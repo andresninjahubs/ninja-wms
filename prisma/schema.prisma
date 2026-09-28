@@ -33,6 +33,8 @@ model Operation {
   contactName  String?
   contactEmail String?
   contactPhone String?
+  /// De dónde vino el registro (campaña): "utm_source=google&utm_campaign=wms-cl&gclid=…" o null.
+  leadSource   String?
   createdAt   DateTime  @default(now())
 
   packagingMaterials PackagingMaterial[] // FK PackagingMaterial → Operation (G8)

@@ -302,6 +302,19 @@ table{font-size:14px}
 thead th{background:var(--th-bg);font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
   color:var(--th-ink);padding:14px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
 tbody td{padding:12px;border-bottom:1px solid var(--row-line);color:var(--ink-2);height:58px;vertical-align:middle}
+/* En pantallas de portátil (hasta 1599px) las tablas van un punto más
+   chicas y con menos aire lateral, para que las columnas quepan sin scroll
+   horizontal, igual que en el front anterior (13px). */
+@media(max-width:1599px){
+  table{font-size:13.5px}
+  thead th{padding:12px 10px}
+  tbody td{padding:11px 10px;height:54px}
+}
+@media(max-width:1379px){
+  table{font-size:13px}
+  thead th{padding:11px 8px;letter-spacing:.05em}
+  tbody td{padding:10px 8px}
+}
 tbody tr:last-child td{border-bottom:0}
 tbody tr{transition:background .1s ease}
 tbody tr:hover{background:var(--row-hover)}

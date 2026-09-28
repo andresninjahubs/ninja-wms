@@ -299,6 +299,7 @@ export class PrismaOperationRepository implements OperationRepository {
       contactName: o.contactName ?? null,
       contactEmail: o.contactEmail ?? null,
       contactPhone: o.contactPhone ?? null,
+      leadSource: o.leadSource ?? null,
       createdAt: o.createdAt ? (o.createdAt as Date).toISOString() : null,
     };
   }
@@ -318,6 +319,7 @@ export class PrismaOperationRepository implements OperationRepository {
       contactName: op.contactName ?? null,
       contactEmail: op.contactEmail ?? null,
       contactPhone: op.contactPhone ?? null,
+      leadSource: op.leadSource ?? null,
       // `createdAt` NO viaja en el update: lo pone la base al crear y reescribirlo
       // desde el dominio movería la fecha de alta en cada guardado.
     };

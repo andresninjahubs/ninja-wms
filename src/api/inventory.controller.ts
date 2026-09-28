@@ -137,8 +137,23 @@ export class InventoryController {
   /** Movimientos del seller (actividad reciente / recepción). */
   @Get('movements')
   @RequirePermission('stock:read')
-  movements(@Param('sellerId') sellerId: string, @Query('limit') limit?: string) {
-    return this.wms.listMovements(sellerId, limit ? Number(limit) : undefined);
+  async movements(@Param('sellerId') sellerId: string, @Query('limit') limit?: string) {
+    const movs = await this.wms.listMovements(sellerId, limit ? Number(limit) : undefined);
+    // El actor es un id de usuario. Un cliente (rol CLIENT) no puede listar los usuarios
+    // de la operación, así que el nombre legible viaja resuelto desde acá.
+    const nombres = await this.nombresDeActores(movs.map((m) => m.actor));
+    return movs.map((m) => ({ ...m, actorName: nombres.get(m.actor) ?? null }));
+  }
+
+  private async nombresDeActores(ids: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const reservados = new Set(['system', 'copiloto', 'agente']); // los rotula el panel
+    for (const id of new Set(ids.filter(Boolean))) {
+      if (reservados.has(id)) continue;
+      const u = await this.wms.getUser(id).catch(() => null);
+      if (u) out.set(id, u.name);
+    }
+    return out;
   }
 
   /** Trazabilidad por número de serie. ?sku= filtra; ?serial= busca uno puntual. */
@@ -161,6 +176,7 @@ export class InventoryController {
   @RequirePermission('stock:read')
   async exportMovements(@Param('sellerId') sellerId: string, @Res() res: Response) {
     const movs = await this.wms.listMovements(sellerId, 1_000_000);
+    const nombres = await this.nombresDeActores(movs.map((m) => m.actor));
     // Resuelve el código legible de cada ubicación (evita mostrar UUIDs).
     const locCode = new Map<string, string>();
     for (const id of new Set(movs.map((m) => m.locationId).filter(Boolean))) {
@@ -180,7 +196,7 @@ export class InventoryController {
         m.qtyDelta,
         m.uom,
         m.reference || '',
-        m.actor || '',
+        nombres.get(m.actor) || m.actor || '',
         m.id,
       ]),
     ];

@@ -19,6 +19,12 @@ export class HealthController {
     const raw = process.env.HIDDEN_MODULES;
     const defaults = ['voz', 'costos', 'plan', 'aiaudit', 'asignaciones', 'agente', 'agdiario', 'agalertas'];
     const hidden = raw == null ? defaults : raw.split(',').map((s) => s.trim()).filter(Boolean);
-    return { hiddenModules: hidden, hideForPlatformAdmin: process.env.HIDDEN_MODULES_FOR_PLATFORM === 'true' };
+    return {
+      hiddenModules: hidden, hideForPlatformAdmin: process.env.HIDDEN_MODULES_FOR_PLATFORM === 'true',
+      // Medición de campañas (opcional, por env): GTAG_ID = "G-XXXX" o "AW-XXXX";
+      // ADS_CONVERSION = "AW-XXXX/etiqueta" de la conversión "Registro" en Google Ads.
+      gtagId: (process.env.GTAG_ID || '').trim() || null,
+      adsConversion: (process.env.ADS_CONVERSION || '').trim() || null,
+    };
   }
 }

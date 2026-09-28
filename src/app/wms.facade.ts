@@ -2868,8 +2868,8 @@ export class WmsFacade {
     if (track === 'operator') {
       steps.push({ key: 'create_client', label: 'Crea tu primer cliente', done: sellers.length > 0, link: 'clients' });
     }
-    steps.push({ key: 'create_location', label: 'Crea tu primera ubicación', done: locs.length > 0, link: 'locations' });
     steps.push({ key: 'create_product', label: 'Crea tu primer producto', done: hasSku, link: 'products' });
+    steps.push({ key: 'create_location', label: 'Crea tus ubicaciones de recepción y almacenaje', done: locs.length > 0, link: 'locations' });
     steps.push({ key: 'receive_stock', label: 'Ingresa stock a bodega', done: hasReceipt, link: 'inbound' });
     steps.push({ key: 'create_order', label: 'Crea tu primera orden', done: hasOrder, link: 'orders' });
     steps.push({ key: 'ship_order', label: 'Despacha tu primera orden', done: hasShipped, link: 'orders' });
@@ -3291,7 +3291,7 @@ export class WmsFacade {
    * por defecto; emite el token de verificación, envía el correo y devuelve un JWT para
    * aterrizar dentro del producto de inmediato. El email nace SIN verificar.
    */
-  async registerSelfServe(input: { companyName: string; name: string; email: string; phone: string; password: string; track: 'brand' | 'operator' }): Promise<{ token: string; user: User; operationId: string; sellerId: string | null; verification: { sent: boolean; devToken?: string } }> {
+  async registerSelfServe(input: { companyName: string; name: string; email: string; phone: string; password: string; track: 'brand' | 'operator'; source?: string | null }): Promise<{ token: string; user: User; operationId: string; sellerId: string | null; verification: { sent: boolean; devToken?: string } }> {
     const companyName = (input.companyName || '').trim();
     const name = (input.name || '').trim();
     const email = (input.email || '').trim().toLowerCase();
@@ -3313,6 +3313,7 @@ export class WmsFacade {
       // El formulario completo queda guardado con la cuenta: la plataforma tiene que
       // poder llamar a quien se registró sin depender de que el correo llegue.
       contactName: name, contactEmail: email, contactPhone: phone,
+      leadSource: (input.source || '').trim().slice(0, 400) || null,
       createdAt: this.nowIso(),
     });
     // 2) Admin de la operación (email sin verificar todavía).
@@ -3327,8 +3328,34 @@ export class WmsFacade {
     }
     // 4) Verificación por correo.
     const verification = await this.issueVerification(user);
-    // 5) Auto-login.
+    // 5) Aviso inmediato al equipo comercial (no bloquea el alta si falla).
+    void this.avisarNuevoLead({ companyName, name, email, phone, track, source: operation.leadSource ?? null, operationId: operation.id });
+    // 6) Auto-login.
     return { token: signToken(user), user: safeUser(user), operationId: operation.id, sellerId, verification };
+  }
+
+  /**
+   * Cada cuenta nueva se avisa al instante por dos vías opcionales, ambas por env:
+   *   LEAD_WEBHOOK_URL   → POST JSON (sirve para Make/Zapier/n8n → WhatsApp o Slack)
+   *   LEAD_NOTIFY_EMAIL  → correo con los datos (si hay SMTP configurado)
+   * El compromiso comercial es contactar en menos de una hora; sin aviso no hay hora.
+   */
+  private async avisarNuevoLead(lead: { companyName: string; name: string; email: string; phone: string; track: string; source: string | null; operationId: string }): Promise<void> {
+    const at = this.nowIso();
+    const url = (process.env.LEAD_WEBHOOK_URL || '').trim();
+    if (url) {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Ninja-Event': 'lead.created' },
+          body: JSON.stringify({ event: 'lead.created', at, ...lead }), signal: ctrl.signal });
+      } catch { /* el alta no depende del aviso */ } finally { clearTimeout(t); }
+    }
+    const to = (process.env.LEAD_NOTIFY_EMAIL || '').trim();
+    if (to) {
+      const cuerpo = `Nueva cuenta Free en Ninja WMS\n\nEmpresa: ${lead.companyName}\nContacto: ${lead.name}\nCelular: ${lead.phone}\nEmail: ${lead.email}\nSe registró como: ${lead.track === 'operator' ? 'Operador 3PL' : 'Marca / tienda'}\nOrigen: ${lead.source || 'directo'}\nHora: ${at}\n\nWhatsApp: https://wa.me/${lead.phone.replace(/\D/g, '')}`;
+      await this.sendMail(to, `Nuevo lead WMS: ${lead.companyName} (${lead.name})`, cuerpo);
+    }
   }
 
   private async issueVerification(user: User): Promise<{ sent: boolean; devToken?: string }> {

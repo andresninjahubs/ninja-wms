@@ -31,6 +31,9 @@
   var CSS=''
   +'.nt-root{position:fixed;inset:0;z-index:90;pointer-events:none;font-family:"Manrope","Inter",system-ui,sans-serif}'
   +'.nt-root.on{pointer-events:auto}'
+  +'.nt-root.free .nt-blocker{pointer-events:none;background:transparent}'
+  +'.nt-done{display:inline-flex;align-items:center;gap:6px;margin:0 0 8px;padding:4px 10px;border-radius:999px;background:#E8FCF3;color:#0B7A4C;font-size:12.5px;font-weight:700}'
+  +'.nt-journey{display:flex;gap:6px;margin:0 0 10px;flex-wrap:wrap}.nt-journey span{font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--surface-2,#F3F4F6);color:var(--ink-3,#6B7280)}.nt-journey span.on{background:#0B1220;color:#fff}.nt-journey span.ok{background:#E8FCF3;color:#0B7A4C}'
   +'.nt-blocker{position:absolute;inset:0}'
   +'.nt-spot{position:fixed;border-radius:14px;box-shadow:0 0 0 9999px rgba(6,14,18,.62),0 0 0 3px rgba(46,224,160,.95),0 0 32px 6px rgba(46,224,160,.35);transition:top .45s cubic-bezier(.2,.8,.2,1),left .45s cubic-bezier(.2,.8,.2,1),width .45s cubic-bezier(.2,.8,.2,1),height .45s cubic-bezier(.2,.8,.2,1),border-radius .3s;pointer-events:none}'
   +'.nt-spot.none{box-shadow:0 0 0 9999px rgba(6,14,18,.66)}'
@@ -183,6 +186,16 @@
     var role=ctx.getRole?ctx.getRole():null;
     return g.steps.filter(function(s){ return !s.roles || s.roles.indexOf(role)>=0; });
   }
+  // Estado de puesta en marcha (GET /onboarding vía app.js): qué pasos ya hizo la cuenta.
+  function loadState(g){
+    if(!g.journey || !ctx.onboarding) return Promise.resolve(null);
+    return Promise.resolve().then(function(){ return ctx.onboarding(); }).catch(function(){ return null; });
+  }
+  function stepDone(s){
+    if(!run||!run.state||!s.key) return false;
+    var st=(run.state.steps||[]).filter(function(x){return x.key===s.key;})[0];
+    return !!(st&&st.done);
+  }
 
   function summaryOf(g){ var role=ctx.getRole?ctx.getRole():null; return (role==='CLIENT'&&g.summaryClient)||g.summary; }
   function buildRoot(){
@@ -199,15 +212,22 @@
     if(run) end(false);
     dismissNudge();
     var steps=stepsFor(pg);
-    run={pg:pg,g:g,steps:steps,i:-1,phase:'intro',paused:false,record:!!opts.record,timings:opts.timings||null,log:[],recT0:performance.now(),auto:!!opts.auto,root:buildRoot(),timer:null,raf:null,resolveP:null,t0:0,dur:0,elapsed:0,cleanup:null};
+    run={pg:pg,g:g,steps:steps,i:-1,phase:'intro',paused:false,record:!!opts.record,timings:opts.timings||null,log:[],recT0:performance.now(),auto:!!opts.auto,root:buildRoot(),timer:null,raf:null,resolveP:null,t0:0,dur:0,elapsed:0,cleanup:null,state:null,homePg:curPg};
+    if(g.manual&&!run.record)run.root.classList.add('free'); // el usuario puede tocar la pantalla mientras lee
     window.__ntLog=run.log; run.log.push({k:'intro',t:0});
     var p=new Promise(function(res){run.resolveP=res;});
     markSeen(pg);
     window.addEventListener('keydown',onKey,true);
     window.addEventListener('resize',relayout);
     window.addEventListener('scroll',relayout,true);
-    renderIntro();
-    if(run.record||opts.skipIntro){ setTimeout(function(){ if(run&&run.phase==='intro')beginSteps(); }, run.record?((run.timings&&run.timings.intro)||3800):0); }
+    var me=run;
+    loadState(g).then(function(state){
+      if(run!==me)return;
+      run.state=state;
+      run.steps=run.steps.filter(function(s){ return !s.when || s.when(state||{}); });
+      renderIntro();
+      if(run.record||opts.skipIntro){ setTimeout(function(){ if(run&&run.phase==='intro')beginSteps(); }, run.record?((run.timings&&run.timings.intro)||3800):0); }
+    });
     return p;
   }
   function end(finished){
@@ -269,27 +289,42 @@
     if(i>=run.steps.length){ renderOutro(); return; }
     run.i=i; run.phase='step'; run.paused=false; run.pendingNext=false;
     var s=run.steps[i];
-    var helpers={click:function(sel){var el=resolve(sel);if(el){el.click();return true;}return false;},$:$,$$:$$};
-    if(s.before){ try{ run.cleanup=s.before(helpers)||null; }catch(e){} }
-    // Damos tiempo al DOM a reaccionar (pestañas, paneles) antes de medir.
-    setTimeout(function(){ if(run&&run.i===i)showStep(s,i); }, s.before?260:0);
+    var helpers={click:function(sel){var el=resolve(sel);if(el){el.click();return true;}return false;},$:$,$$:$$,go:function(pg){if(ctx.go)ctx.go(pg);}};
+    // Un paso de un recorrido puede vivir en otra sección: navegamos y esperamos a que cargue.
+    var salto=!!(s.pg && s.pg!==curPg);
+    if(salto && ctx.go){ ctx.go(s.pg); }
+    setTimeout(function(){
+      if(!run||run.i!==i)return;
+      if(s.before){ try{ run.cleanup=s.before(helpers)||null; }catch(e){} }
+      // Damos tiempo al DOM a reaccionar (pestañas, paneles) antes de medir.
+      setTimeout(function(){ if(run&&run.i===i)showStep(s,i); }, s.before?260:0);
+    }, salto?700:0);
   }
   function showStep(s,i){
     var el=resolve(s.el);
     if(!el && s.el && !s.fallbackCenter){ // el elemento no existe para este rol/estado: se salta.
+      run.log.push({k:'skip',i:i,title:s.title,t:performance.now()-run.recT0});
       next(); return;
     }
     if(el){ try{ el.scrollIntoView({block:'center',inline:'nearest',behavior:run.record?'smooth':'smooth'}); }catch(e){} }
     var text=s.text, plain=stripHtml(text);
     var c=card(); c.className='nt-card';
+    var manual=!!run.g.manual&&!run.record;
+    var hecho=stepDone(s);
+    var etapas='';
+    if(run.g.journey){
+      var vistos={}; etapas='<div class="nt-journey">'+run.steps.map(function(x,k){ if(!x.stage||vistos[x.stage])return ''; vistos[x.stage]=1; var cur=x.stage===s.stage; var ok=!cur&&stepDone(x); return '<span class="'+(cur?'on':ok?'ok':'')+'">'+(ok?'✓ ':'')+x.stage+'</span>'; }).join('')+'</div>';
+    }
     body().innerHTML='<div class="nt-kicker"><span class="nt-chip">'+run.g.title+'</span><span class="sp"></span>Paso '+(i+1)+' de '+run.steps.length+'</div>'
+      +etapas
+      +(hecho?'<div class="nt-done">✓ Ya lo hiciste en tu cuenta</div>':'')
       +'<h3 class="nt-title">'+s.title+'</h3>'
       +'<p class="nt-text">'+text+'</p>'
-      +'<div class="nt-prog"><i></i></div>'
+      +(manual?'':'<div class="nt-prog"><i></i></div>')
       +'<div class="nt-ctl">'
       +'<button class="nt-ib" data-nt="prev" title="Anterior">◀</button>'
-      +'<button class="nt-ib pri" data-nt="pause" title="Pausar / reanudar">❚❚</button>'
-      +'<button class="nt-ib" data-nt="next" title="Siguiente">▶</button>'
+      +(manual?'<button class="nt-btn pri" data-nt="next" style="padding:6px 14px">'+(i+1>=run.steps.length?'Terminar':'Siguiente ▶')+'</button>':'<button class="nt-ib pri" data-nt="pause" title="Pausar / reanudar">❚❚</button>'
+      +'<button class="nt-ib" data-nt="next" title="Siguiente">▶</button>')
       +'<button class="nt-ib'+(voiceOn()?'':' off')+'" data-nt="voice" title="Narración por voz">🔊</button>'
       +'<span class="sp"></span>'
       +'<button class="nt-link" data-nt="skip">Saltar tutorial</button>'
@@ -300,6 +335,7 @@
     run.dur=(run.record&&run.timings&&run.timings.steps&&run.timings.steps[i])||readMs(plain); run.elapsed=0; run.t0=performance.now();
     if(run.record)run.log.push({k:'step',i:i,t:performance.now()-run.recT0});
     if(!voice)pickVoice();
+    if(manual){ if(voiceOn()&&voice)speak(plain); return; } // en modo manual la voz lee, pero no avanza sola
     if(!run.record && voiceOn() && voice){
       var tv=performance.now();
       speak(plain,function(err){
@@ -395,9 +431,28 @@
   function onPage(pg){
     curPg=pg; syncTopBtn();
     dismissNudge();
-    if(run){ if(run.pg===pg||run.record)return; end(false); } // cambió de sección: cerramos el tour anterior
-    if(!autoOn() || !GUIDES()[pg] || seen()[pg]) return;
+    if(run){ if(run.pg===pg||run.record||run.g.journey)return; end(false); } // cambió de sección: cerramos el tour anterior
+    if(!autoOn()) return;
     if($('#loginov') && !$('#loginov').classList.contains('off')) return;
+    // Cuenta recién creada y sin datos: en el dashboard se ofrece el recorrido "Primeros
+    // pasos" (que cruza secciones) en vez del tutorial del dashboard.
+    if(pg==='dashboard' && GUIDES().primeros && !seen().primeros && ctx.onboarding){
+      var rol=ctx.getRole?ctx.getRole():null;
+      if(['ADMIN','PLATFORM_ADMIN','SUPERVISOR'].indexOf(rol)>=0){
+        var mio=++journeyReq;
+        Promise.resolve().then(function(){return ctx.onboarding();}).then(function(st){
+          if(mio!==journeyReq||curPg!=='dashboard'||run)return;
+          if(st && !st.activated && st.done<=1){ nudgeTimer=setTimeout(function(){ nudgeTimer=null; if(curPg==='dashboard'&&!run)start('primeros',{auto:true}); },900); }
+          else offerPage(pg);
+        }).catch(function(){ offerPage(pg); });
+        return;
+      }
+    }
+    offerPage(pg);
+  }
+  var journeyReq=0;
+  function offerPage(pg){
+    if(!GUIDES()[pg] || seen()[pg]) return;
     // Pequeña espera para que la sección cargue sus datos; luego se abre solo.
     nudgeTimer=setTimeout(function(){ nudgeTimer=null; if(curPg===pg && !run) start(pg,{auto:true}); }, 1100);
   }
@@ -411,7 +466,7 @@
   function availablePages(){
     var role=ctx.getRole?ctx.getRole():null, allowed=(window.NINJA_NAV_BY_ROLE&&role)?window.NINJA_NAV_BY_ROLE[role]:null;
     var extra=['ADMIN','SUPERVISOR','PLATFORM_ADMIN'].indexOf(role)>=0?['multicliente']:[];
-    return Object.keys(GUIDES()).filter(function(p){ return (!allowed || allowed.indexOf(p)>=0 || extra.indexOf(p)>=0) && !(ctx.isHidden&&ctx.isHidden(p)); });
+    return Object.keys(GUIDES()).filter(function(p){ return !GUIDES()[p].journey && (!allowed || allowed.indexOf(p)>=0 || extra.indexOf(p)>=0) && !(ctx.isHidden&&ctx.isHidden(p)); });
   }
 
   // ===== Videos MP4 ===========================================================
@@ -455,13 +510,13 @@
 
   // ===== Centro de aprendizaje ================================================
   var GROUPS=[
-    ['Inicio',['dashboard','copilot','voz','multicliente']],
+    ['Inicio',['dashboard','copilot','aidash','voz','torre','multicliente']],
     ['Workflows de bodega',['orders','pickqueue','inbound','returns','putaway','assembly','movements','counts']],
-    ['Inventario y ubicaciones',['inventory','products','packaging','locations']],
+    ['Inventario y ubicaciones',['inventory','products','consignees','packaging','locations']],
     ['Finanzas',['billing','costos']],
-    ['Ninja IA',['agente','aiaudit']],
+    ['Ninja IA',['agente','agdiario','agalertas','aiaudit']],
     ['Comercial Ninja',['plan','pkgmatrix','usage']],
-    ['Comunicación e integraciones',['chat','voicechannel','webhooks']],
+    ['Comunicación e integraciones',['chat','voicechannel','webhooks','mcp']],
     ['Administración',['activity','asignaciones','branding','clients','users']],
     ['Plataforma',['operations','announcements']]
   ];
@@ -470,7 +525,9 @@
       var avail=availablePages(), sn=seen(), G=GUIDES();
       var done=avail.filter(function(p){return sn[p];}).length, pct=avail.length?Math.round(done/avail.length*100):0;
       var ov=document.createElement('div'); ov.className='nt-center';
-      var groups=GROUPS.map(function(gr){
+      var J=G.primeros, rol=ctx.getRole?ctx.getRole():null;
+      var journeyHtml=(J&&['ADMIN','PLATFORM_ADMIN','SUPERVISOR'].indexOf(rol)>=0)?'<div class="nt-group"><h4>Puesta en marcha</h4><div class="nt-grid"><div class="nt-tile'+(sn.primeros?' seen':'')+'"><div class="ic">'+(J.icon||'▶')+'</div><div class="t"><b>'+J.title+'</b><span>'+(sn.primeros?'<span class="ok">✓ Recorrido</span> · ':'')+'Recorre productos, ubicaciones, stock y órdenes en orden</span></div><div class="a"><button class="pri" data-tour="primeros" title="Recorrido guiado">▶</button></div></div></div></div>':'';
+      var groups=journeyHtml+GROUPS.map(function(gr){
         var items=gr[1].filter(function(p){return G[p]&&avail.indexOf(p)>=0;});
         if(!items.length)return '';
         return '<div class="nt-group"><h4>'+gr[0]+'</h4><div class="nt-grid">'+items.map(function(p){
@@ -518,7 +575,7 @@
     start:function(pg,opts){ return loadManifest().then(function(){ return start(pg,opts); }); },
     onPage:onPage, openCenter:openCenter, openVideo:openVideo,
     has:function(pg){return !!GUIDES()[pg];},
-    setContext:function(c){ ctx.go=c.go||ctx.go; ctx.getRole=c.getRole||ctx.getRole; ctx.isHidden=c.isHidden||ctx.isHidden; syncTopBtn(); },
+    setContext:function(c){ ctx.go=c.go||ctx.go; ctx.getRole=c.getRole||ctx.getRole; ctx.isHidden=c.isHidden||ctx.isHidden; ctx.onboarding=c.onboarding||ctx.onboarding; syncTopBtn(); },
     runAll:runAll, isRunning:function(){return !!run;}, end:function(){end(false);}
   };
 })();

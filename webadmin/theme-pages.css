@@ -57,7 +57,25 @@
 }
 /* Con pantalla ancha la columna de acciones reserva lo justo para ~3 botones
    por línea; así la fila no se estira a un botón por renglón. */
-@media(min-width:1280px){ td > .card-actions,td .rowacts{min-width:230px} }
+/* Las acciones de fila envuelven cuando no caben; no reservan un mínimo que
+   empuje la tabla a scroll horizontal. */
+@media(min-width:1600px){ td > .card-actions,td .rowacts{min-width:230px} }
+/* Tablas de matriz (Torre, Rentabilidad, Actividad, Asignaciones, Uso):
+   muchas columnas numéricas; los rótulos de cabecera pueden partirse en dos
+   líneas en vez de fijar el ancho de toda la columna. */
+table.matrix thead th{white-space:normal;line-height:1.25;vertical-align:bottom}
+@media(max-width:1599px){
+  table.matrix thead th{padding-left:8px;padding-right:8px;font-size:10.5px;letter-spacing:.04em}
+  table.matrix tbody td{padding-left:8px;padding-right:8px}
+  /* Movimientos: la fecha en dos líneas (día / hora), como en Órdenes. */
+  #mv-table td.muted:first-child{white-space:normal!important;width:96px;min-width:96px;font-size:12.5px;line-height:1.3}
+  /* Actividad reciente del dashboard: la fecha en dos líneas, como en Movimientos. */
+  #activity td.muted:first-child{white-space:normal!important;width:96px;min-width:96px;font-size:12.5px;line-height:1.3}
+  #mv-table td.muted:last-of-type{white-space:normal;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+  /* Uso de la plataforma: el nombre de la operación puede envolver. */
+  .page[data-pg="usage"] table.matrix tbody td:first-child{white-space:normal;max-width:150px;line-height:1.3}
+  .page[data-pg="usage"] table.matrix tbody td:last-child{white-space:normal;max-width:96px;line-height:1.3}
+}
 .loc-chip{white-space:nowrap}
 
 /* Buscador de toolbar: ancho mínimo útil y lupa de trazo en vez del glifo ⌕. */
@@ -364,39 +382,43 @@ input[type=file]::file-selector-button{font:inherit;font-weight:600;font-size:13
 /* Las celdas pueden envolver (como el original): con nowrap la tabla medía
    1377 px en 1134 y los botones de fila quedaban fuera de vista. */
 .ordcli-n{font-weight:600;color:var(--ink)}
-/* Ancho de columna fijo (a partir de la fila de cabecera): con auto-layout,
-   el número de orden en Inter+tabular-nums pesa más que el mono anterior y
-   la tabla se estira desproporcionado (medía 1208 px en 1134). Con
-   table-layout:fixed se reparte el ancho como el original y "Acciones"
-   (sin ancho fijo) se queda con lo que sobra para los botones de fila. */
+/* Anchos de la tabla de órdenes. Las columnas Selección y Cliente aparecen
+   o no según el modo, así que NO se puede fijar ancho por posición
+   (nth-child): se estila cada celda por su clase y se deja auto-layout.
+   Lo que no debe partirse va en una línea (n° de orden, fecha, deadline,
+   líneas, estado); Cliente y las acciones son las únicas que envuelven. */
 @media(min-width:861px){
-  .page[data-pg="orders"] .tablewrap table{table-layout:fixed}
-  .page[data-pg="orders"] thead th:nth-child(1){width:40px}
-  .page[data-pg="orders"] thead th:nth-child(2){width:100px}
-  .page[data-pg="orders"] thead th.ordcli{width:90px}
-  .page[data-pg="orders"] thead th:nth-child(4){width:150px}
-  .page[data-pg="orders"] thead th:nth-child(5){width:82px}
-  .page[data-pg="orders"] thead th:nth-child(6){width:108px}
-  .page[data-pg="orders"] thead th:nth-child(7){width:52px}
-  .page[data-pg="orders"] thead th:nth-child(8){width:78px}
-  .page[data-pg="orders"] thead th:nth-child(9){width:128px}
-  .page[data-pg="orders"] #ord-body td{overflow:hidden;text-overflow:ellipsis}
-  .page[data-pg="orders"] #ord-body td:last-child{overflow:visible;text-overflow:clip}
-  /* La regla general de más arriba (~línea 60) exige 230px para la columna de
-     acciones porque asumía auto-layout; con el ancho fijo de esta tabla la
-     columna ya reserva lo que corresponde y a 1280px sólo sobran ~146px, así
-     que ese mínimo viejo volvía a empujar la tabla a scroll horizontal. */
-  .page[data-pg="orders"] #ord-body .rowacts{min-width:0}
+  .page[data-pg="orders"] .tablewrap table{table-layout:auto}
+  .page[data-pg="orders"] thead th,#ord-body td{padding-left:10px;padding-right:10px}
+  .page[data-pg="orders"] thead th:first-child,#ord-body td:first-child{padding-left:14px}
+  .page[data-pg="orders"] thead th.selcol,#ord-body td.selcol{width:28px;padding-right:4px}
+  #ord-body td{white-space:nowrap}
+  #ord-body td.mono2{font-size:13.5px;letter-spacing:0}
+  #ord-body td.ordcli{white-space:normal;max-width:170px;line-height:1.3}
+  #ord-body td.ordcli .ordcli-n{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  #ord-body td.muted{font-size:13px}
+  #ord-body td:last-child{width:1%;white-space:normal;padding-left:8px}
+  #ord-body .rowacts{min-width:236px;flex-wrap:wrap;justify-content:flex-end;gap:6px}
 }
-/* Entre 861 y 1279px hay menos espacio total: se resta a las columnas menos
-   críticas (checkbox, canal, estado) y se permite que Fecha envuelva en dos
-   líneas, para que Orden/Acciones no se achiquen más de la cuenta. */
-@media(min-width:861px) and (max-width:1279px){
-  .page[data-pg="orders"] thead th:nth-child(1){width:30px}
-  .page[data-pg="orders"] thead th:nth-child(4){width:112px}
-  .page[data-pg="orders"] thead th:nth-child(6){width:92px}
-  .page[data-pg="orders"] thead th:nth-child(9){width:112px}
-  .page[data-pg="orders"] #ord-body td:nth-child(4){white-space:normal!important}
+/* Portátil de 1280px: celdas más apretadas y Líneas en dos renglones. */
+@media(min-width:861px) and (max-width:1379px){
+  .page[data-pg="orders"] thead th,#ord-body td{padding-left:7px;padding-right:7px}
+  #ord-body td.ordcli{max-width:96px}
+  .page[data-pg="orders"] #ord-body td:nth-last-child(3){min-width:0;max-width:80px}
+  #ord-body td.mono2{font-size:12.5px}
+  #ord-body .rowacts{min-width:160px}
+}
+/* Hasta 1599px la fecha se parte en dos líneas (día / hora) para dejar sitio
+   a las acciones; desde 1600px todo cabe en una línea. */
+@media(min-width:861px) and (max-width:1599px){
+  #ord-body td.muted{white-space:normal!important;width:118px;min-width:118px;line-height:1.3}
+  /* Líneas ("2 línea(s) · 10 un") en dos renglones; Canal con puntos suspensivos. */
+  #ord-body td:nth-last-child(3){white-space:normal;max-width:100px;min-width:92px;line-height:1.3}
+  #ord-body td:nth-last-child(5){max-width:100px;overflow:hidden;text-overflow:ellipsis}
+}
+@media(min-width:1600px){
+  #ord-body .rowacts{min-width:0;flex-wrap:nowrap}
+  #ord-body td.ordcli{max-width:220px}
 }
 /* Barra de acciones masivas: tarjeta flotante bajo la barra superior (88px). */
 .bulk-bar{top:96px;gap:12px;padding:10px 14px;border-radius:14px;
@@ -497,30 +519,32 @@ th.selcol,td.selcol{width:44px}
 /* ---------------------------------------------------------------------------
    9. RECEPCIÓN (cotejo, manifiesto, editor de líneas)
    ------------------------------------------------------------------------- */
-/* Misma causa y solución que la tabla de Órdenes: sin ancho fijo el número
-   de recepción en Inter+tabular-nums desbordaba la tabla y los botones de
-   fila (Recepcionar/Editar/Cerrar/Eliminar) quedaban fuera de vista. */
+/* Tabla de recepciones: mismo criterio que Órdenes (auto-layout, celdas
+   por clase, solo envuelven Proveedor/Referencia y las acciones). */
 @media(min-width:861px){
-  .page[data-pg="inbound"] .tablewrap table{table-layout:fixed}
-  .page[data-pg="inbound"] thead th:nth-child(1){width:145px}
-  .page[data-pg="inbound"] thead th:nth-child(2){width:110px}
-  .page[data-pg="inbound"] thead th:nth-child(3){width:95px}
-  .page[data-pg="inbound"] thead th:nth-child(4){width:110px}
-  .page[data-pg="inbound"] thead th:nth-child(5){width:85px}
-  .page[data-pg="inbound"] thead th:nth-child(6){width:58px}
-  .page[data-pg="inbound"] thead th:nth-child(7){width:142px}
-  .page[data-pg="inbound"] thead th:nth-child(8){width:80px}
-  .page[data-pg="inbound"] #inb-body td{overflow:hidden;text-overflow:ellipsis}
-  .page[data-pg="inbound"] #inb-body td:last-child{overflow:visible;text-overflow:clip}
-  /* Mismo mínimo viejo de la regla general (~línea 60): con ancho fijo ya no
-     hace falta y a 1280px volvía a forzar scroll horizontal. */
-  .page[data-pg="inbound"] #inb-body .card-actions{min-width:0}
+  .page[data-pg="inbound"] .tablewrap table{table-layout:auto}
+  .page[data-pg="inbound"] thead th,#inb-body td{padding-left:10px;padding-right:10px}
+  #inb-body td{white-space:nowrap}
+  #inb-body td.mono2{font-size:13.5px;letter-spacing:0}
+  #inb-body td:nth-child(2),#inb-body td:nth-child(3){white-space:normal;max-width:120px;line-height:1.3}
+  #inb-body td.muted{font-size:13px}
+  #inb-body td:last-child{width:1%;white-space:normal;padding-left:8px}
+  #inb-body .card-actions{min-width:200px;flex-wrap:wrap;justify-content:flex-end;gap:6px}
 }
-@media(min-width:861px) and (max-width:1279px){
-  .page[data-pg="inbound"] thead th:nth-child(2){width:96px}
-  .page[data-pg="inbound"] thead th:nth-child(3){width:80px}
-  .page[data-pg="inbound"] thead th:nth-child(4){white-space:normal}
-  .page[data-pg="inbound"] #inb-body td:nth-child(4){white-space:normal!important}
+@media(min-width:861px) and (max-width:1379px){
+  .page[data-pg="inbound"] thead th,#inb-body td{padding-left:7px;padding-right:7px}
+  #inb-body td:nth-child(2),#inb-body td:nth-child(3){max-width:96px}
+  #inb-body td.num{font-size:13px}
+  #inb-body td.mono2{font-size:12.5px}
+  .page[data-pg="inbound"] #inb-body td.muted{width:86px;min-width:86px;font-size:12px}
+  #inb-body td:nth-last-child(3) .chip{font-size:12px;padding-left:8px;padding-right:8px}
+  #inb-body .card-actions{min-width:150px}
+}
+@media(min-width:861px) and (max-width:1599px){
+  #inb-body td.muted{white-space:normal!important;width:118px;min-width:118px;line-height:1.3}
+}
+@media(min-width:1600px){
+  #inb-body .card-actions{min-width:0;flex-wrap:nowrap}
 }
 .reclines-head{font-size:11px;font-weight:600;letter-spacing:.07em;gap:10px;padding:0 2px 6px}
 .recline{gap:10px;margin-bottom:8px}

@@ -404,7 +404,39 @@
     var padre=MOD_PADRE[pg];
     return !!padre&&uiConfig.hiddenModules.indexOf(padre)>=0;
   }
-  function loadUiConfig(){ return api('/ui-config').then(function(c){ if(c&&Array.isArray(c.hiddenModules))uiConfig=c; }).catch(function(){}); }
+  function loadUiConfig(){ return api('/ui-config').then(function(c){ if(c&&Array.isArray(c.hiddenModules)){uiConfig=c; cargaGtag(c);} }).catch(function(){}); }
+  // ---- Medición de campañas (Google Ads / GA4) -----------------------------------
+  // Solo si el servidor trae GTAG_ID. La conversión "Registro" se dispara en doRegister.
+  function cargaGtag(c){
+    if(!c.gtagId||window.gtag)return;
+    try{
+      window.dataLayer=window.dataLayer||[];
+      window.gtag=function(){dataLayer.push(arguments);};
+      var sc=document.createElement('script'); sc.async=true; sc.src='https://www.googletagmanager.com/gtag/js?id='+encodeURIComponent(c.gtagId); document.head.appendChild(sc);
+      gtag('js',new Date()); gtag('config',c.gtagId);
+      if(c.adsConversion&&c.adsConversion.split('/')[0]!==c.gtagId)gtag('config',c.adsConversion.split('/')[0]);
+    }catch(e){}
+  }
+  function marcaConversionRegistro(){
+    try{
+      if(!window.gtag)return;
+      gtag('event','sign_up',{method:'self-serve'});
+      if(uiConfig.adsConversion)gtag('event','conversion',{send_to:uiConfig.adsConversion});
+    }catch(e){}
+  }
+  // Origen del alta: utm_* y gclid de la URL de llegada. Se guardan en sessionStorage
+  // para que sobrevivan a que el usuario navegue el login antes de registrarse.
+  var LEAD_KEYS=['utm_source','utm_medium','utm_campaign','utm_term','utm_content','gclid','fbclid'];
+  function capturaOrigen(){
+    try{
+      var qs=new URLSearchParams(location.search), pares=[];
+      LEAD_KEYS.forEach(function(k){ var v=qs.get(k); if(v)pares.push(k+'='+encodeURIComponent(v).slice(0,120)); });
+      if(pares.length)sessionStorage.setItem('nwms.lead.source',pares.join('&'));
+      else if(!sessionStorage.getItem('nwms.lead.source')&&document.referrer&&document.referrer.indexOf(location.host)<0)sessionStorage.setItem('nwms.lead.source','ref='+encodeURIComponent(document.referrer).slice(0,160));
+    }catch(e){}
+  }
+  capturaOrigen();
+  function origenLead(){ try{ return sessionStorage.getItem('nwms.lead.source')||''; }catch(e){ return ''; } }
   var uiConfigP=loadUiConfig(); // se pide al cargar la página (endpoint público) para que el menú no parpadee tras el login
   function applyHiddenModules(){
     $$(".nav[data-pg]").forEach(function(n){ if(moduleHidden(n.getAttribute("data-pg")))n.classList.add("hidden"); });
@@ -462,7 +494,7 @@
       return loadOp();
     }).then(function(){
       // Tutoriales guiados: contexto + oferta automática en la sección visible.
-      if(window.NinjaTour){ window.NINJA_NAV_BY_ROLE=NAV_BY_ROLE; NinjaTour.setContext({go:go,getRole:function(){return role;}}); var cur=$(".page.on"); NinjaTour.onPage(cur?cur.getAttribute("data-pg"):"dashboard"); }
+      if(window.NinjaTour){ window.NINJA_NAV_BY_ROLE=NAV_BY_ROLE; NinjaTour.setContext({go:go,getRole:function(){return role;},onboarding:function(){ return role==='CLIENT'?Promise.resolve(null):api('/onboarding?operationId='+encodeURIComponent(op||'')); }}); var cur=$(".page.on"); NinjaTour.onPage(cur?cur.getAttribute("data-pg"):"dashboard"); }
     }).catch(err);
   }
 
@@ -3178,11 +3210,13 @@
         +'<div class="muted" style="margin-top:4px;font-size:13px">Completa estos pasos para despachar tu primera orden — ese es el momento en que Ninja WMS te empieza a rendir.</div>'
         +'<div class="onb-steps">'+stepsHtml+'</div>'
         +'<div class="onb-actions">'
+        +(window.NinjaTour&&NinjaTour.has('primeros')?'<button class="btn pri mini" id="onb-tour">▶ Recorrido guiado</button>':'')
         +(canSample?'<button class="onb-sample" id="onb-sample">✨ Cargar datos de ejemplo</button><span class="muted" style="font-size:12px">Puebla tu cuenta con productos y órdenes de prueba para explorar el flujo completo.</span>':'')
         +'<span class="sp" style="flex:1"></span><button class="onb-x" id="onb-x">Ocultar</button></div>'
         +'</div>';
       $$('#onboard-card [data-onbgo]').forEach(function(b){b.addEventListener('click',function(){go(b.getAttribute('data-onbgo'));});});
       var xb=$("#onb-x"); if(xb)xb.addEventListener('click',function(){onbDismissed=true;host.innerHTML="";});
+      var tb=$("#onb-tour"); if(tb)tb.addEventListener('click',function(){ NinjaTour.start('primeros'); });
       var sb=$("#onb-sample"); if(sb)sb.addEventListener('click',function(){
         sb.disabled=true; sb.textContent="Cargando…";
         api('/onboarding/sample-data',{method:'POST',body:{operationId:op}}).then(function(r){
@@ -3446,8 +3480,8 @@
   function renderActivity(){
     $("#activity").innerHTML=D.mov.slice(0,8).map(function(m){
       var sign=m.qtyDelta>0?'style="color:var(--good)"':'style="color:var(--crit)"';
-      return '<tr><td><span class="chip st-'+(m.qtyDelta>0?'AVAILABLE':'RESERVED')+'"><span class="dot"></span>'+(LABELS[m.type]||m.type)+'</span></td><td class="sku">'+esc(m.sku)+'</td><td><span class="loc-chip">'+esc(code(m.locationId))+'</span></td><td>'+esc(m.actor)+'</td><td class="num" '+sign+'>'+(m.qtyDelta>0?"+":"")+m.qtyDelta+'</td></tr>';
-    }).join("")||'<tr><td colspan="5" class="empty">Sin movimientos.</td></tr>';
+      return '<tr><td class="muted" style="white-space:nowrap">'+esc(fmtDate(m.occurredAt))+'</td><td><span class="chip st-'+(m.qtyDelta>0?'AVAILABLE':'RESERVED')+'"><span class="dot"></span>'+(LABELS[m.type]||m.type)+'</span></td><td class="sku">'+esc(m.sku)+'</td><td><span class="loc-chip">'+esc(code(m.locationId))+'</span></td><td title="'+esc(m.actorName||actorName(m.actor))+'">'+esc(movActor(m))+'</td><td class="num" '+sign+'>'+(m.qtyDelta>0?"+":"")+m.qtyDelta+'</td></tr>';
+    }).join("")||'<tr><td colspan="6" class="empty">Sin movimientos.</td></tr>';
   }
 
   // ---- Movimientos (kardex) -------------------------------------------------
@@ -3471,8 +3505,8 @@
     $("#mv-cli-field").classList.toggle("hidden",isClient);
     $("#mv-table").classList.toggle("hide-cli",isClient);
     var locs=(D.locations||[]).slice().sort(function(a,b){return a.code<b.code?-1:1;}).map(function(l){return {v:l.id,t:l.code};});
-    var seen={}; (D.kardex||[]).forEach(function(m){seen[m.actor]=1;});
-    var users=Object.keys(seen).sort().map(function(a){return {v:a,t:a};});
+    var seen={}; (D.kardex||[]).forEach(function(m){seen[m.actor]=movActor(m);});
+    var users=Object.keys(seen).map(function(a){return {v:a,t:seen[a]};}).sort(function(a,b){return a.t.localeCompare(b.t);});
     var sellers=(D.sellers||[]).map(function(s){return {v:s.id,t:s.name};});
     var seenT={}; (D.kardex||[]).forEach(function(m){seenT[m.type]=1;});
     var types=MV_TYPES.filter(function(t){return seenT[t];}).map(function(t){return {v:t,t:LABELS[t]||t};});
@@ -3510,7 +3544,7 @@
       '<td><span class="loc-chip">'+esc(code(m.locationId))+'</span></td>'+
       '<td>'+esc(m.lot||"—")+'</td>'+
       '<td>'+stTag+'</td>'+
-      '<td>'+esc(m.actor)+'</td>'+
+      '<td title="'+esc(m.actorName||actorName(m.actor))+'">'+esc(movActor(m))+'</td>'+
       '<td class="mv-col-cli">'+esc(sellerName(m.sellerId))+'</td>'+
       '<td class="muted">'+esc(m.reference||"—")+'</td>'+
       '<td class="num" '+sign+'>'+(m.qtyDelta>0?"+":"")+m.qtyDelta+'</td>'+
@@ -5054,6 +5088,13 @@
    * caracteres en una bitácora no le dice nada a nadie, así que cualquier id que no se
    * resuelva se acorta y se marca, en vez de parecer un nombre.
    */
+  /** Solo el nombre, para celdas de tabla (actorName agrega el email). */
+  function actorShort(id){
+    var n=actorName(id); var i=n.indexOf(" (");
+    return i>0&&/@/.test(n)?n.slice(0,i):n;
+  }
+  /** Nombre del actor de un movimiento: el servidor lo manda resuelto (actorName); si no, se resuelve acá. */
+  function movActor(m){ return m.actorName||actorShort(m.actor); }
   function actorName(id){
     if(!id)return "Sistema";
     var u=byId(D.users,id);
@@ -7000,6 +7041,18 @@
    * Una cuenta creada a mano por la plataforma no tiene ficha: no pasó por el
    * formulario y no hay nada que mostrar.
    */
+  // "utm_source=google&utm_campaign=wms-cl&gclid=…" → "google · wms-cl (Google Ads)"
+  function origenLegible(src){
+    try{
+      var q=new URLSearchParams(src), p=[];
+      if(q.get('utm_source'))p.push(q.get('utm_source'));
+      if(q.get('utm_campaign'))p.push(q.get('utm_campaign'));
+      if(q.get('utm_term'))p.push('"'+q.get('utm_term')+'"');
+      if(q.get('gclid'))p.push('(Google Ads)'); else if(q.get('fbclid'))p.push('(Meta)');
+      if(q.get('ref'))p.push('desde '+q.get('ref').replace(/^https?:\/\//,'').split('/')[0]);
+      return p.length?p.join(' · '):src;
+    }catch(e){ return src; }
+  }
   function fichaAlta(o){
     if(!o.contactName&&!o.contactEmail&&!o.contactPhone&&!o.createdAt&&!o.selfServe) return "";
     var pista=o.track==="operator"?"Operador 3PL":o.track==="brand"?"Marca / tienda":null;
@@ -7007,7 +7060,9 @@
     var tel=o.contactPhone?'<a href="tel:'+esc(String(o.contactPhone).replace(/[^\d+]/g,""))+'">'+esc(o.contactPhone)+'</a>':"";
     var mail=o.contactEmail?'<a href="mailto:'+esc(o.contactEmail)+'">'+esc(o.contactEmail)+'</a>':"";
     var alta=o.createdAt?fmtDate(o.createdAt):"";
-    var cuerpo=fila("Contacto",o.contactName?esc(o.contactName):"")+fila("Celular",tel)+fila("Email",mail)+fila("Se registró como",pista?esc(pista):"")+fila("Fecha de alta",alta?esc(alta):"");
+    var wa=o.contactPhone?'<a class="mini" style="margin-left:6px" target="_blank" rel="noopener" href="https://wa.me/'+esc(String(o.contactPhone).replace(/\D/g,""))+'?text='+encodeURIComponent('Hola '+(o.contactName||'')+', te escribo de Ninja Hubs por tu cuenta de Ninja WMS.')+'">WhatsApp</a>':"";
+    var origen=o.leadSource?esc(origenLegible(o.leadSource)):"";
+    var cuerpo=fila("Contacto",o.contactName?esc(o.contactName):"")+fila("Celular",tel+wa)+fila("Email",mail)+fila("Se registró como",pista?esc(pista):"")+fila("Origen",origen)+fila("Fecha de alta",alta?esc(alta):"");
     if(!cuerpo) return "";
     return '<div class="opficha"><div class="ofi-h">'+(o.selfServe?"Registro self-serve":"Datos de contacto")+'</div>'+cuerpo+'</div>';
   }
@@ -8108,8 +8163,10 @@
     }
     if(pass.length<6){ $("#rg-err").textContent="La contraseña debe tener al menos 6 caracteres."; return; }
     var btn=$("#rg-btn"); btn.disabled=true; btn.textContent="Creando…";
-    api('/auth/register',{method:'POST',body:{companyName:company,name:name,email:email,phone:phone,password:pass,track:track}}).then(function(r){
+    api('/auth/register',{method:'POST',body:{companyName:company,name:name,email:email,phone:phone,password:pass,track:track,source:origenLead()||undefined}}).then(function(r){
       $("#rg-pass").value="";
+      marcaConversionRegistro();
+      try{ sessionStorage.removeItem('nwms.lead.source'); }catch(e){}
       pendingVerifyToken = (r.verification && r.verification.devToken) || null; // en local viene el token para verificar aquí mismo
       afterAuth(r);
     }).catch(function(e){ $("#rg-err").textContent=e.message; }).then(function(){ btn.disabled=false; btn.textContent="Crear cuenta gratis"; });
@@ -8190,6 +8247,19 @@
       cleanUrl();
     } else if(rs){
       resetToken=rs; lgShow("reset"); cleanUrl();
+    } else if(qs.get("registro")!==null||location.hash==="#registro"){
+      // Destino de los anuncios: /admin/?registro=1 abre el formulario de cuenta gratis
+      // sin pasar por la caja de login. Los utm_* ya quedaron capturados arriba.
+      abrirRegistroDirecto();
     }
   })();
+  function abrirRegistroDirecto(){
+    try{
+      // Abre la caja como si el usuario hubiera apretado "Entrar" y muestra el registro.
+      var b=document.getElementById('lh-open'); if(b)b.click();
+      setTimeout(function(){ lgShow('register'); var f=$('#rg-company'); if(f&&window.innerWidth>720)f.focus(); },950);
+      var qs=new URLSearchParams(location.search); qs.delete('registro');
+      var rest=qs.toString(); history.replaceState({},document.title,location.pathname+(rest?'?'+rest:''));
+    }catch(e){ lgShow('register'); }
+  }
 })();

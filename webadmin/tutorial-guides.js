@@ -12,6 +12,107 @@
  */
 window.NINJA_TOUR_GUIDES = {
 
+  /* Recorrido de puesta en marcha: cruza secciones en el orden lógico de una bodega nueva.
+   * journey: los pasos llevan `pg` (sección) y `key` (paso de /onboarding, para marcar lo ya hecho)
+   * y `stage` (etapa visible arriba). manual: no avanza solo; el usuario puede tocar la pantalla. */
+  primeros: {
+    icon:'🚀', title:'Primeros pasos', journey:true, manual:true,
+    summary:'En 10 minutos dejas tu bodega lista para operar: productos, ubicaciones, stock y tu primera orden. Puedes hacer cada paso mientras lo lees; el recorrido no se cierra al cambiar de sección.',
+    steps:[
+      {pg:'clients', key:'create_client', stage:'Cliente', el:'#cli-new', place:'bottom', fallbackCenter:true, title:'Crea tu primer cliente', when:function(st){return st&&st.track==='operator';},
+        text:'Como operador logístico, todo lo que guardas pertenece a un <b>cliente</b>: sus productos, su stock y sus órdenes. Crea el primero con <b>Nuevo cliente</b> (nombre y RUT bastan). Después podrás darle acceso a su propio portal.'},
+      {pg:'products', key:'create_product', stage:'Productos', el:'#pr-new', place:'bottom', title:'1 · Crea tus productos',
+        text:'Cada producto es un <b>SKU</b> con código, descripción y, si lo tiene, EAN para escanear. Con <b>Nuevo producto</b> creas uno a la vez; es lo justo para probar.'},
+      {pg:'products', key:'create_product', stage:'Productos', el:'#pr-import', place:'bottom', title:'…o carga el catálogo completo',
+        text:'Si ya tienes tu maestro en Excel, usa <b>Carga masiva</b>: descarga la plantilla, pégala y súbela. Verás qué se crea y qué cambia antes de confirmar. Es la forma rápida de partir con cientos de SKUs.'},
+      {pg:'locations', key:'create_location', stage:'Ubicaciones', el:'#loc-new', place:'bottom', title:'2 · Crea una ubicación de recepción',
+        text:'La mercadería entra por una ubicación de zona <b>Recepción</b> (por ejemplo <b>REC-01</b>). Crea al menos una: ahí queda el stock mientras se guarda.'},
+      {pg:'locations', key:'create_location', stage:'Ubicaciones', el:['#loc-import','#loc-new'], place:'bottom', title:'…y tus ubicaciones de almacenaje',
+        text:'Después crea las de zona <b>Almacenaje</b> con el código de tu bodega (pasillo-rack-nivel, como <b>A-01-1-A</b>). Si son muchas, <b>Carga masiva</b> las crea todas desde la plantilla Excel.'},
+      {pg:'inbound', key:'receive_stock', stage:'Stock', el:['#inb-new','#inb-filters'], place:'bottom', fallbackCenter:true, title:'3 · Recibe tu stock',
+        text:'Con <b>Nueva orden de recepción</b> declaras qué llega: proveedor, referencia y las líneas con SKU y cantidad esperada. Al llegar el camión, <b>Recepcionar</b> cuenta lo real y deja las unidades en la ubicación de recepción.'},
+      {pg:'putaway', key:'receive_stock', stage:'Stock', el:['#pw-body','#pw-tabs'], place:'top', title:'…y guárdalo en su ubicación',
+        text:'Lo recibido aparece en <b>Almacenado</b> como pendiente de guardar. El sistema sugiere una ubicación; confirma y el stock queda disponible para vender. También se puede hacer desde la app del operario con escaneo.'},
+      {pg:'orders', key:'create_order', stage:'Órdenes', el:'#ord-new', place:'bottom', title:'4 · Crea tu primera orden',
+        text:'Normalmente las órdenes llegan solas desde tu e-commerce u OMS. Para probar, <b>Nueva orden</b>: canal, destinatario, courier y las líneas con SKU y cantidad.'},
+      {pg:'orders', key:'create_order', stage:'Órdenes', el:'#ord-import', place:'bottom', title:'…o varias de una vez',
+        text:'Con <b>Carga masiva</b> subes un Excel con muchas órdenes; cada fila se valida contra tus SKUs y el stock.'},
+      {pg:'orders', key:'ship_order', stage:'Órdenes', el:['#ord-reserve-all','#ord-body'], place:'bottom', title:'Reserva y despacha',
+        text:'Con stock guardado, <b>Reservar</b> aparta las unidades (nunca vendes lo que no tienes). Luego la orden sigue su camino: picking, empaque y despacho. Cuando despaches la primera, tu bodega está operando.'}
+    ],
+    outro:'Ya tienes lo esencial. Cada sección tiene su propio tutorial en «▶ Tutorial» y en el Centro de aprendizaje.',
+    tips:['Si prefieres ver el flujo completo con datos ficticios, en el Dashboard está «Cargar datos de ejemplo».','La app del operario (menú → Equipo) recibe, guarda y pickea con escaneo desde el celular.']
+  },
+
+  aidash: {
+    icon:'▦', title:'Dashboard AI',
+    summary:'Tableros a tu medida: le pides al agente qué quieres ver y arma los widgets con datos vivos de tu operación. También puedes agregarlos a mano.',
+    steps:[
+      {el:'#aid-sel', place:'bottom', title:'Tus tableros', text:'Puedes tener varios tableros (uno por cliente, uno para el turno de la mañana, otro para la gerencia). Aquí eliges cuál ver; con los botones de al lado lo <b>creas</b>, <b>renombras</b> o <b>eliminas</b>.'},
+      {el:'#aid-tpl', place:'bottom', title:'Parte de una plantilla', text:'Las <b>plantillas</b> traen tableros ya armados: control diario, cumplimiento de deadlines, productividad. Úsalas tal cual o como punto de partida.'},
+      {el:'#aid-q', place:'top', title:'Pídelo en lenguaje natural', text:'Escribe qué quieres ver: «órdenes despachadas por día de este mes, por cliente». El agente propone widgets y tú decides <b>Construir</b> o <b>Mejor no</b>. Con <b>¿Qué puedo pedir?</b> ves ejemplos.'},
+      {el:'#aid-widget', place:'bottom', title:'O agrega un widget a mano', text:'Eliges la fuente (órdenes, inventario, tareas…), el campo, cómo agrupar y el tamaño. Hay 17 tipos: desde un KPI hasta el mapa 3D de la bodega.'},
+      {el:'#aid-canvas', place:'top', title:'El lienzo', text:'Arrastra los widgets para ordenarlos y redimensiónalos desde la esquina. Al pasar el mouse sobre uno puedes <b>editarlo</b>, <b>duplicarlo</b>, ver <b>de dónde sale el dato</b> o eliminarlo.'},
+      {el:['#aid-live','#aid-tema'], place:'bottom', title:'En vivo y con tu tema', text:'Con <b>En vivo</b> los datos se refrescan cada 30 segundos, ideal para una pantalla en la bodega. El tema claro u oscuro es por tablero.'}
+    ],
+    tips:['El botón ⓘ de cada widget explica exactamente qué consulta responde ese número.','Un tablero en modo oscuro y en vivo funciona como pantalla de piso.']
+  },
+
+  consignees: {
+    icon:'⌂', title:'Destinatarios',
+    summary:'La libreta de destinatarios del cliente: a quién le despacha seguido, con RUT validado y varias direcciones, para no volver a escribirlos en cada orden.',
+    steps:[
+      {el:'#cg-q', place:'bottom', title:'Buscar', text:'Encuentra un destinatario por nombre, RUT o dirección.'},
+      {el:'#cg-new', place:'bottom', title:'Nuevo destinatario', text:'Nombre, <b>RUT validado</b> (dígito verificador incluido), contacto y una o varias <b>direcciones</b>. Al crear una orden, eliges el destinatario y su dirección desde la lista.'},
+      {el:'#cg-body', place:'top', title:'Editar, desactivar o eliminar', text:'Desde cada fila puedes corregir datos o agregar direcciones. Uno que ya tiene órdenes se <b>desactiva</b> (conserva el historial); uno sin uso se puede <b>eliminar</b>.'}
+    ],
+    tips:['Un usuario cliente administra sus propios destinatarios desde su portal.']
+  },
+
+  mcp: {
+    icon:'⚙', title:'Conexión MCP',
+    summary:'Deja que un agente externo (el Claude de escritorio de tu jefe de bodega, un ERP con IA, un bot propio) consulte tu operación en vivo a través del protocolo MCP, con una llave que tú controlas.',
+    steps:[
+      {el:'#mcp-howto', place:'bottom', title:'Cómo conectarse', text:'Aquí está la dirección del servidor y el bloque de configuración listo para pegar en Claude Desktop u otro cliente MCP. Con <b>Copiar configuración</b> lo llevas al portapapeles.'},
+      {el:'#mcp-new', place:'bottom', title:'Nueva llave', text:'Cada llave tiene un nombre, un <b>alcance</b> (toda la operación o un cliente) y un <b>vencimiento</b>. El secreto se muestra <b>una sola vez</b>: guárdalo al crearla.'},
+      {el:'#mcp-body', place:'top', title:'Tus llaves', text:'La lista muestra cada llave, su alcance, cuándo vence y cuándo se usó por última vez. Las llaves de esta versión son de <b>solo lectura</b>: el agente consulta, no opera.'},
+      {el:'#mcp-body', place:'top', title:'Revocar', text:'Si una llave se filtra o ya no se usa, <b>Revocar</b> la deja inválida al instante. El historial de uso se conserva.'}
+    ],
+    tips:['Un usuario cliente puede crear llaves acotadas a su propio seller.']
+  },
+
+  agdiario: {
+    icon:'📓', title:'Diario del agente',
+    summary:'La memoria del agente: ciclo a ciclo, qué evaluó, qué decidió, qué ejecutó y con qué resultado. Es donde revisas por qué la bodega avanzó como avanzó.',
+    steps:[
+      {el:'#agd-now', place:'bottom', title:'Estado actual', text:'Si el agente está activo, cuándo corrió por última vez y cuándo vuelve a correr.'},
+      {el:'#agt-journal', place:'top', title:'Ciclo a ciclo', text:'Cada entrada es un ciclo: las reglas que evaluó, las alertas que abrió, las acciones que ejecutó (o que propuso, según el nivel de autonomía) y su resultado. Las notas explican el criterio.'}
+    ],
+    tips:['Las alertas abiertas viven en «Alertas activas»; las reglas y el nivel de autonomía, en «Agente».']
+  },
+
+  agalertas: {
+    icon:'⚠', title:'Alertas activas',
+    summary:'Lo que el agente detectó y todavía nadie resolvió: órdenes estancadas, deadlines en riesgo, operarios sin carga. Cada alerta trae una sugerencia y, cuando se puede, un botón para ejecutarla.',
+    steps:[
+      {el:'#agt-alerts', place:'top', title:'Cada alerta con su sugerencia', text:'De la más nueva a la más antigua: qué pasa, en qué cliente u orden, y qué propone el agente. La severidad (crítica, alta, media) ordena la atención.'},
+      {el:'#agt-alerts', place:'top', title:'Confirmar y ejecutar', text:'Si la alerta tiene una acción automática (balancear picking, asignar a operarios libres, atender un deadline), <b>Ejecutar</b> la aplica. Es reversible y queda auditada en el diario.'},
+      {el:['#aga-ackall','#agt-alerts'], place:'bottom', title:'Ir, descartar o descartar todas', text:'<b>Ir</b> te lleva a la pantalla donde se resuelve; <b>Descartar</b> la cierra sin acción. <b>Descartar todas</b> limpia la bandeja cuando ya revisaste el turno.'}
+    ]
+  },
+
+  torre: {
+    icon:'◉', title:'Torre en vivo',
+    summary:'La pantalla de piso: en un solo lugar y refrescándose cada 15 segundos, lo que el agente va ejecutando, cómo queda la carga por operario y el trabajo que nadie tiene asignado.',
+    steps:[
+      {el:['#torre-now','#torre-live'], place:'bottom', title:'En vivo', text:'Se actualiza sola cada 15 segundos. El indicador muestra el último ciclo del agente y cuándo viene el próximo.'},
+      {el:'#torre-diario', place:'top', title:'Diario en tiempo real', text:'Las últimas decisiones y acciones del agente, apenas ocurren.'},
+      {el:'#torre-carga', place:'top', title:'Carga por operario', text:'Cuántas tareas y unidades tiene cada operario y el tiempo estimado que le queda. Si alguien está sobrecargado o libre, se ve al instante.'},
+      {el:'#torre-pend', place:'top', title:'Trabajo sin asignar', text:'Tareas que esperan dueño. Desde Asignaciones (o con el agente en modo automático) se reparten.'}
+    ],
+    tips:['Déjala abierta en una pantalla de la bodega, en modo oscuro.']
+  },
+
   dashboard: {
     icon:'◧', title:'Dashboard',
     summary:'Tu centro de mando: en una sola pantalla ves cómo viene la operación hoy, qué necesita atención y qué pasó en el inventario.',
@@ -19,9 +120,17 @@ window.NINJA_TOUR_GUIDES = {
       {el:'.side', place:'right', title:'El menú lateral', text:'Desde aquí navegas a todas las secciones. Los <b>Workflows</b> agrupan el día a día de la bodega (órdenes, recepción, picking) e <b>Inventario</b> lo que tienes y dónde. Más abajo están finanzas, comunicación y administración.'},
       {el:'.topbar', place:'bottom', title:'Barra superior: contexto y búsqueda', text:'Aquí eliges la <b>operación</b> y el <b>cliente</b> con el que estás trabajando: todo el panel se filtra según esa selección. El buscador encuentra un SKU, una orden o una ubicación al instante.'},
       {el:'#opmetrics', title:'Actividad operativa', text:'Las métricas de las últimas 24 horas comparadas con el período anterior: órdenes ingresadas, despachadas, unidades recibidas y más. Cambia la ventana a 7, 30 o 90 días, o define un rango personalizado.'},
-      {el:'#kpis', title:'Indicadores clave', text:'Los KPIs resumen el estado actual: stock disponible, órdenes pendientes, reservas y alertas. Si un número te llama la atención, haz clic en la sección correspondiente para profundizar.'},
+      {el:['#kpis','#dash-cards'], title:'Indicadores clave', text:'Los KPIs resumen el estado actual: stock disponible, órdenes pendientes, reservas y alertas. Si un número te llama la atención, haz clic en la sección correspondiente para profundizar.'},
+      {el:'#dash-scope', place:'bottom', title:'Alcance: operación o cliente', text:'Con <b>Toda la operación</b> ves los números consolidados; con <b>Cliente actual</b>, solo los del seller elegido arriba.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
+      {el:'#dash-cards', place:'bottom', title:'Tarjetas de control', text:'Cinco indicadores de servicio: órdenes <b>por despachar a tiempo y atrasadas</b>, <b>precisión de preparación</b>, <b>tiempo de preparación</b> B2B y B2C, y <b>ocupación de bodega</b>. Si una tarjeta dice «pendiente de configurar», te indica qué dato falta.'},
+      {el:'#dash-excepciones', place:'top', title:'Excepciones que requieren tu atención', text:'Órdenes vencidas o en riesgo, faltantes, recepciones abiertas: cada línea explica qué pasa y qué hacer, y te lleva a la pantalla donde se resuelve.'},
+      {el:['#dash-carga','#dash-cola'], place:'top', title:'Carga pendiente y cola de picking', text:'<b>Carga pendiente por cliente</b> muestra cuánto trabajo queda por seller. <b>Cola de picking por prioridad de courier</b> ordena lo que sale primero según los cortes de cada transportista.'},
+      {el:['#dash-prod','#dash-embalaje','#dash-prefac'], place:'top', title:'Productividad, embalaje y pre-facturación', text:'La <b>productividad por operario</b> (unidades y tareas del día), la <b>reposición de material de embalaje</b> cuando un insumo se está acabando y la <b>pre-facturación acumulada</b> por cliente del mes en curso.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
       {el:'.grid2', title:'Gráficos de zona y estados', text:'A la izquierda, cuántas unidades hay en cada <b>zona</b> de la bodega. A la derecha, las órdenes por <b>estado</b>: ingresadas, reservadas, en picking, empacadas y despachadas. Así detectas cuellos de botella de un vistazo.'},
       {el:'#activity', title:'Actividad reciente del ledger', text:'Cada movimiento de inventario queda registrado en un <b>ledger inmutable</b>: quién hizo qué, con qué SKU, en qué ubicación y cuánto. Nada se borra; todo es auditable.'},
+      {el:['#side-toggle','.side'], place:'right', title:'Menú: categorías, contadores y candados', text:'Las categorías se pliegan y despliegan; un <b>número rojo</b> junto a Conteo cíclico, Canal clientes o Alertas indica pendientes. Un <b>candado</b> marca un módulo fuera de tu plan: puedes verlo, y al intentar operarlo se explica cómo habilitarlo. El botón « contrae el menú a solo íconos.'},
+      {el:['#live-btn','#theme-toggle'], place:'bottom', title:'Al día, modo oscuro y tu cuenta', text:'El punto verde indica que los datos están al día; tócalo para refrescar. La luna cambia a <b>modo oscuro</b>. Desde el candado de la barra cambias tu contraseña, y <b>Cerrar sesión</b> está al pie del menú.'},
+      {el:'[id$="-export"]', place:'bottom', title:'Exportar a Excel', text:'Casi todas las tablas tienen un botón <b>Exportar</b> que descarga lo que estás viendo, con los filtros aplicados.', fallbackCenter:true},
       {el:'#nt-topbtn', place:'bottom', title:'Vuelve al tutorial cuando quieras', text:'Cada sección tiene su propio tutorial. Este botón lo abre en cualquier momento, y el <b>Centro de aprendizaje</b> del menú reúne todos los tutoriales y videos.'}
     ],
     tips:['El panel se actualiza solo cada 30 segundos mientras esté visible (punto verde junto al título); tócalo para refrescar al instante.','Usa el selector de cliente para revisar la operación de un seller en particular.','El buscador global acepta SKU, número de orden o código de ubicación.','El ledger de actividad es tu fuente de verdad ante cualquier diferencia de stock.']
@@ -34,7 +143,9 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#cop-insights', title:'Qué necesita tu atención', text:'El copiloto revisa órdenes, stock y tareas y te muestra <b>insights accionables</b>: SKUs por quebrar, órdenes atrasadas, recepciones pendientes. Pulsa «Actualizar» para volver a analizar.'},
       {el:'#cop-chips', place:'top', title:'Preguntas sugeridas', text:'Estos chips son preguntas frecuentes listas para usar. Haz clic en una para ver la respuesta al instante y aprender qué tipo de cosas puedes preguntar.'},
       {el:'#cop-q', place:'top', title:'Pregúntale a tu WMS', text:'Escribe en lenguaje natural: <b>«¿qué SKUs están por quebrar stock?»</b>, <b>«¿cuántas órdenes hay listas para despachar?»</b> o <b>«asigna el picking pendiente a Pedro»</b>. El copiloto consulta y también puede ejecutar acciones.'},
-      {el:'#cop-answer', title:'Respuestas con datos en vivo', text:'Las respuestas se construyen con la información actual de tu operación, no con datos genéricos. Cuando la acción modifica algo (por ejemplo, asignar una tarea), te pedirá confirmación antes de ejecutarla.'}
+      {el:'#cop-answer', title:'Respuestas con datos en vivo', text:'Las respuestas se construyen con la información actual de tu operación, no con datos genéricos. Cuando la acción modifica algo (por ejemplo, asignar una tarea), te pedirá confirmación antes de ejecutarla.'},
+      {el:'#cop-ai-status', place:'bottom', title:'Conectar la IA', text:'Con <b>Conectar IA</b> eliges proveedor y modelo, pegas tu API key y la pruebas. <b>Ver contexto</b> muestra exactamente qué información de tu operación recibe el modelo; <b>Desconectar</b> la retira.'},
+      {el:'#cop-settings', place:'bottom', title:'Confirmar o ejecutar directo', text:'Cuando el copiloto propone una acción (reservar, asignar, mover), puedes pedir que <b>confirme contigo</b> antes o que la <b>ejecute directo</b>. Empieza con confirmación.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
     ],
     tips:['Puedes preguntar por cliente, por SKU o por operario.',{t:'Cada recomendación y acción del copiloto queda registrada en «Auditoría IA».',mod:'aiaudit'}]
   },
@@ -58,6 +169,7 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#seller-wrap', place:'bottom', title:'Cómo llegar aquí', text:'En el selector de cliente de la barra superior elige <b>«Todos los clientes»</b>. Vuelve a un cliente específico para trabajar en su operación.'},
       {el:'#mc-kpis', title:'Totales de la operación', text:'Los KPIs consolidan órdenes abiertas, en riesgo, recepciones pendientes, quiebres y facturación del mes de todos los sellers.'},
+      {el:'#mc-month', place:'bottom', title:'Filtro por mes', text:'Cambia el mes para comparar la actividad y la pre-facturación de cada cliente en períodos anteriores.'},
       {el:'#mc-table', title:'Tabla comparativa', text:'Cada fila es un cliente. Ordena por cualquier columna haciendo clic en su cabecera para ver, por ejemplo, quién tiene más órdenes en riesgo o quién factura más. Haz clic en un cliente para ir a su detalle.'}
     ]
   },
@@ -67,12 +179,17 @@ window.NINJA_TOUR_GUIDES = {
     summary:'El flujo completo de fulfillment: desde que la orden entra desde el e-commerce hasta que sale despachada, con reserva de stock anti-sobreventa.',
     steps:[
       {el:'#ord-filters', title:'Filtra por estado', text:'Cada chip es un estado del ciclo de vida: <b>Ingresada → Reservada → En picking → Pickeada → Empacada → Despachada</b>. Haz clic en uno para ver solo esas órdenes y saber cuántas hay en cada etapa.'},
+      {el:['#ord-filters [data-f=DL_VENCIDO]','#ord-filters'], place:'bottom', title:'Vencidas y en riesgo', text:'Las dos últimas pastillas filtran por <b>deadline</b>: órdenes que ya pasaron su hora de corte y órdenes a las que les queda poco. En la tabla, la columna Deadline lleva un <b>semáforo</b> con el mismo criterio.'},
       {el:'#ord-new', place:'bottom', title:'Crear una orden manual', text:'Normalmente las órdenes llegan solas desde tu OMS o e-commerce. Con <b>Nueva orden</b> puedes crear una a mano: eliges canal, líneas con SKU y cantidad, courier y destinatario.'},
       {el:'#ord-import', place:'bottom', title:'Carga masiva', text:'¿Muchas órdenes? Sube un Excel con el formato de plantilla y se crean todas de una vez; el sistema valida SKUs y cantidades y te muestra qué filas tuvieron problemas.'},
       {el:'#ord-reserve-all', place:'bottom', title:'Reserva masiva', text:'Reserva el stock de todas las órdenes ingresadas de un solo clic. Cada reserva pasa la unidad de <b>disponible</b> a <b>reservada</b>: así nunca vendes lo que no tienes.'},
       {el:'#ord-body', place:'top', title:'La tabla y sus acciones', text:'Cada fila muestra orden, fecha, canal, tipo y estado. A la derecha aparecen las <b>acciones disponibles según el estado</b>: Reservar, A picking, Empacar, Etiquetas, Despachar o Cancelar. Solo ves lo que corresponde hacer ahora.'},
+      {el:'#ord-seller', place:'bottom', title:'Filtrar por cliente', text:'Al mirar <b>Todos los clientes</b>, este selector deja solo las órdenes de un seller. También puedes ordenar la tabla haciendo clic en cualquier encabezado.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
+      {el:['#ord-body [data-oedit]','#ord-body'], place:'left', title:'Editar, cancelar y reactivar', text:'Una orden <b>Ingresada</b> o <b>Reservada</b> todavía se puede <b>editar</b> (líneas, destinatario, courier). <b>Cancelar</b> libera su reserva; si fue un error, <b>Reactivar</b> la vuelve a Ingresada.'},
       {el:['th.selcol','#ord-selall-m'], place:'bottom', title:'Cambio de estado masivo', text:'Marca varias órdenes con las casillas (o <b>todas las visibles</b> de un filtro) y aparece una barra para aplicarles un cambio de estado de una vez: reservar, pasar a picking, confirmar picking, empacar, despachar o cancelar. Cada orden se procesa por separado y al final ves cuántas se actualizaron, cuántas se omitieron por estado y cuáles fallaron.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
       {el:'#drawer .panel', place:'left', title:'Detalle de la orden', text:'Al hacer clic en una fila se abre el detalle: líneas, destinatario, courier, empaque, tareas asignadas y el <b>historial auditable</b> de cada evento: quién lo hizo y cuándo.',
+        before:function(h){ var tr=document.querySelector('#ord-body tr.click'); if(tr){ tr.click(); return function(){ var d=document.getElementById('drawer'); if(d)d.classList.remove('on'); }; } }},
+      {el:'#drawer .panel', place:'left', title:'Deadline de la orden', text:'En el detalle ves el <b>deadline</b> (para cuándo debe estar lista), de dónde salió (corte del courier, SLA del cliente o el OMS) y puedes cambiarlo a mano si la operación lo requiere.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN'],
         before:function(h){ var tr=document.querySelector('#ord-body tr.click'); if(tr){ tr.click(); return function(){ var d=document.getElementById('drawer'); if(d)d.classList.remove('on'); }; } }},
       {el:'#ord-export', place:'bottom', title:'Exportar', text:'Descarga la vista actual a Excel para compartirla o analizarla fuera del sistema.'}
     ],
@@ -84,6 +201,7 @@ window.NINJA_TOUR_GUIDES = {
     summary:'El orden exacto en que hay que preparar los pedidos: primero por prioridad de courier y, dentro de cada courier, del más antiguo al más nuevo.',
     steps:[
       {el:'#pq-body .hint', title:'Orden forzado', text:'La cola respeta la <b>prioridad de courier</b> definida en el mantenedor del cliente y luego aplica <b>FIFO</b>. Nadie decide «cuál preparo»: el sistema ya lo resolvió para cumplir los cortes de retiro.'},
+      {el:['#dl-cfg','#pq-body .hint'], place:'bottom', title:'Cortes por courier', text:'Con <b>Configurar cortes</b> defines a qué hora retira cada courier por día de la semana. Con eso cada orden recibe su deadline sola y la cola se ordena por urgencia real.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
       {el:'#pq-body', title:'Las órdenes en fila', text:'Cada tarjeta muestra la posición, el courier, unidades y líneas. Solo aparecen órdenes <b>reservadas</b> o <b>en picking</b>: si la cola está vacía, primero reserva órdenes desde la sección Órdenes.'},
       {el:'#pq-body [data-pqgo]', place:'left', title:'Preparar en cadena', text:'Pulsa <b>Preparar</b> para abrir el picking guiado: el sistema indica de qué ubicación tomar cada SKU. Al terminar, te lleva automáticamente a la siguiente orden de la cola.'}
     ],
@@ -97,6 +215,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#inb-filters', title:'Estados de recepción', text:'<b>Pendiente</b>: se anunció pero aún no llega. <b>Parcial</b>: llegó una parte. <b>Recepcionada</b>: cerrada. Filtra con los chips para enfocarte en lo que falta por recibir.'},
       {el:'#inb-new', place:'bottom', title:'Nueva orden de recepción', text:'Crea el aviso de llegada con proveedor, referencia y los SKUs con cantidad <b>esperada</b>. Recibe un ID propio (OR-AAAAMMDD-XXXX) para seguirla.'},
       {el:'#inb-import', place:'bottom', title:'Carga masiva', text:'Importa varias recepciones desde Excel a la vez, ideal cuando el proveedor te envía su packing list.'},
+      {el:['#inb-body [data-redit]','#inb-body'], place:'left', title:'Editar o eliminar', text:'Una recepción <b>Pendiente</b> se puede <b>editar</b> (líneas, proveedor, referencia) o <b>eliminar</b> si se creó por error. Una vez que registra unidades, queda en el kardex y ya no se elimina.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
       {el:'#inb-body', place:'top', title:'Cotejo físico vs. teórico', text:'Al abrir una recepción, el equipo cuenta cada SKU y confirma lo recibido. El stock entra al inventario <b>solo al confirmar</b>. Puedes recibir en varios eventos y cerrar con faltante si el proveedor no completó.'},
       {el:'#inb-body tr', place:'bottom', title:'Manifiesto y auditoría', text:'Cada recepción se puede imprimir como <b>manifiesto PDF</b> con esperado, recibido y diferencia, y guarda una bitácora de quién contó qué y cuándo.'}
     ],
@@ -109,6 +228,7 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#ret-new', place:'bottom', title:'Registrar una devolución', text:'Parte desde la <b>orden de salida original</b>: eliges qué líneas y cuántas unidades vuelven. Así la devolución queda trazada con el pedido y el cliente.'},
       {el:'#ret-body', place:'top', title:'QA y disposición', text:'Al abrir la devolución revisas unidad por unidad y decides: <b>a stock</b> (vuelve a estar disponible), <b>merma</b> (se descarta) o <b>cuarentena</b> (se aparta para revisión). La columna «Dispuesto» resume el resultado.'},
+      {el:'#ret-body', place:'top', title:'Detalle e historial', text:'Haz clic en una devolución para ver sus líneas, la disposición de cada unidad (stock, merma o cuarentena) y el historial de quién hizo qué. En el QA también puedes <b>agregar un producto que no corresponde</b> a la orden original.'},
       {el:'[data-pg=returns] .toolbar', title:'Estados', text:'<b>Pendiente</b> cuando aún no se hace QA, <b>Parcial</b> si se dispuso una parte y <b>Completada</b> al terminar. Todo queda en el kardex como movimiento de tipo Devolución.'}
     ]
   },
@@ -118,8 +238,10 @@ window.NINJA_TOUR_GUIDES = {
     summary:'Lo recibido espera en zona de recepción; aquí lo guardas en su ubicación definitiva con un destino sugerido automáticamente.',
     steps:[
       {el:'#pw-body', place:'top', title:'Pendientes de guardar', text:'Cada fila es stock que ya entró pero sigue en recepción: SKU, lote y vencimiento, de qué recepción viene y cuánto falta por guardar.'},
+      {el:'#pw-tabs', place:'bottom', title:'Desde recepción y por reponer', text:'Dos pestañas: lo que llegó por <b>recepción</b> y espera ubicación, y lo que hay que <b>reponer</b> en picking porque se está acabando.'},
       {el:['[data-pg=putaway] thead th:nth-child(6)','#pw-body'], place:'top', title:'Destino sugerido', text:'El sistema propone la mejor ubicación según reglas de <b>slotting</b>: cercanía a la zona de picking, rotación del SKU y espacio disponible. Puedes aceptar la sugerencia o elegir otra.'},
-      {el:['#pw-body td:last-child','#pw-body'], place:'left', title:'Guardar', text:'Pulsa Guardar, confirma la cantidad y la ubicación. El movimiento queda en el kardex como <b>Guardado</b> y el stock pasa a estar disponible para reservar.'}
+      {el:['#pw-body td:last-child','#pw-body'], place:'left', title:'Guardar', text:'Pulsa Guardar, confirma la cantidad y la ubicación. El movimiento queda en el kardex como <b>Guardado</b> y el stock pasa a estar disponible para reservar.'},
+      {el:['#pw-body [data-pwall]','#pw-body'], place:'left', title:'Guardar todo aquí', text:'Si aceptas la sugerencia, <b>Guardar todo aquí</b> mueve toda la cantidad de una vez. Si prefieres repartirla, elige otra ubicación y una cantidad parcial.', roles:['ADMIN','SUPERVISOR','OPERATOR','PLATFORM_ADMIN']},
     ],
     tips:['Los operarios pueden hacer el putaway desde la app móvil escaneando la ubicación.',{t:'Las sugerencias aceptadas o rechazadas alimentan la Auditoría IA.',mod:'aiaudit'}]
   },
@@ -164,6 +286,8 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#inv-views', place:'bottom', title:'Dos formas de ver el stock', text:'<b>Consolidado por SKU</b> muestra totales: físico, reservado y disponible. <b>Detalle por ubicación</b> baja al nivel de cada posición, con lote y vencimiento.'},
       {el:'#inv-move', place:'bottom', title:'Guardar o mover', text:'Traslada stock entre ubicaciones o guarda lo que sigue en recepción. Cada traslado queda registrado en el kardex.'},
       {el:'#inv-body', place:'top', title:'Leer la tabla', text:'<b>Disponible = físico − reservado</b>. Lo reservado ya tiene dueño (una orden) y no se puede volver a vender. Las cantidades en cuarentena tampoco cuentan como disponibles.'},
+      {el:'#inv-body', place:'top', title:'Stock bajo', text:'Una fila se marca en <b>naranja</b> cuando el disponible de un SKU cae bajo su mínimo. Es la señal para reponer o avisar al cliente.'},
+      {el:'#inv-body', place:'top', title:'Lo que ve el cliente', text:'Un usuario cliente ve solo su propio stock, agrupado por SKU y <b>lote o serie</b>, sin las ubicaciones internas de la bodega ni la opción de mover.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
       {el:'#inv-export', place:'bottom', title:'Exportar', text:'Descarga el inventario actual a Excel para conciliaciones o reportes al cliente.'}
     ],
     tips:['Si el disponible es menor de lo que esperas, revisa las reservas en Órdenes.','El detalle por ubicación es la vista que usa el operario para el picking.']
@@ -177,7 +301,8 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#pr-new', place:'bottom', title:'Nuevo producto', text:'Define código SKU, descripción, tipo (simple o kit), EAN y niveles de empaque (unidad, caja/DUN). El SKU es <b>propio del cliente</b>: dos clientes pueden usar el mismo código sin colisión.'},
       {el:'#pr-import', place:'bottom', title:'Carga masiva', text:'Sube el maestro completo desde Excel. Es la forma más rápida de iniciar un cliente nuevo.'},
       {el:'#pr-body', place:'top', title:'Kits virtuales y armados', text:'Un kit <b>virtual</b> se explota en sus componentes al reservar y pickear. Un kit <b>armado</b> tiene stock propio y se ensambla en bodega. Elige según cómo trabaja el cliente.'},
-      {el:'#pr-body', place:'top', title:'Historial por producto', text:'El botón <b>Historial</b> de cada fila muestra cada creación, edición, activación o desactivación con usuario y fecha. Un SKU desactivado no se puede usar en órdenes nuevas pero conserva su historia.'}
+      {el:'#pr-body', place:'top', title:'Historial por producto', text:'El botón <b>Historial</b> de cada fila muestra cada creación, edición, activación o desactivación con usuario y fecha. Un SKU desactivado no se puede usar en órdenes nuevas pero conserva su historia.'},
+      {el:'#pr-export', place:'bottom', title:'Exportar', text:'Descarga el catálogo a Excel con los mismos campos de la plantilla de carga: sirve para revisarlo o corregirlo y volver a subirlo.'},
     ]
   },
 
@@ -187,7 +312,8 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#pkg-new', place:'bottom', title:'Nuevo insumo', text:'Registra cada tipo de caja o material con SKU interno, EAN, nombre y <b>precio</b>. Son de la bodega, no del cliente.'},
       {el:'#pkg-body', place:'top', title:'Saldo y consumo', text:'El saldo baja cada vez que un empaque usa el insumo. Así sabes cuándo reponer y cuánto embalaje se consumió por cliente para facturarlo.'},
-      {el:'#pkg-body', place:'top', title:'Reponer, costos e historial', text:'Con <b>Reponer</b> registras cada ingreso con cantidad, <b>costo unitario de compra</b>, proveedor o N° de guía y usuario. El sistema calcula el <b>costo promedio ponderado</b> (PMP) del insumo, el margen contra el precio de cobro y el valor del stock. <b>Historial</b> muestra reposiciones, consumos (valorizados al costo del momento) y ajustes.'}
+      {el:'#pkg-body', place:'top', title:'Reponer, costos e historial', text:'Con <b>Reponer</b> registras cada ingreso con cantidad, <b>costo unitario de compra</b>, proveedor o N° de guía y usuario. El sistema calcula el <b>costo promedio ponderado</b> (PMP) del insumo, el margen contra el precio de cobro y el valor del stock. <b>Historial</b> muestra reposiciones, consumos (valorizados al costo del momento) y ajustes.'},
+      {el:'#pkg-body', place:'top', title:'Ajuste y precio por cliente', text:'<b>Ajuste</b> corrige el saldo tras un conteo (con motivo). <b>Precios cliente</b> fija un precio distinto del base para un seller en particular; ese es el que se factura.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
     ]
   },
 
@@ -197,8 +323,10 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#loc-new', place:'bottom', title:'Nueva ubicación', text:'Crea posiciones con código (pasillo-rack-nivel), zona y capacidad. Las zonas se usan en los gráficos del dashboard y en las sugerencias de guardado.'},
       {el:'#loc-import', place:'bottom', title:'Carga masiva', text:'Descarga el formato Excel, completa una fila por ubicación (código, zona, bodega, capacidad, cercanía a picking) y súbelo. Antes de guardar verás qué se crea y qué cambia. Ideal para montar la bodega completa de una vez.', roles:['PLATFORM_ADMIN','ADMIN','SUPERVISOR']},
-      {el:'#loc-grid', place:'top', title:'Ocupación en vivo', text:'Cada tarjeta muestra la ubicación, su zona y cuántas unidades tiene. Haz clic para ver qué SKUs y de qué clientes están ahí. El color indica el nivel de ocupación.'},
-      {el:'#loc-grid', place:'top', title:'Editar, desactivar o eliminar', text:'Una ubicación que nunca tuvo movimientos se puede <b>eliminar</b>. Si ya registró stock, el kardex la referencia: en ese caso se <b>desactiva</b> y deja de usarse para guardado y picking.'}
+      {el:['#loc-q','#loc-zone'], place:'bottom', title:'Buscar y filtrar', text:'Busca por código o filtra por <b>zona</b> (recepción, almacenaje, picking, despacho, cuarentena). El contador muestra cuántas ubicaciones cumplen el filtro.'},
+      {el:['#loc-view','#loc-export'], place:'bottom', title:'Lista o tarjetas, y exportar', text:'La vista de <b>lista</b> es más densa para bodegas grandes; la de <b>tarjetas</b> muestra la ocupación con color. <b>Exportar</b> descarga el mapa completo a Excel.'},
+      {el:['#loc-grid','#loc-listwrap'], place:'top', title:'Ocupación en vivo', text:'Cada tarjeta muestra la ubicación, su zona y cuántas unidades tiene. Haz clic para ver qué SKUs y de qué clientes están ahí. El color indica el nivel de ocupación.'},
+      {el:['#loc-grid','#loc-listwrap'], place:'top', title:'Editar, desactivar o eliminar', text:'Una ubicación que nunca tuvo movimientos se puede <b>eliminar</b>. Si ya registró stock, el kardex la referencia: en ese caso se <b>desactiva</b> y deja de usarse para guardado y picking.'}
     ],
     tips:['Imprime las etiquetas de ubicación para el escaneo desde la app móvil.']
   },
@@ -215,7 +343,10 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#rt-approval', place:'right', title:'Aprobación del cliente', text:'Si lo activas, cada factura queda <b>pendiente</b> hasta que el cliente la apruebe desde su portal, registrando quién y cuándo. Si no, se emite directamente.'},
       {el:'#bill-manage .card:last-child', place:'left', title:'Generar la factura', text:'Elige año y mes. <b>Vista previa</b> te muestra el cálculo concepto por concepto antes de emitir. El almacenamiento integra las unidades físicas en el tiempo (unidad-mes); <b>despacho, picking y embalaje se cobran por las órdenes despachadas dentro del mes</b>, así un pedido nunca se factura a medias entre dos períodos.'},
       {el:'#bill-invoices', place:'top', title:'Facturas emitidas', text:'Cada factura tiene período, fecha, emisor, estado y total. Ábrela para ver el detalle y descargar el <b>PDF imprimible</b>.'},
+      {el:'#bill-invoices', place:'top', title:'Ciclo de cada factura', text:'Al abrir una factura: <b>Editar</b> ítems y número mientras no esté facturada; <b>Facturar</b> subiendo el documento tributario (PDF o XML); <b>Ver</b> o descargar ese documento; <b>Deshacer</b> si te equivocaste; <b>Enviar por correo</b> al cliente, con el registro de envíos; y <b>Eliminar</b> una factura que no corresponde.', roles:['ADMIN','PLATFORM_ADMIN']},
       {el:'#bd-kpis', title:'Dashboard de facturación', text:'De vuelta en Resumen: ingresos del período, composición por concepto, tendencia mensual y apertura por cliente. Es la mirada comercial de la operación.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN'],
+        before:function(h){ h.click('[data-billtab=dash]'); return function(){ h.click('[data-billtab=inv]'); }; }},
+      {el:['#bd-year','#bd-month'], place:'bottom', title:'Filtros del resumen', text:'Elige año y mes para ver los KPIs y gráficos de ese período.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN'],
         before:function(h){ h.click('[data-billtab=dash]'); return function(){ h.click('[data-billtab=inv]'); }; }},
       {el:'#bill-cli-note', title:'Portal del cliente', text:'Como cliente, aquí revisas las facturas emitidas por tu operador, abres el detalle y las <b>apruebas</b> cuando corresponde.', roles:['CLIENT']}
     ],
@@ -241,6 +372,7 @@ window.NINJA_TOUR_GUIDES = {
     summary:'Tu plan de Ninja WMS: qué módulos incluye y cuánto has usado este mes.',
     steps:[
       {el:'#plan-current', place:'right', title:'Tu plan actual', text:'Muestra el plan contratado, los módulos habilitados y los límites. Los módulos que no incluye aparecen con un <b>candado</b> en el menú.'},
+      {el:'#plan-trial', place:'bottom', title:'Tu período de prueba', text:'Durante la prueba tienes el plan Growth completo. La barra indica cuántos días quedan; al terminar, la cuenta sigue en Free y los módulos que no incluye quedan visibles con candado.', roles:['ADMIN','SUPERVISOR','CLIENT']},
       {el:'#plan-usage', place:'left', title:'Uso este mes', text:'Órdenes, SKUs, usuarios y otros contadores frente a su límite. Si te acercas al tope, habla con tu ejecutivo para revisar el plan.'},
       // El comparador solo existe para la plataforma: es una tabla de tarifas. El paso
       // se filtra por rol para que el tour no apunte a una tarjeta que no está.
@@ -277,6 +409,7 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#wh-new', place:'bottom', title:'Nuevo webhook', text:'Indica la URL de destino y qué eventos suscribir (orden despachada, recepción confirmada, etc.). Se genera un <b>secreto</b> para que verifiques la firma de cada entrega.'},
       {el:'#wh-list', place:'top', title:'Tus suscripciones', text:'Cada fila muestra URL, eventos, alcance y estado. Puedes pausar, probar o eliminar una suscripción.'},
+      {el:'#wh-list', place:'top', title:'Editar, probar, entregas y eliminar', text:'Desde cada fila puedes <b>editar</b> URL y eventos, <b>activar o pausar</b>, <b>probar</b> (envía un evento de ejemplo) y ver las <b>entregas</b> con su respuesta HTTP para depurar. <b>Eliminar</b> corta la suscripción.'},
       {el:'#wh-access-card', place:'top', title:'Acceso de clientes', text:'Como operador decides qué clientes pueden administrar sus propios webhooks desde su portal.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']}
     ],
     tips:['Guarda el secreto al crearlo: por seguridad no se vuelve a mostrar.']
@@ -311,8 +444,11 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#asg-view', place:'bottom', title:'Dos vistas', text:'<b>Por tipo de tarea</b> muestra la carga y el pool de un tipo (picking, empaque, despacho…). <b>Por operario</b> muestra todo lo asignado a una persona.'},
       {el:'#asg-type', place:'bottom', title:'Familia de tarea', text:'Cambia entre picking, empaque, despacho, guardado, recepción, re-slotting y conteo. Cada familia tiene su propio pool.'},
       {el:'#asg-mode', place:'bottom', title:'Advisory o estricto', text:'En <b>Advisory</b> el sistema sugiere y tú confirmas. En <b>Estricto</b> los operarios solo pueden tomar lo que tienen asignado.'},
+      {el:'#asg-selfpick', place:'bottom', title:'Que los operarios tomen tareas', text:'Con <b>Tomar tareas</b> activado, cada operario ve en su app la pestaña <b>Disponibles</b> y se asigna trabajo solo, en el orden de prioridad de la cola. Útil cuando no hay supervisor repartiendo.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
       {el:'#asg-balance', place:'bottom', title:'Auto-balancear y redistribuir', text:'<b>Auto-balancear</b> reparte el pool según velocidad y carga de cada operario. <b>Redistribuir</b> mueve tareas no iniciadas del más cargado al más libre. <b>Continuo</b> lo hace solo, permanentemente.'},
       {el:'#asg-load-body', place:'top', title:'Carga por operario', text:'Velocidad histórica en unidades por hora, tareas abiertas, unidades y horas estimadas. Así ves quién terminará primero y quién va atrasado.'},
+      {el:['#tt-body','#tt-learn'], place:'top', title:'Modelo de tiempo', text:'En la vista <b>Por tipo de tarea</b> ves cuánto tarda cada familia (picking, guardado, recepción) por unidad y por ubicación visitada. <b>Reajustar</b> vuelve a calcularlo con los tiempos reales de tu bodega; con eso la <b>proyección de carga</b> tras balancear es realista.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN'],
+        before:function(h){ var on=document.querySelector('#asg-view .segbtn.on'), t=document.querySelector('#asg-view .segbtn[data-asgv=tipo]'); if(t&&on!==t){ t.click(); return function(){ if(on)on.click(); }; } }},
       {el:'#asg-pool-body', place:'top', title:'Pool de pendientes', text:'Cada tarea pendiente con su cliente y unidades. Asigna a un operario desde la última columna o deja que el balanceo lo haga.'}
     ],
     tips:[{t:'El copiloto de voz puede activar el balanceo: «mantén el equipo balanceado solo».',mod:'voz'}]
@@ -324,9 +460,10 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#agt-status', place:'bottom', title:'Nivel de autonomía y modo sombra', text:'Elige hasta dónde puede actuar solo: <b>0</b> solo propone, <b>1</b> asigna y balancea, <b>2</b> además avanza órdenes y crea recepciones u órdenes, <b>3</b> todo dentro de límites. Con <b>modo sombra</b> decide y anota lo que haría sin ejecutar: úsalo para calibrar antes de soltarlo. Aquí también fijas límites por ciclo y por hora, el correo o webhook de aviso y la pausa.'},
       {el:'#agt-eval', place:'bottom', title:'Ejecutar ciclo ahora', text:'Fuerza un ciclo completo inmediato. Normalmente corre solo cada dos minutos, aunque nadie tenga el panel abierto.'},
-      {el:'#agt-alerts', place:'top', title:'Alertas por entidad', text:'Cada alerta nombra la orden, el SKU, el lote o el operario afectado y propone qué hacer. Si la regla tiene acción automática, verás si se ejecutó, quedó propuesta para tu confirmación o se registró en sombra.'},
+      {el:'.nav[data-pg=agalertas]', place:'right', title:'Alertas por entidad', text:'Cada alerta nombra la orden, el SKU, el lote o el operario afectado, con una sugerencia y, cuando aplica, un botón para ejecutarla. Viven en <b>Alertas activas</b>, en el menú.'},
       {el:'#agt-instr', place:'top', title:'Instrucciones al agente', text:'Directrices en lenguaje natural que el agente respeta en cada ciclo («hoy priorizar Chilexpress», «no despachar Tienda X hasta que apruebe»), con vigencia opcional. También se pueden dictar desde el copiloto.'},
-      {el:'#agt-journal', place:'top', title:'Diario', text:'La memoria del agente: qué evaluó, qué decidió y por qué, qué habría hecho en sombra y qué resultado tuvo. Es la base para subir el nivel de autonomía con evidencia.'},
+      {el:'#agt-agenda', place:'top', title:'Ventanas horarias', text:'Define en qué días y horas puede actuar el agente. Fuera de esas ventanas solo observa y alerta; no ejecuta.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
+      {el:'.nav[data-pg=agdiario]', place:'right', title:'Diario', text:'La memoria del agente, ciclo a ciclo, está en <b>Diario del agente</b>: qué evaluó, qué decidió y con qué resultado.'},
       {el:'#agt-rules', place:'top', title:'Reglas', text:'Enciende o apaga cada regla, ajusta su <b>umbral</b> y su <b>enfriamiento</b>, y elige si solo avisa, ejecuta con confirmación o ejecuta directo (siempre dentro de la política de autonomía).'}
     ]
   },
@@ -346,7 +483,9 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#cli-new', place:'bottom', title:'Nuevo cliente', text:'Crea el seller con nombre e ID. Su stock, SKUs y órdenes quedan <b>totalmente aislados</b> de los demás clientes, aunque compartan ubicaciones físicas.'},
       {el:'#cli-body', place:'top', title:'Configuración por cliente', text:'Estrategia de <b>picking</b> (por ejemplo FIFO o por vencimiento), estrategia de <b>conteo</b> (ABC), prioridad de courier y estado. Edita desde la acción de la fila.'},
-      {el:['#cli-body td:last-child','#cli-body'], place:'left', title:'Usuarios del cliente', text:'Cada cliente puede tener usuarios con rol CLIENT que entran a su portal: ven su stock, órdenes, recepciones y facturas, y conversan con operaciones.'}
+      {el:['#cli-body td:last-child','#cli-body'], place:'left', title:'Usuarios del cliente', text:'Cada cliente puede tener usuarios con rol CLIENT que entran a su portal: ven su stock, órdenes, recepciones y facturas, y conversan con operaciones.'},
+      {el:'#cli-body', place:'top', title:'Reglas por cliente', text:'Al <b>editar</b> un cliente defines su estrategia de picking, la <b>prioridad de couriers</b>, el <b>SLA</b> de preparación y si sus órdenes se <b>reservan automáticamente</b> al ingresar.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
+      {el:'#cli-demo', place:'bottom', title:'Sandbox de demostración', text:'Crea un cliente ficticio con productos, stock y órdenes para mostrar el flujo completo a un prospecto sin tocar datos reales.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
     ]
   },
 
@@ -374,7 +513,8 @@ window.NINJA_TOUR_GUIDES = {
     summary:'Cada operación es un mundo aislado en la plataforma: sus bodegas, clientes, usuarios e inventario.',
     steps:[
       {el:'#ops-new', place:'bottom', title:'Nueva operación', text:'Crea un tenant nuevo con su nombre y administrador inicial. Desde ese momento tiene su propio espacio, invisible para las demás operaciones.'},
-      {el:'#ops-grid', place:'top', title:'Operaciones existentes', text:'Cada tarjeta resume clientes, usuarios y actividad. Selecciona una en la barra superior para administrarla como si fueras su admin.'}
+      {el:'#ops-grid', place:'top', title:'Operaciones existentes', text:'Cada tarjeta resume clientes, usuarios y actividad. Selecciona una en la barra superior para administrarla como si fueras su admin.'},
+      {el:'#ops-grid', place:'top', title:'Ficha y edición', text:'Cada tarjeta muestra la ficha del alta (contacto, celular, email, tipo, fecha y campaña de origen), los indicadores de uso y el plan. Con <b>Editar</b> cambias nombre y contacto, y desde ahí la <b>activas o desactivas</b>.'},
     ]
   },
 
@@ -393,7 +533,8 @@ window.NINJA_TOUR_GUIDES = {
     summary:'Comunica novedades a todos los administradores con una barra superior que enlaza a una landing y mide los clics.',
     steps:[
       {el:'#ann-new', place:'bottom', title:'Nuevo anuncio', text:'Título, enlace y texto del botón. Al activarlo aparece la barra superior para admins y supervisores de todas las operaciones.'},
-      {el:'#ann-list', place:'top', title:'Seguimiento', text:'Cada anuncio muestra estado, clics recibidos y fecha. Desactívalo cuando termine la campaña.'}
+      {el:'#ann-list', place:'top', title:'Seguimiento', text:'Cada anuncio muestra estado, clics recibidos y fecha. Desactívalo cuando termine la campaña.'},
+      {el:'#ann-list', place:'top', title:'Activar, clics y eliminar', text:'Cada anuncio se <b>activa o pausa</b> desde su fila, muestra cuántos <b>clics</b> tuvo el enlace y se puede <b>editar</b> (texto, enlace, audiencia por rol) o <b>eliminar</b>.'},
     ]
   }
 };

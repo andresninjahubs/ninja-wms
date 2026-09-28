@@ -1385,6 +1385,9 @@ export class RegisterDto {
   @IsString() @MinLength(6) @MaxLength(200) password!: string;
 
   @IsIn(['brand', 'operator']) track!: 'brand' | 'operator';
+
+  // Origen de campaña (utm_*, gclid) que el panel capturó de la URL de llegada.
+  @IsOptional() @IsString() @MaxLength(400) source?: string;
 }
 
 export class VerifyEmailDto {
