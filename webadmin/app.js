@@ -495,7 +495,71 @@
     }).then(function(){
       // Tutoriales guiados: contexto + oferta automática en la sección visible.
       if(window.NinjaTour){ window.NINJA_NAV_BY_ROLE=NAV_BY_ROLE; NinjaTour.setContext({go:go,getRole:function(){return role;},onboarding:function(){ return role==='CLIENT'?Promise.resolve(null):api('/onboarding?operationId='+encodeURIComponent(op||'')); }}); var cur=$(".page.on"); NinjaTour.onPage(cur?cur.getAttribute("data-pg"):"dashboard"); }
+      // Super admin: al iniciar sesión, las altas nuevas que nadie revisó todavía.
+      if(role==='PLATFORM_ADMIN')setTimeout(revisarNuevasOperaciones,600);
     }).catch(err);
+  }
+
+  // ===== Nuevas operaciones (popup del super admin) ==========================
+  // Cada alta self-serve queda "pendiente de revisar" hasta que un super admin la marca.
+  // Mientras tanto aparece en este popup en cada inicio de sesión: es la lista de leads
+  // que hay que contactar, y no debe perderse entre sesiones ni dispositivos.
+  var nuevasOps=[];
+  function revisarNuevasOperaciones(forzar){
+    return api('/operations/new-signups').then(function(list){
+      nuevasOps=list||[]; pintaBadgeNuevas();
+      if(!nuevasOps.length){ if(forzar)toast('No hay operaciones nuevas por revisar'); return; }
+      if(window.NinjaTour&&NinjaTour.isRunning&&NinjaTour.isRunning())NinjaTour.end();
+      abrirNuevasOperaciones();
+    }).catch(function(){});
+  }
+  function pintaBadgeNuevas(){
+    var n=$('.nav[data-pg="operations"]'); if(!n)return;
+    var b=n.querySelector('.badge-new'); if(!b){ b=document.createElement('span'); b.className='badge badge-new'; n.appendChild(b); }
+    b.textContent=nuevasOps.length?String(nuevasOps.length):''; b.classList.toggle('hidden',!nuevasOps.length);
+    b.title=nuevasOps.length?nuevasOps.length+' operación(es) nueva(s) por revisar':'';
+  }
+  function haceCuanto(iso){
+    if(!iso)return ''; var m=Math.round((Date.now()-Date.parse(iso))/60000);
+    if(m<1)return 'recién'; if(m<60)return 'hace '+m+' min'; var h=Math.round(m/60); if(h<48)return 'hace '+h+' h'; return 'hace '+Math.round(h/24)+' días';
+  }
+  function abrirNuevasOperaciones(){
+    var filas=nuevasOps.map(function(o){
+      var tel=o.contactPhone?String(o.contactPhone).replace(/\D/g,''):'';
+      var wa=tel?'https://wa.me/'+tel+'?text='+encodeURIComponent('Hola '+(o.contactName||'')+', soy '+(me&&me.name?me.name.split(' ')[0]:'')+' de Ninja Hubs. Vi que creaste tu cuenta de Ninja WMS para '+o.name+'. ¿Te ayudo a dejarla operando?'):'';
+      var pista=o.track==='operator'?'Operador 3PL':'Marca / tienda';
+      var prog=o.progress&&o.progress.total?o.progress.done+'/'+o.progress.total:'—';
+      var pct=o.progress&&o.progress.total?Math.round(o.progress.done/o.progress.total*100):0;
+      return '<div class="nop-card" data-nop="'+esc(o.id)+'">'
+        +'<div class="nop-h"><div class="oi">'+esc(inicialesOp(o))+'</div><div style="flex:1;min-width:0"><div class="nop-n">'+esc(o.name)+'</div><div class="nop-m">'+esc(pista)+' · '+esc(haceCuanto(o.createdAt))+(o.createdAt?' ('+esc(fmtDate(o.createdAt))+')':'')+'</div></div>'
+        +'<label class="nop-ck"><input type="checkbox" data-nopck="'+esc(o.id)+'"> Revisada</label></div>'
+        +'<div class="nop-g">'
+        +'<div><span>Contacto</span><b>'+esc(o.contactName||'—')+'</b></div>'
+        +'<div><span>Celular</span><b>'+(o.contactPhone?'<a href="tel:'+esc(tel)+'">'+esc(o.contactPhone)+'</a>':'—')+'</b></div>'
+        +'<div><span>Email</span><b>'+(o.contactEmail?'<a href="mailto:'+esc(o.contactEmail)+'">'+esc(o.contactEmail)+'</a>':'—')+'</b></div>'
+        +'<div><span>Origen</span><b>'+esc(o.leadSource?origenLegible(o.leadSource):'directo')+'</b></div>'
+        +'<div><span>Plan</span><b>'+esc((o.planId||'free').toUpperCase())+(o.trialEndsAt&&Date.parse(o.trialEndsAt)>Date.now()?' · prueba hasta '+esc(fmtDate(o.trialEndsAt).split(',')[0]):'')+'</b></div>'
+        +'<div><span>Puesta en marcha</span><b>'+prog+' <i class="nop-bar"><i style="width:'+pct+'%"></i></i></b>'+(o.progress&&o.progress.next?'<small>Siguiente: '+esc(o.progress.next)+'</small>':'')+'</div>'
+        +'</div>'
+        +'<div class="nop-a">'+(wa?'<a class="btn pri mini" target="_blank" rel="noopener" href="'+wa+'">WhatsApp</a>':'')+(o.contactPhone?'<a class="btn mini" href="tel:'+esc(tel)+'">Llamar</a>':'')+(o.contactEmail?'<a class="btn mini" href="mailto:'+esc(o.contactEmail)+'">Correo</a>':'')+'<button class="btn mini" data-nopgo="'+esc(o.id)+'">Ver en Operaciones</button></div>'
+        +'</div>';
+    }).join('');
+    openModal(nuevasOps.length===1?'Nueva operación activada':nuevasOps.length+' operaciones nuevas activadas',
+      '<p class="muted" style="margin:0 0 14px">Cuentas creadas desde el registro que todavía nadie revisó. Seguirán apareciendo cada vez que inicies sesión hasta que las marques como revisadas.</p>'
+      +'<div class="nop-list">'+filas+'</div>'
+      +'<div class="nop-foot"><button class="btn" id="nop-later">Recordarme después</button><span style="flex:1"></span><button class="btn" id="nop-all">Marcar todas como revisadas</button><button class="btn pri" id="nop-save">Guardar revisadas</button></div>','xl');
+    $("#nop-later").addEventListener('click',closeModal);
+    function marcar(ids){
+      if(!ids.length){ toast('Marca al menos una como revisada'); return; }
+      api('/operations/new-signups/review',{method:'POST',body:{ids:ids}}).then(function(r){
+        toast((r&&r.reviewed)===1?'1 operación marcada como revisada':(r&&r.reviewed||0)+' operaciones marcadas como revisadas');
+        nuevasOps=nuevasOps.filter(function(o){return ids.indexOf(o.id)<0;}); pintaBadgeNuevas(); if(D.ops&&can('operation'))reloadOps();
+        if(nuevasOps.length)abrirNuevasOperaciones(); else closeModal();
+      }).catch(err);
+    }
+    $("#nop-all").addEventListener('click',function(){ marcar(nuevasOps.map(function(o){return o.id;})); });
+    $("#nop-save").addEventListener('click',function(){ marcar($$('#m-body [data-nopck]').filter(function(c){return c.checked;}).map(function(c){return c.getAttribute('data-nopck');})); });
+    $$('#m-body [data-nopgo]').forEach(function(b){ b.addEventListener('click',function(){ closeModal(); go('operations'); }); });
   }
 
   function loadOp(){
@@ -7064,7 +7128,7 @@
     var origen=o.leadSource?esc(origenLegible(o.leadSource)):"";
     var cuerpo=fila("Contacto",o.contactName?esc(o.contactName):"")+fila("Celular",tel+wa)+fila("Email",mail)+fila("Se registró como",pista?esc(pista):"")+fila("Origen",origen)+fila("Fecha de alta",alta?esc(alta):"");
     if(!cuerpo) return "";
-    return '<div class="opficha"><div class="ofi-h">'+(o.selfServe?"Registro self-serve":"Datos de contacto")+'</div>'+cuerpo+'</div>';
+    return '<div class="opficha"><div class="ofi-h">'+(o.selfServe?"Registro self-serve":"Datos de contacto")+(o.selfServe&&!o.reviewedAt?'<span class="opnueva">Nueva · sin revisar</span>':'')+'</div>'+cuerpo+'</div>';
   }
 
   function renderOps(){
@@ -7087,6 +7151,7 @@
   function opName(id){var o=byId(D.ops,id);return o?(o.name||o.id):id;}
   function reloadUsers(){return api('/users').then(function(u){D.users=u;renderUsers();}).catch(err);}
   function reloadLocations(){return api('/operations/'+op+'/locations').then(function(ls){D.locations=ls;locByCode={};locById={};ls.forEach(function(l){locByCode[l.code]=l;locById[l.id]=l;});renderLocations();renderKpis();renderZone();}).catch(err);}
+  if($("#ops-nuevas"))$("#ops-nuevas").addEventListener('click',function(){ revisarNuevasOperaciones(true); });
   function reloadOps(){return api('/operations').then(function(ops){D.ops=ops;fill($("#op"),ops.map(function(o){return {v:o.id,t:o.name||o.id};}));$("#op").value=op;renderOps();}).catch(err);}
 
   // ----- Clientes (sellers) -----

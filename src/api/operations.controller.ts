@@ -26,6 +26,21 @@ export class OperationsController {
     return this.wms.listOperations();
   }
 
+  /** Altas self-serve pendientes de revisar (popup del super admin al iniciar sesión). */
+  @Get('new-signups')
+  @RequirePermission('operation:manage')
+  newSignups() {
+    return this.wms.listNewSignups();
+  }
+
+  /** Marca altas como revisadas: dejan de aparecer en el popup. */
+  @Post('new-signups/review')
+  @RequirePermission('operation:manage')
+  reviewSignups(@Body() body: { ids?: string[] }, @CurrentUser() user: User) {
+    const ids = Array.isArray(body?.ids) ? body.ids.filter((x) => typeof x === 'string').slice(0, 200) : [];
+    return this.wms.markSignupsReviewed(ids, actorOf(user));
+  }
+
   /** Editar nombre / activar-desactivar una operación (solo plataforma). */
   @Patch(':operationId')
   @RequirePermission('operation:manage')

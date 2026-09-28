@@ -260,6 +260,9 @@ export interface Operation {
   contactPhone?: string | null;
   /** Origen del alta (utm/gclid como query string), para saber qué campaña trajo la cuenta. */
   leadSource?: string | null;
+  /** Alta revisada por la plataforma (popup de nuevas operaciones). null = pendiente de revisar. */
+  reviewedAt?: string | null;
+  reviewedBy?: string | null;
   /** Cuándo nació la cuenta (ISO). En las operaciones antiguas puede venir null. */
   createdAt?: string | null;
   // Plan del SaaS (PLG · Fase 1). Ausente = 'internal' (sin límites): super-admin / semilla.

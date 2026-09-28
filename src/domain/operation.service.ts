@@ -129,6 +129,15 @@ export class OperationService {
     return op;
   }
 
+  /** Marca el alta como revisada por la plataforma (no vuelve a aparecer en el popup). */
+  async markReviewed(operationId: string, by: string, at: string): Promise<Operation> {
+    const op = await this.operations.findById(operationId);
+    if (!op) throw new NotFoundError(`Operación no encontrada: ${operationId}`);
+    const updated: Operation = { ...op, reviewedAt: at, reviewedBy: by };
+    await this.operations.save(updated);
+    return updated;
+  }
+
   async list(): Promise<Operation[]> {
     return this.operations.list();
   }

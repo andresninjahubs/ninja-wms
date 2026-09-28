@@ -2840,6 +2840,39 @@ export class WmsFacade {
    * reales (no flags almacenados) que empuja hacia el "aha": despachar la 1ª orden.
    * `emailVerified` lo completa la capa API con el usuario actual.
    */
+  /**
+   * Altas self-serve que la plataforma todavía no revisó: las muestra el popup del
+   * super admin al iniciar sesión hasta que alguien las marca como revisadas. Es una
+   * cola compartida: si un super admin la revisa, deja de aparecerle a los demás.
+   */
+  async listNewSignups(): Promise<Array<{
+    id: string; name: string; track: string | null; contactName: string | null; contactEmail: string | null; contactPhone: string | null;
+    leadSource: string | null; createdAt: string | null; planId: string | null; trialEndsAt: string | null; active: boolean;
+    progress: { done: number; total: number; next: string | null };
+  }>> {
+    const ops = (await this.operationsService.list()).filter((o) => o.selfServe && !o.reviewedAt);
+    ops.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    const out = [];
+    for (const o of ops) {
+      const st = await this.getOnboardingState(o.id).catch(() => null);
+      const next = st ? (st.steps.find((x) => !x.done && x.key !== 'verify_email') || null) : null;
+      out.push({
+        id: o.id, name: o.name, track: o.track ?? null, contactName: o.contactName ?? null, contactEmail: o.contactEmail ?? null,
+        contactPhone: o.contactPhone ?? null, leadSource: o.leadSource ?? null, createdAt: o.createdAt ?? null,
+        planId: o.planId ?? null, trialEndsAt: o.trialEndsAt ?? null, active: o.active,
+        progress: { done: st ? st.steps.filter((x) => x.done).length : 0, total: st ? st.steps.length : 0, next: next ? next.label : null },
+      });
+    }
+    return out;
+  }
+
+  async markSignupsReviewed(ids: string[], by: string): Promise<{ reviewed: number }> {
+    const at = this.nowIso();
+    let n = 0;
+    for (const id of ids) { await this.operationsService.markReviewed(id, by, at); n++; }
+    return { reviewed: n };
+  }
+
   async getOnboardingState(operationId: string): Promise<{
     track: 'brand' | 'operator';
     activated: boolean;

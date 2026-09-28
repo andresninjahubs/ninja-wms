@@ -35,6 +35,9 @@ model Operation {
   contactPhone String?
   /// De dónde vino el registro (campaña): "utm_source=google&utm_campaign=wms-cl&gclid=…" o null.
   leadSource   String?
+  /// Cuándo la plataforma revisó el alta (popup de nuevas operaciones del super admin). null = pendiente.
+  reviewedAt   DateTime?
+  reviewedBy   String?
   createdAt   DateTime  @default(now())
 
   packagingMaterials PackagingMaterial[] // FK PackagingMaterial → Operation (G8)
