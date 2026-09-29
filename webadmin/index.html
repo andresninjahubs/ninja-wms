@@ -1218,14 +1218,14 @@
 .nop-a a.btn,.nop-a a.btn:hover{text-decoration:none}
 .nop-foot .btn{white-space:nowrap}
 /* Botón flotante de WhatsApp (consultas a Ninja Hubs) */
-.wa-float{position:fixed;right:22px;bottom:22px;z-index:35;display:flex;align-items:center;gap:0;height:56px;min-width:56px;padding:0 13px;border-radius:999px;background:#25D366;color:#fff;text-decoration:none;box-shadow:0 12px 28px -10px rgba(37,211,102,.75),0 4px 12px rgba(16,24,40,.18);transition:transform .15s ease,box-shadow .15s ease,gap .2s ease;font:700 14px/1 Inter,system-ui,sans-serif;overflow:hidden}
-.wa-float:hover{transform:translateY(-2px);box-shadow:0 16px 32px -10px rgba(37,211,102,.85),0 6px 16px rgba(16,24,40,.2);color:#fff;gap:8px}
-.wa-float svg{flex:none}
-.wa-float .wa-float-t{max-width:0;white-space:nowrap;overflow:hidden;transition:max-width .25s ease}
-.wa-float:hover .wa-float-t,.wa-float:focus-visible .wa-float-t{max-width:120px}
+.wa-float{position:fixed;right:22px;bottom:22px;z-index:35;display:block;width:56px;height:56px;padding:0;margin:0;box-sizing:border-box;border-radius:50%;background:#25D366;color:#fff;text-decoration:none;box-shadow:0 12px 28px -10px rgba(37,211,102,.75),0 4px 12px rgba(16,24,40,.18);transition:transform .15s ease,box-shadow .15s ease;font:700 14px/1 Inter,system-ui,sans-serif;overflow:visible}
+.wa-float:hover{transform:translateY(-2px);box-shadow:0 16px 32px -10px rgba(37,211,102,.85),0 6px 16px rgba(16,24,40,.2);color:#fff}
+.wa-float svg{position:absolute;left:50%;top:50%;width:30px!important;height:30px!important;min-width:30px;max-width:none;margin:-15px 0 0 -15px;display:block;overflow:visible;flex:none}
+.wa-float .wa-float-t{position:absolute;right:calc(100% + 10px);top:50%;transform:translate(6px,-50%);white-space:nowrap;background:#fff;color:#0b1f17;padding:8px 12px;border-radius:999px;box-shadow:0 6px 18px rgba(16,24,40,.18);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease}
+.wa-float:hover .wa-float-t,.wa-float:focus-visible .wa-float-t{opacity:1;transform:translate(0,-50%)}
 .wa-float.hidden{display:none}
 .wa-float.on-login{z-index:101}
-@media(max-width:720px){.wa-float{right:14px;bottom:14px;height:52px;min-width:52px;padding:0 11px}}
+@media(max-width:720px){.wa-float{right:14px;bottom:14px;width:52px;height:52px}.wa-float svg{width:28px!important;height:28px!important;min-width:28px;margin:-14px 0 0 -14px}.wa-float .wa-float-t{display:none}}
 @media print{.wa-float{display:none}}
 /* Operaciones: listado */
 .ops-q{height:40px;min-width:240px;border:1px solid var(--line-2);border-radius:10px;padding:0 12px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
