@@ -1215,6 +1215,24 @@
 .nop-foot{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap}
 .nop-a a.btn,.nop-a a.btn:hover{text-decoration:none}
 .nop-foot .btn{white-space:nowrap}
+/* Empaque masivo */
+.pkm-all{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px dashed var(--line-2);border-radius:12px;background:var(--surface-2)}
+.pkm-all .lbl{font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}
+.pkm-all label{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600}
+.pkm-all input,.pkm-all select,.pkm-add input,.pkm-add select,.pkm-qty input{height:36px;border:1px solid var(--line-2);border-radius:10px;padding:0 10px;background:var(--surface);color:var(--ink);font:inherit;font-size:13.5px;box-sizing:border-box}
+.pkm-all input[type=number]{width:70px}.pkm-all select{min-width:180px}
+.pkm-scan{display:flex;gap:8px}.pkm-scan input{flex:1}
+.pkm-tw{max-height:46vh;overflow:auto}
+#pkm-rows td{vertical-align:top;white-space:normal}
+#pkm-rows tr{cursor:pointer}
+#pkm-rows tr.pkm-on td{background:var(--primary-wash)}
+#pkm-rows tr.pkm-on td:first-child{box-shadow:inset 3px 0 0 var(--primary)}
+.pkm-qty{display:flex;align-items:center;gap:4px}.pkm-qty button{width:30px;height:30px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);cursor:pointer;font-size:16px}.pkm-qty input{width:56px;text-align:center}
+.pkm-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 4px 0 10px;border-radius:99px;background:var(--surface-3,#F3F4F6);font-size:12.5px;font-weight:600;margin:0 6px 6px 0}
+.pkm-chip button{border:0;background:transparent;cursor:pointer;color:var(--ink-3);font-size:11px;width:20px;height:20px;border-radius:99px}
+.pkm-add{display:flex;gap:6px;margin-top:4px}.pkm-add select{flex:1;min-width:0}.pkm-add input{width:60px}
+.pkm-foot{display:flex;flex-direction:column;gap:4px;font-size:13px}
+.pkm-opt{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500}
 .nop-g a{color:var(--ink);text-decoration:none}.nop-g a:hover{text-decoration:underline}
 .nav .badge-new{margin-left:auto;min-width:20px;height:20px;padding:0 6px;border-radius:99px;background:var(--crit);color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center}
 .opnueva{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:99px;background:#FEF3C7;color:#92400E;font-size:11.5px;font-weight:700;margin-left:8px}

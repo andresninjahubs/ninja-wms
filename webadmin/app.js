@@ -4016,7 +4016,8 @@
     {k:'allocate', label:'Reservar stock',       from:['RECEIVED'],  to:'Reservada',   ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/allocate',{method:'POST'});}},
     {k:'start',    label:'Pasar a picking',      from:['ALLOCATED'], to:'En picking',  ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/start-picking',{method:'POST'});}},
     {k:'pick',     label:'Confirmar picking completo', from:['PICKING','ALLOCATED'], to:'Pickeada', ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/pick',{method:'POST'});}},
-    {k:'pack',     label:'Empacar (1 bulto)',    from:['PICKED'],    to:'Empacada',    ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/pack',{method:'POST',body:{bultos:1}});}},
+    {k:'pack',     label:'Empacar e imprimir etiquetas', from:['PICKED'], to:'Empacada', custom:function(list){ abrirEmpaqueMasivo(list); }},
+    {k:'labels',   label:'Imprimir etiquetas',   from:['PACKED'],    to:'Etiquetas',   custom:function(list){ imprimirEtiquetasMasivo(list); }},
     {k:'ship',     label:'Despachar',            from:['PACKED'],    to:'Despachada',  needsCarrier:true, ep:function(id,o,x){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/ship',{method:'POST',body:{carrier:(o.carrier||x.carrier||undefined)}});}},
     {k:'cancel',   label:'Cancelar',             from:['RECEIVED','ALLOCATED','PICKING'], to:'Cancelada', danger:true, ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/cancel',{method:'POST'});}},
     {k:'react',    label:'Reactivar',            from:['CANCELLED'], to:'Ingresada',   ep:function(id,o){return api('/sellers/'+osel(o||ordById(id))+'/orders/'+id+'/reactivate',{method:'POST'});}}
@@ -4035,7 +4036,7 @@
     $("#bulk-count").textContent=sel.length+' orden'+(sel.length===1?'':'es')+' seleccionada'+(sel.length===1?'':'s');
     var opts=BULK_ACTIONS.map(function(a){ var n=sel.filter(function(o){return a.from.indexOf(o.status)>=0;}).length; return {a:a,n:n}; }).filter(function(x){return x.n>0;});
     var selEl=$("#bulk-action"), cur=selEl.value;
-    selEl.innerHTML='<option value="">Cambiar estado a…</option>'+opts.map(function(x){return '<option value="'+x.a.k+'">'+esc(x.a.label)+' → '+esc(x.a.to)+' ('+x.n+')</option>';}).join('');
+    selEl.innerHTML='<option value="">Acción masiva…</option>'+opts.map(function(x){return '<option value="'+x.a.k+'">'+esc(x.a.label)+(x.a.k==='labels'?'':' → '+esc(x.a.to))+' ('+x.n+')</option>';}).join('');
     if(opts.some(function(x){return x.a.k===cur;}))selEl.value=cur;
     $("#bulk-apply").disabled=!selEl.value;
   }
@@ -4044,6 +4045,7 @@
     var k=$("#bulk-action").value; var a=BULK_ACTIONS.filter(function(x){return x.k===k;})[0]; if(!a)return;
     var sel=bulkSelected(); var apply=sel.filter(function(o){return a.from.indexOf(o.status)>=0;}); var skip=sel.length-apply.length;
     if(!apply.length){toast('Ninguna de las órdenes seleccionadas está en un estado válido para esta acción');return;}
+    if(a.custom){ a.custom(apply, skip); return; }
     var noCarrier=a.needsCarrier?apply.filter(function(o){return !o.carrier;}).length:0;
     var html='<p class="muted" style="margin:0 0 10px">Se aplicará <b>'+esc(a.label)+'</b> a <b>'+apply.length+'</b> orden(es)'+(skip?', y se omitirán <b>'+skip+'</b> que no están en el estado requerido ('+a.from.map(function(st){return STN[st]||st;}).join(' / ')+')':'')+'.</p>'
       +'<p class="muted" style="margin:0 0 12px;font-size:12.5px">Cada orden se procesa por separado: si alguna falla (por ejemplo, sin stock para reservar), las demás igual se actualizan.</p>'
@@ -4417,6 +4419,153 @@
     if(!order)return;
     openModal("Etiquetas · "+esc(order.externalOrderId||order.id.slice(0,8)),'<div class="form"><p class="muted" style="margin:0">Cargando…</p></div>');
     api('/sellers/'+osel(order)+'/orders/'+order.id).then(function(o){renderLabelsBody(o,false);}).catch(function(e){$("#m-body").innerHTML='<p class="ferr">'+esc(e.message)+'</p>';});
+  }
+
+  // ===== Empaque masivo + impresión de etiquetas en lote ======================
+  // Se empacan varias órdenes pickeadas de una vez. Cada una lleva sus PROPIOS bultos
+  // (= etiquetas que se imprimen) e insumos de embalaje (se descuentan del stock del
+  // insumo y se cobran al cliente), igual que el empaque de a una. Al terminar, todas
+  // las etiquetas salen en un solo trabajo de impresión, en el orden de la tabla.
+  function oref(o){ return o.externalOrderId||o.id.slice(0,8); }
+  function abrirEmpaqueMasivo(list){
+    var mats=(D.packaging||[]).filter(function(m){return m.active!==false;});
+    var bySku={}; mats.forEach(function(m){bySku[m.sku]=m;});
+    var filas=list.map(function(o){ return {o:o, bultos:1, mats:{}}; }); // mats: sku -> qty
+    var activa=0;
+    var matOpts='<option value="">Insumo…</option>'+mats.map(function(m){return '<option value="'+esc(m.sku)+'">'+esc(m.name)+'</option>';}).join('');
+    function unidades(o){ return o.lines.reduce(function(a,l){return a+l.qty;},0); }
+    function totales(){
+      var b=0, u={}; filas.forEach(function(f){ b+=f.bultos; Object.keys(f.mats).forEach(function(k){ u[k]=(u[k]||0)+f.mats[k]; }); });
+      return {bultos:b, mats:u};
+    }
+    function pinta(){
+      var t=totales();
+      var falta=Object.keys(t.mats).filter(function(k){ return bySku[k] && t.mats[k]>(bySku[k].onHand||0); });
+      $("#pkm-rows").innerHTML=filas.map(function(f,i){
+        var chips=Object.keys(f.mats).map(function(k){ return '<span class="pkm-chip">'+esc((bySku[k]||{}).name||k)+' × '+f.mats[k]+' <button type="button" data-pkmdel="'+i+'|'+esc(k)+'" aria-label="Quitar">✕</button></span>'; }).join('');
+        return '<tr class="'+(i===activa?'pkm-on':'')+'" data-pkmrow="'+i+'">'
+          +'<td class="mono2">'+esc(oref(f.o))+'<div class="muted" style="font-size:12px;font-weight:500">'+esc(ordSellerName?ordSellerName(f.o):'')+' · '+f.o.lines.length+' línea(s) · '+unidades(f.o)+' un</div></td>'
+          +'<td><div class="pkm-qty"><button type="button" data-pkmb="'+i+'|-1">−</button><input type="number" min="1" max="999" value="'+f.bultos+'" data-pkmbv="'+i+'"><button type="button" data-pkmb="'+i+'|1">+</button></div></td>'
+          +'<td>'+(chips||'<span class="muted" style="font-size:12.5px">Sin insumos</span>')
+          +(mats.length?'<div class="pkm-add"><select data-pkms="'+i+'">'+matOpts+'</select><input type="number" min="1" value="1" data-pkmq="'+i+'"><button type="button" class="mini" data-pkma="'+i+'">Agregar</button></div>':'')+'</td>'
+          +'</tr>';
+      }).join('');
+      $("#pkm-sum").innerHTML='<b>'+filas.length+'</b> órdenes · <b>'+t.bultos+'</b> bulto(s) = <b>'+t.bultos+'</b> etiqueta(s)'
+        +(Object.keys(t.mats).length?' · Insumos: '+Object.keys(t.mats).map(function(k){ var m=bySku[k]||{}; var over=t.mats[k]>(m.onHand||0); return '<span style="'+(over?'color:var(--crit);font-weight:700':'')+'">'+esc(m.name||k)+' '+t.mats[k]+'/'+(m.onHand||0)+'</span>'; }).join(', '):'');
+      $("#pkm-warn").textContent=falta.length?'El saldo de '+falta.map(function(k){return (bySku[k]||{}).name||k;}).join(', ')+' no alcanza para todas: las órdenes que lo excedan quedarán sin empacar y se informarán al final.':'';
+      bindFilas();
+    }
+    function bindFilas(){
+      $$('#pkm-rows [data-pkmrow]').forEach(function(tr){ tr.addEventListener('click',function(e){ var i=+tr.getAttribute('data-pkmrow'); if(activa!==i){ activa=i; $$('#pkm-rows tr').forEach(function(x){x.classList.toggle('pkm-on',+x.getAttribute('data-pkmrow')===i);}); } }); });
+      $$('#pkm-rows [data-pkmb]').forEach(function(b){ b.addEventListener('click',function(){ var p=b.getAttribute('data-pkmb').split('|'); var f=filas[+p[0]]; f.bultos=Math.max(1,Math.min(999,f.bultos+(+p[1]))); pinta(); }); });
+      $$('#pkm-rows [data-pkmbv]').forEach(function(inp){ inp.addEventListener('change',function(){ var f=filas[+inp.getAttribute('data-pkmbv')]; f.bultos=Math.max(1,Math.min(999,parseInt(inp.value,10)||1)); pinta(); }); });
+      $$('#pkm-rows [data-pkma]').forEach(function(b){ b.addEventListener('click',function(){ var i=+b.getAttribute('data-pkma'); var sku=$('#pkm-rows [data-pkms="'+i+'"]').value; var q=parseInt($('#pkm-rows [data-pkmq="'+i+'"]').value,10)||0; if(!sku){toast('Elige el insumo');return;} if(!(q>0)){toast('Cantidad inválida');return;} filas[i].mats[sku]=(filas[i].mats[sku]||0)+q; activa=i; pinta(); }); });
+      $$('#pkm-rows [data-pkmdel]').forEach(function(b){ b.addEventListener('click',function(e){ e.stopPropagation(); var p=b.getAttribute('data-pkmdel').split('|'); delete filas[+p[0]].mats[p[1]]; pinta(); }); });
+    }
+    var html='<div class="form" id="pkm">'
+      +'<p class="muted" style="margin:0">Cada orden lleva sus propios <b>bultos</b> (una etiqueta por bulto) e <b>insumos de embalaje</b> (se descuentan del stock y se cobran al cliente). Ajusta fila por fila o aplica lo mismo a todas.</p>'
+      +'<div class="pkm-all"><span class="lbl">Aplicar a todas</span>'
+      +'<label>Bultos <input type="number" min="1" max="999" value="1" id="pkm-allb"></label>'
+      +(mats.length?'<select id="pkm-alls">'+matOpts+'</select><input type="number" min="1" value="1" id="pkm-allq" aria-label="Cantidad de insumo por orden">':'')
+      +'<button type="button" class="btn" id="pkm-allgo">Aplicar</button></div>'
+      +(mats.length?'<div class="pkm-scan"><input id="pkm-scan" placeholder="Pistolea el EAN del insumo: se suma a la orden marcada ▸" autocomplete="off"><button type="button" class="btn" id="pkm-scanbtn">Leer</button></div>':'<div class="hint">No hay insumos de embalaje creados; puedes empacar igual, solo con bultos.</div>')
+      +'<div class="tablewrap pkm-tw"><table><thead><tr><th>Orden</th><th style="width:150px">Bultos</th><th>Insumos de embalaje</th></tr></thead><tbody id="pkm-rows"></tbody></table></div>'
+      +'<div class="pkm-foot"><div id="pkm-sum"></div><div id="pkm-warn" class="ferr"></div></div>'
+      +'<label class="pkm-opt"><input type="checkbox" id="pkm-print" checked> Imprimir todas las etiquetas al terminar</label>'
+      +'<label class="pkm-opt"><input type="checkbox" id="pkm-hoja"> Incluir hoja de resumen (órdenes, bultos e insumos) antes de las etiquetas</label>'
+      +'<div id="pkm-prog" class="muted" style="font-size:12.5px"></div>'
+      +'<div class="acts"><span class="hint">Las órdenes pasan a EMPACADA.</span><div style="display:flex;gap:10px"><button class="btn" id="pkm-cancel">Cancelar</button><button class="btn pri" id="pkm-go">Empacar '+list.length+' e imprimir</button></div></div>'
+      +'</div>';
+    openModal('Empaque masivo · '+list.length+' órdenes',html,'xl');
+    pinta();
+    $("#pkm-cancel").addEventListener('click',closeModal);
+    $("#pkm-print").addEventListener('change',function(){ $("#pkm-go").textContent='Empacar '+list.length+($("#pkm-print").checked?' e imprimir':''); });
+    $("#pkm-allgo").addEventListener('click',function(){
+      var b=Math.max(1,parseInt($("#pkm-allb").value,10)||1); var sku=$("#pkm-alls")?$("#pkm-alls").value:''; var q=$("#pkm-allq")?parseInt($("#pkm-allq").value,10)||0:0;
+      filas.forEach(function(f){ f.bultos=b; if(sku&&q>0)f.mats[sku]=(f.mats[sku]||0)+q; }); pinta(); toast('Aplicado a '+filas.length+' órdenes');
+    });
+    function scan(){
+      var code=($("#pkm-scan").value||'').trim(); if(!code)return;
+      var m=mats.filter(function(x){return x.barcode&&String(x.barcode)===code;})[0];
+      if(!m){ toast('EAN de embalaje no reconocido'); $("#pkm-scan").select(); return; }
+      var f=filas[activa]; f.mats[m.sku]=(f.mats[m.sku]||0)+1; $("#pkm-scan").value=''; pinta(); $("#pkm-scan").focus(); toast(m.name+' +1 en '+oref(f.o));
+    }
+    if($("#pkm-scan")){ $("#pkm-scanbtn").addEventListener('click',scan); $("#pkm-scan").addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); scan(); } }); }
+    $("#pkm-go").addEventListener('click',function(){
+      var imprimir=$("#pkm-print").checked, hoja=$("#pkm-hoja").checked;
+      // La ventana de impresión se abre YA (dentro del clic), o el navegador la bloquea.
+      var w=imprimir?window.open('','_blank'):null;
+      if(w)w.document.write('<!doctype html><title>Preparando etiquetas…</title><p style="font:14px system-ui;padding:20px">Empacando órdenes y preparando etiquetas…</p>');
+      $("#pkm-go").disabled=true; $("#pkm-cancel").disabled=true;
+      var ok=[], fail=[], i=0, prog=$("#pkm-prog");
+      (function next(){
+        if(i>=filas.length){
+          bulkSel={}; recargaOrdenes().then(function(){ paintBulkBar(); }); loadPackaging();
+          if(w){ if(ok.length)escribeEtiquetas(w,ok,hoja); else w.close(); }
+          resultadoMasivo('Empaque masivo',ok,fail,imprimir&&!w);
+          return;
+        }
+        var f=filas[i++]; if(prog)prog.textContent='Empacando '+i+' de '+filas.length+'… ('+oref(f.o)+')';
+        var materials=Object.keys(f.mats).map(function(k){return {sku:k,qty:f.mats[k]};});
+        api('/sellers/'+osel(f.o)+'/orders/'+f.o.id+'/pack',{method:'POST',body:{bultos:f.bultos,materials:materials}})
+          .then(function(o){ ok.push(o); }).catch(function(e){ fail.push({ref:oref(f.o),err:e.message||'error'}); }).then(next);
+      })();
+    });
+  }
+
+  // Órdenes ya EMPACADAS: se leen con sus bultos, insumos y etiquetas tal como quedaron
+  // al empacar. Si alguna no tiene etiquetas (OMS sin respuesta), se reintenta una vez.
+  function imprimirEtiquetasMasivo(list){
+    var w=window.open('','_blank');
+    if(!w){ toast('Habilita las ventanas emergentes para imprimir'); return; }
+    w.document.write('<!doctype html><title>Preparando etiquetas…</title><p style="font:14px system-ui;padding:20px">Preparando etiquetas de '+list.length+' órdenes…</p>');
+    var ok=[], fail=[], i=0;
+    toast('Preparando etiquetas de '+list.length+' órdenes…');
+    (function next(){
+      if(i>=list.length){
+        if(ok.length)escribeEtiquetas(w,ok,false); else w.close();
+        if(fail.length)resultadoMasivo('Impresión de etiquetas',ok,fail,false);
+        else toast(ok.length+' orden(es) · '+ok.reduce(function(a,o){return a+((o.packing&&o.packing.labels)||[]).length;},0)+' etiqueta(s) enviadas a imprimir');
+        return;
+      }
+      var o=list[i++];
+      api('/sellers/'+osel(o)+'/orders/'+o.id).then(function(d){
+        if(d.packing&&d.packing.labels&&d.packing.labels.length)return d;
+        return api('/sellers/'+osel(o)+'/orders/'+o.id+'/labels/fetch',{method:'POST'});
+      }).then(function(d){
+        if(d&&d.packing&&d.packing.labels&&d.packing.labels.length)ok.push(d);
+        else fail.push({ref:oref(o),err:(d&&d.packing&&d.packing.labelError)||'Sin etiquetas del OMS'});
+      }).catch(function(e){ fail.push({ref:oref(o),err:e.message||'error'}); }).then(next);
+    })();
+  }
+
+  function escribeEtiquetas(w,orders,hoja){
+    var conEtiq=orders.filter(function(o){return o.packing&&o.packing.labels&&o.packing.labels.length;});
+    var resumen='';
+    if(hoja){
+      var filas=orders.map(function(o){
+        var p=o.packing||{}; var mats=(p.materials||[]).map(function(m){return esc(m.name||m.sku)+' × '+m.qty;}).join(', ')||'—';
+        return '<tr><td>'+esc(oref(o))+'</td><td>'+esc(p.carrier||o.carrier||'—')+'</td><td>'+esc(p.trackingNumber||'—')+'</td><td style="text-align:center">'+(p.bultos||1)+'</td><td>'+mats+'</td></tr>';
+      }).join('');
+      var tb=orders.reduce(function(a,o){return a+((o.packing&&o.packing.bultos)||1);},0);
+      resumen='<section class="hoja"><h1>Resumen de empaque</h1><p>'+esc(fmtDate(new Date().toISOString()))+' · '+orders.length+' órdenes · '+tb+' bultos</p><table><thead><tr><th>Orden</th><th>Transporte</th><th>Seguimiento</th><th>Bultos</th><th>Insumos</th></tr></thead><tbody>'+filas+'</tbody></table></section>';
+    }
+    var imgs=conEtiq.map(function(o){ return o.packing.labels.map(function(l){ return '<img src="'+l.dataUri+'" alt="'+esc(oref(o))+' bulto '+l.bultoNo+'">'; }).join(''); }).join('');
+    w.document.open();
+    w.document.write('<!doctype html><html><head><title>Etiquetas · '+conEtiq.length+' órdenes</title><style>@page{margin:6mm}body{margin:0;background:#fff;font-family:system-ui,sans-serif}img{width:100mm;max-width:100%;display:block;margin:0 auto 8mm;border:1px solid #000;page-break-after:always}.hoja{page-break-after:always;padding:4mm}.hoja h1{font-size:18px;margin:0 0 4px}.hoja p{font-size:12px;margin:0 0 10px;color:#444}.hoja table{width:100%;border-collapse:collapse;font-size:12px}.hoja th,.hoja td{border:1px solid #999;padding:5px 6px;text-align:left;vertical-align:top}</style></head><body onload="window.print()">'+resumen+imgs+'</body></html>');
+    w.document.close();
+  }
+
+  function resultadoMasivo(titulo,ok,fail,bloqueada){
+    var tl=ok.reduce(function(a,o){return a+((o.packing&&o.packing.labels)||[]).length;},0);
+    var sinEtiq=ok.filter(function(o){return !(o.packing&&o.packing.labels&&o.packing.labels.length);});
+    var html='<p style="margin:0 0 10px"><b>'+ok.length+'</b> orden(es) empacada(s) · <b>'+tl+'</b> etiqueta(s)'+(fail.length?' · <b style="color:var(--crit)">'+fail.length+' con error</b>':'')+'</p>'
+      +(bloqueada?'<p class="ferr">El navegador bloqueó la ventana de impresión. Habilita las ventanas emergentes y usa «Imprimir etiquetas» desde la acción masiva.</p>':'')
+      +(sinEtiq.length?'<p class="muted" style="margin:0 0 8px">Sin etiquetas del OMS (se empacaron igual; reintenta desde «Etiquetas» de cada una): '+sinEtiq.map(function(o){return esc(oref(o));}).join(', ')+'</p>':'')
+      +(fail.length?'<div style="max-height:40vh;overflow:auto">'+fail.map(function(f){return '<div class="kv"><span>'+esc(f.ref)+'</span><b style="color:var(--crit)">'+esc(f.err)+'</b></div>';}).join('')+'</div>':'')
+      +'<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn pri" id="m-yes">Cerrar</button></div>';
+    if(!fail.length&&!sinEtiq.length&&!bloqueada){ closeModal(); toast(ok.length+' órdenes empacadas · '+tl+' etiquetas'); return; }
+    openModal(titulo,html); $("#m-yes").addEventListener('click',closeModal);
   }
 
   // ----- Despachar orden (courier + tracking) -----
