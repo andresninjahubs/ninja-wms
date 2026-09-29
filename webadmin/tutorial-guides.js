@@ -514,7 +514,8 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#ops-new', place:'bottom', title:'Nueva operación', text:'Crea un tenant nuevo con su nombre y administrador inicial. Desde ese momento tiene su propio espacio, invisible para las demás operaciones.'},
       {el:'#ops-grid', place:'top', title:'Operaciones existentes', text:'Cada tarjeta resume clientes, usuarios y actividad. Selecciona una en la barra superior para administrarla como si fueras su admin.'},
-      {el:'#ops-grid', place:'top', title:'Ficha y edición', text:'Cada tarjeta muestra la ficha del alta (contacto, celular, email, tipo, fecha y campaña de origen), los indicadores de uso y el plan. Con <b>Editar</b> cambias nombre y contacto, y desde ahí la <b>activas o desactivas</b>.'},
+      {el:'#ops-view', place:'bottom', title:'Listado o tarjetas', text:'Cambia entre <b>listado</b> (más denso, ideal para revisar muchas altas) y <b>tarjetas</b>. En ambas vistas las operaciones van de la <b>más nueva a la más antigua</b>, y el buscador filtra por nombre, contacto o email.'},
+      {el:['#ops-grid','#ops-listwrap'], place:'top', title:'Ficha y edición', text:'Cada tarjeta muestra la ficha del alta (contacto, celular, email, tipo, fecha y campaña de origen), los indicadores de uso y el plan. Con <b>Editar</b> cambias nombre y contacto, y desde ahí la <b>activas o desactivas</b>.'},
     ]
   },
 

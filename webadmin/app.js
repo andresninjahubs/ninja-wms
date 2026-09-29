@@ -280,6 +280,26 @@
   };
 
   /** El enlace de WhatsApp, con el módulo ya escrito en el mensaje. */
+  // ---- Botón flotante de WhatsApp (esquina inferior derecha) --------------------
+  // Consultas a Ninja Hubs. Lo ven quienes operan la cuenta (y cualquiera en la pantalla
+  // de ingreso). Al seller de un 3PL no se le muestra: su interlocutor es el 3PL, no
+  // Ninja Hubs, y la marca blanca no debe romperse.
+  function syncWaFloat(){
+    var a=document.getElementById('wa-float'); if(!a)return;
+    var enLogin=!!($("#loginov")&&!$("#loginov").classList.contains('off'));
+    var ocultar=!enLogin&&role==='CLIENT';
+    a.classList.toggle('hidden',ocultar);
+    a.classList.toggle('on-login',enLogin);
+    var opObj=(D&&D.ops&&op)?(D.ops.filter(function(o){return o.id===op;})[0]||{}):{};
+    var opName=(D&&D.brand&&D.brand.companyName)||(opObj.name&&opObj.name!==op?opObj.name:'');
+    var txt=enLogin||!me
+      ? 'Hola Ninja Hubs, tengo una consulta sobre Ninja WMS.'
+      : 'Hola Ninja Hubs, soy '+(me.name||'')+(opName?' de '+opName:'')+'. Tengo una consulta sobre Ninja WMS:';
+    a.href='https://api.whatsapp.com/send?phone='+WA_TEL+'&text='+encodeURIComponent(txt);
+  }
+  syncWaFloat();
+  try{ new MutationObserver(syncWaFloat).observe(document.getElementById('loginov'),{attributes:true,attributeFilter:['class']}); }catch(e){}
+
   function waLink(modulo){
     var txt='Hola, quiero activar '+(modulo?('«'+modulo+'»'):'un módulo')+' en mi cuenta de Ninja WMS.';
     return 'https://api.whatsapp.com/send?phone='+WA_TEL+'&text='+encodeURIComponent(txt);
@@ -495,6 +515,7 @@
     }).then(function(){
       // Tutoriales guiados: contexto + oferta automática en la sección visible.
       if(window.NinjaTour){ window.NINJA_NAV_BY_ROLE=NAV_BY_ROLE; NinjaTour.setContext({go:go,getRole:function(){return role;},onboarding:function(){ return role==='CLIENT'?Promise.resolve(null):api('/onboarding?operationId='+encodeURIComponent(op||'')); }}); var cur=$(".page.on"); NinjaTour.onPage(cur?cur.getAttribute("data-pg"):"dashboard"); }
+      syncWaFloat();
       // Super admin: al iniciar sesión, las altas nuevas que nadie revisó todavía.
       if(role==='PLATFORM_ADMIN')setTimeout(revisarNuevasOperaciones,600);
     }).catch(err);
@@ -7283,19 +7304,63 @@
     return '<div class="opficha"><div class="ofi-h">'+(o.selfServe?"Registro self-serve":"Datos de contacto")+(o.selfServe&&!o.reviewedAt?'<span class="opnueva">Nueva · sin revisar</span>':'')+'</div>'+cuerpo+'</div>';
   }
 
+  // Vista de Operaciones: tarjetas o listado (se recuerda por navegador), siempre de la
+  // más nueva a la más antigua por fecha de alta. Las que no tienen fecha van al final.
+  var OPS_VIEW_KEY='nwms.ops.view';
+  var opsView=(function(){ try{ return localStorage.getItem(OPS_VIEW_KEY)==='cards'?'cards':'list'; }catch(e){ return 'list'; } })();
+  var opsQ='';
+  function opsOrdenadas(){
+    var q=opsQ.trim().toLowerCase();
+    return (D.ops||[]).filter(function(o){
+      if(!q)return true;
+      return [o.name,o.id,o.contactName,o.contactEmail,o.contactPhone,o.businessAbout,o.contactWebsite].some(function(v){return v&&String(v).toLowerCase().indexOf(q)>=0;});
+    }).slice().sort(function(a,b){
+      var ta=a.createdAt?Date.parse(a.createdAt):-Infinity, tb=b.createdAt?Date.parse(b.createdAt):-Infinity;
+      if(tb!==ta)return tb-ta;
+      return String(a.name||a.id).localeCompare(String(b.name||b.id));
+    });
+  }
+  function opsAcciones(o){
+    var inactive=o.active===false;
+    return '<button class="mini" data-oedit="'+esc(o.id)+'">Editar</button>'
+      +'<button class="mini" data-oadmin="'+esc(o.id)+'">＋ Admin</button>'
+      +(inactive?'<button class="mini" data-oact="'+esc(o.id)+'">Activar</button>':'<button class="mini danger" data-odeact="'+esc(o.id)+'">Desactivar</button>');
+  }
   function renderOps(){
     if(role!=="PLATFORM_ADMIN"){$("#ops-grid").innerHTML='<div class="empty">Solo la plataforma ve todas las operaciones.</div>';return;}
-    $("#ops-grid").innerHTML=D.ops.map(function(o){
+    var lista=opsOrdenadas();
+    $$("#ops-view .vt").forEach(function(b){b.classList.toggle('on',b.getAttribute('data-view')===opsView);});
+    $("#ops-grid").classList.toggle('hidden',opsView!=='cards');
+    $("#ops-listwrap").classList.toggle('hidden',opsView!=='list');
+    if(opsView==='list'){
+      $("#ops-body").innerHTML=lista.length?lista.map(function(o){
+        var inactive=o.active===false, nueva=o.selfServe&&!o.reviewedAt;
+        var tel=o.contactPhone?String(o.contactPhone).replace(/[^\d+]/g,''):'';
+        var pista=o.track==='operator'?'Operador 3PL':o.track==='brand'?'Marca / tienda':(o.selfServe?'—':'Interna');
+        return '<tr class="'+(inactive?'inactiva':'')+'" data-orow="'+esc(o.id)+'">'
+          +'<td><div class="opn"><div class="oi">'+esc(inicialesOp(o))+'</div><div><b>'+esc(o.name||o.id)+(nueva?'<span class="opnueva">Nueva</span>':'')+'</b><small>'+esc(o.businessAbout||o.id)+'</small></div></div></td>'
+          +'<td class="alta">'+(o.createdAt?esc(fmtDate(o.createdAt)):'—')+'</td>'
+          +'<td>'+esc(pista)+'</td>'
+          +'<td>'+esc(o.contactName||'—')+'</td>'
+          +'<td>'+(o.contactPhone?'<a href="https://wa.me/'+esc(tel.replace('+',''))+'" target="_blank" rel="noopener" title="Abrir WhatsApp">'+esc(o.contactPhone)+'</a>':'—')+'</td>'
+          +'<td>'+(o.contactEmail?'<a href="mailto:'+esc(o.contactEmail)+'">'+esc(o.contactEmail)+'</a>':'—')+'</td>'
+          +'<td>'+esc(o.leadSource?origenLegible(o.leadSource):(o.selfServe?'directo':'—'))+'</td>'
+          +'<td>'+(inactive?'<span class="chip st-CANCELLED"><span class="dot"></span>Inactiva</span>':'<span class="chip st-AVAILABLE"><span class="dot"></span>Activa</span>')+'</td>'
+          +'<td><div class="rowacts">'+opsAcciones(o)+'</div></td>'
+          +'</tr>';
+      }).join(''):'<tr><td colspan="9" class="empty">'+(opsQ?'Ninguna operación coincide con la búsqueda.':'Aún no hay operaciones.')+'</td></tr>';
+    }
+    $("#ops-grid").innerHTML=lista.map(function(o){
       var inactive=o.active===false;
       var acts='<div class="card-actions"><button class="mini" data-oedit="'+esc(o.id)+'">Editar</button>'
         +'<button class="mini" data-oadmin="'+esc(o.id)+'">＋ Admin</button>'
         +(inactive?'<button class="mini" data-oact="'+esc(o.id)+'">Activar</button>':'<button class="mini danger" data-odeact="'+esc(o.id)+'">Desactivar</button>')+'</div>';
       return '<div class="card"'+(inactive?' style="opacity:.6"':'')+'><div class="opcard"><div class="oi">'+esc(inicialesOp(o))+'</div><div><div class="on">'+esc(o.name||o.id)+'</div><div class="om">'+esc(o.id)+(inactive?' · inactiva':'')+'</div></div></div>'+fichaAlta(o)+acts+'</div>';
     }).join("");
-    $$("#ops-grid [data-oedit]").forEach(function(b){b.addEventListener("click",function(){openOpForm(byId(D.ops,b.getAttribute("data-oedit")));});});
-    $$("#ops-grid [data-oadmin]").forEach(function(b){b.addEventListener("click",function(){openUserForm(null,{operationId:b.getAttribute("data-oadmin"),role:"ADMIN"});});});
-    $$("#ops-grid [data-odeact]").forEach(function(b){b.addEventListener("click",function(){var o=byId(D.ops,b.getAttribute("data-odeact"));openConfirm("Desactivar operación","La operación "+(o.name||o.id)+" quedará inactiva.",function(){api('/operations/'+o.id,{method:'PATCH',body:{active:false}}).then(function(){toast("Operación desactivada");reloadOps();}).catch(err);});});});
-    $$("#ops-grid [data-oact]").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-oact");api('/operations/'+id,{method:'PATCH',body:{active:true}}).then(function(){toast("Operación activada");reloadOps();}).catch(err);});});
+    $$("#ops-grid [data-oedit], #ops-body [data-oedit]").forEach(function(b){b.addEventListener("click",function(){openOpForm(byId(D.ops,b.getAttribute("data-oedit")));});});
+    $$("#ops-grid [data-oadmin], #ops-body [data-oadmin]").forEach(function(b){b.addEventListener("click",function(){openUserForm(null,{operationId:b.getAttribute("data-oadmin"),role:"ADMIN"});});});
+    $$("#ops-grid [data-odeact], #ops-body [data-odeact]").forEach(function(b){b.addEventListener("click",function(){var o=byId(D.ops,b.getAttribute("data-odeact"));openConfirm("Desactivar operación","La operación "+(o.name||o.id)+" quedará inactiva.",function(){api('/operations/'+o.id,{method:'PATCH',body:{active:false}}).then(function(){toast("Operación desactivada");reloadOps();}).catch(err);});});});
+    $$("#ops-grid [data-oact], #ops-body [data-oact]").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-oact");api('/operations/'+id,{method:'PATCH',body:{active:true}}).then(function(){toast("Operación activada");reloadOps();}).catch(err);});});
   }
 
   // ---- Mantenedores (crear / editar / desactivar) --------------------------
@@ -7304,6 +7369,8 @@
   function reloadUsers(){return api('/users').then(function(u){D.users=u;renderUsers();}).catch(err);}
   function reloadLocations(){return api('/operations/'+op+'/locations').then(function(ls){D.locations=ls;locByCode={};locById={};ls.forEach(function(l){locByCode[l.code]=l;locById[l.id]=l;});renderLocations();renderKpis();renderZone();}).catch(err);}
   if($("#ops-nuevas"))$("#ops-nuevas").addEventListener('click',function(){ revisarNuevasOperaciones(true); });
+  $$("#ops-view .vt").forEach(function(b){ b.addEventListener('click',function(){ opsView=b.getAttribute('data-view'); try{ localStorage.setItem(OPS_VIEW_KEY,opsView); }catch(e){} renderOps(); }); });
+  if($("#ops-q"))$("#ops-q").addEventListener('input',function(){ opsQ=$("#ops-q").value; renderOps(); });
   function reloadOps(){return api('/operations').then(function(ops){D.ops=ops;fill($("#op"),ops.map(function(o){return {v:o.id,t:o.name||o.id};}));$("#op").value=op;renderOps();}).catch(err);}
 
   // ----- Clientes (sellers) -----

@@ -1217,6 +1217,32 @@
 .nop-foot{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap}
 .nop-a a.btn,.nop-a a.btn:hover{text-decoration:none}
 .nop-foot .btn{white-space:nowrap}
+/* Botón flotante de WhatsApp (consultas a Ninja Hubs) */
+.wa-float{position:fixed;right:22px;bottom:22px;z-index:35;display:flex;align-items:center;gap:0;height:56px;min-width:56px;padding:0 13px;border-radius:999px;background:#25D366;color:#fff;text-decoration:none;box-shadow:0 12px 28px -10px rgba(37,211,102,.75),0 4px 12px rgba(16,24,40,.18);transition:transform .15s ease,box-shadow .15s ease,gap .2s ease;font:700 14px/1 Inter,system-ui,sans-serif;overflow:hidden}
+.wa-float:hover{transform:translateY(-2px);box-shadow:0 16px 32px -10px rgba(37,211,102,.85),0 6px 16px rgba(16,24,40,.2);color:#fff;gap:8px}
+.wa-float svg{flex:none}
+.wa-float .wa-float-t{max-width:0;white-space:nowrap;overflow:hidden;transition:max-width .25s ease}
+.wa-float:hover .wa-float-t,.wa-float:focus-visible .wa-float-t{max-width:120px}
+.wa-float.hidden{display:none}
+.wa-float.on-login{z-index:101}
+@media(max-width:720px){.wa-float{right:14px;bottom:14px;height:52px;min-width:52px;padding:0 11px}}
+@media print{.wa-float{display:none}}
+/* Operaciones: listado */
+.ops-q{height:40px;min-width:240px;border:1px solid var(--line-2);border-radius:10px;padding:0 12px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
+#ops-body td{white-space:normal;vertical-align:middle}
+#ops-body .opn{display:flex;align-items:center;gap:10px}
+#ops-body .opn .oi{width:34px;height:34px;border-radius:9px;background:var(--primary-wash);color:var(--primary-ink,#0B7A4C);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12.5px;flex:none}
+#ops-body .opn b{display:block;color:var(--ink);font-size:14px}
+#ops-body .opn small{display:block;color:var(--ink-3);font-size:12px}
+#ops-body td.alta{white-space:nowrap;font-size:13px}
+#ops-body .rowacts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:nowrap;min-width:0!important}
+#ops-body td:nth-child(1){min-width:200px;max-width:280px}
+#ops-body .opn small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#ops-body td:nth-child(5),#ops-body td:nth-child(8){white-space:nowrap}
+#ops-body td:nth-child(6){overflow-wrap:anywhere;font-size:13px;min-width:140px}
+#ops-body td.alta{white-space:normal;min-width:112px;max-width:120px;line-height:1.3;font-size:12.5px}
+#ops-body a{color:var(--ink);text-decoration:none}#ops-body a:hover{text-decoration:underline}
+#ops-body tr.inactiva td{opacity:.6}
 /* Registro: web opcional y descripción del negocio */
 #loginov .rg-opt{font-weight:500;color:var(--ink-3)}
 #loginov .rg-count{float:right;font-weight:500;font-size:12px;color:var(--ink-3)}
@@ -2266,8 +2292,9 @@
 
       <!-- Operaciones (solo plataforma) -->
       <section class="page" data-pg="operations">
-        <div class="toolbar"><span class="muted">Cada operación es un mundo aislado: sus bodegas, clientes, usuarios e inventario.</span><div class="sp" style="flex:1"></div><button class="btn" id="ops-nuevas">Nuevas por revisar</button><button class="btn pri hidden" id="ops-new">＋ Nueva operación</button></div>
+        <div class="toolbar"><span class="muted">Cada operación es un mundo aislado: sus bodegas, clientes, usuarios e inventario.</span><div class="sp" style="flex:1"></div><input id="ops-q" class="ops-q" type="search" placeholder="Buscar operación, contacto o email…"><div class="viewtog" id="ops-view"><button class="vt" data-view="list" title="Ver como listado">☰ Listado</button><button class="vt" data-view="cards" title="Ver como tarjetas">▦ Tarjetas</button></div><button class="btn" id="ops-nuevas">Nuevas por revisar</button><button class="btn pri hidden" id="ops-new">＋ Nueva operación</button></div>
         <div class="grid2" id="ops-grid"></div>
+        <div class="card hidden" id="ops-listwrap"><div class="tablewrap"><table id="ops-table"><thead><tr><th>Operación</th><th>Alta</th><th>Tipo</th><th>Contacto</th><th>Celular</th><th>Email</th><th>Origen</th><th>Estado</th><th data-action></th></tr></thead><tbody id="ops-body"></tbody></table></div></div>
       </section>
 
       <!-- Uso de la plataforma (solo plataforma) -->
@@ -2345,6 +2372,10 @@
 </div></div>
 
 <div class="tooltip" id="tt"></div>
+<a class="wa-float" id="wa-float" href="https://api.whatsapp.com/send?phone=56940254230" target="_blank" rel="noopener" aria-label="Escríbenos por WhatsApp">
+  <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><path fill="currentColor" d="M16.04 3C9.4 3 4 8.36 4 14.97c0 2.11.56 4.17 1.62 5.99L4 29l8.25-1.6a12.1 12.1 0 0 0 3.79.6h.01C22.68 28 28 22.64 28 16.03 28 9.42 22.68 3 16.04 3Zm0 22.9c-1.2 0-2.38-.2-3.5-.6l-.25-.1-4.9.95.98-4.73-.16-.26a10.8 10.8 0 0 1-1.66-5.72c0-5.93 4.9-10.76 10.93-10.76 5.98 0 10.84 4.85 10.84 10.84 0 5.98-4.86 10.38-10.28 10.38Zm5.9-8.02c-.32-.16-1.9-.93-2.2-1.04-.3-.1-.51-.16-.73.16-.21.32-.84 1.04-1.03 1.25-.19.21-.38.24-.7.08-.32-.16-1.36-.5-2.59-1.6-.96-.85-1.6-1.9-1.8-2.22-.19-.32-.02-.49.14-.65.14-.14.32-.37.48-.56.16-.19.21-.32.32-.53.1-.21.05-.4-.03-.56-.08-.16-.72-1.73-.99-2.37-.26-.62-.52-.54-.72-.55h-.62c-.21 0-.56.08-.85.4-.29.32-1.12 1.09-1.12 2.66s1.15 3.09 1.31 3.3c.16.21 2.26 3.45 5.47 4.84.76.33 1.36.53 1.83.68.77.24 1.47.21 2.02.13.62-.09 1.9-.78 2.17-1.53.27-.75.27-1.39.19-1.52-.08-.14-.29-.22-.61-.38Z"/></svg>
+  <span class="wa-float-t">¿Consultas?</span>
+</a>
 <div class="toast" id="toast"><div class="i" id="toast-i"></div></div>
 
 
