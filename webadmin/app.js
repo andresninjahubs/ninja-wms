@@ -537,10 +537,12 @@
         +'<div><span>Contacto</span><b>'+esc(o.contactName||'—')+'</b></div>'
         +'<div><span>Celular</span><b>'+(o.contactPhone?'<a href="tel:'+esc(tel)+'">'+esc(o.contactPhone)+'</a>':'—')+'</b></div>'
         +'<div><span>Email</span><b>'+(o.contactEmail?'<a href="mailto:'+esc(o.contactEmail)+'">'+esc(o.contactEmail)+'</a>':'—')+'</b></div>'
+        +'<div><span>Web</span><b>'+(o.contactWebsite?'<a href="'+esc(o.contactWebsite)+'" target="_blank" rel="noopener">'+esc(String(o.contactWebsite).replace(/^https?:\/\//,''))+'</a>':'—')+'</b></div>'
         +'<div><span>Origen</span><b>'+esc(o.leadSource?origenLegible(o.leadSource):'directo')+'</b></div>'
         +'<div><span>Plan</span><b>'+esc((o.planId||'free').toUpperCase())+(o.trialEndsAt&&Date.parse(o.trialEndsAt)>Date.now()?' · prueba hasta '+esc(fmtDate(o.trialEndsAt).split(',')[0]):'')+'</b></div>'
         +'<div><span>Puesta en marcha</span><b>'+prog+' <i class="nop-bar"><i style="width:'+pct+'%"></i></i></b>'+(o.progress&&o.progress.next?'<small>Siguiente: '+esc(o.progress.next)+'</small>':'')+'</div>'
         +'</div>'
+        +(o.businessAbout?'<div class="nop-about"><span>Su negocio</span>«'+esc(o.businessAbout)+'»</div>':'')
         +'<div class="nop-a">'+(wa?'<a class="btn pri mini" target="_blank" rel="noopener" href="'+wa+'">WhatsApp</a>':'')+(o.contactPhone?'<a class="btn mini" href="tel:'+esc(tel)+'">Llamar</a>':'')+(o.contactEmail?'<a class="btn mini" href="mailto:'+esc(o.contactEmail)+'">Correo</a>':'')+'<button class="btn mini" data-nopgo="'+esc(o.id)+'">Ver en Operaciones</button></div>'
         +'</div>';
     }).join('');
@@ -7267,7 +7269,7 @@
     }catch(e){ return src; }
   }
   function fichaAlta(o){
-    if(!o.contactName&&!o.contactEmail&&!o.contactPhone&&!o.createdAt&&!o.selfServe) return "";
+    if(!o.contactName&&!o.contactEmail&&!o.contactPhone&&!o.contactWebsite&&!o.businessAbout&&!o.createdAt&&!o.selfServe) return "";
     var pista=o.track==="operator"?"Operador 3PL":o.track==="brand"?"Marca / tienda":null;
     var fila=function(k,v){ return v?('<div class="ofi-r"><span>'+k+'</span><b>'+v+'</b></div>'):""; };
     var tel=o.contactPhone?'<a href="tel:'+esc(String(o.contactPhone).replace(/[^\d+]/g,""))+'">'+esc(o.contactPhone)+'</a>':"";
@@ -7275,7 +7277,8 @@
     var alta=o.createdAt?fmtDate(o.createdAt):"";
     var wa=o.contactPhone?'<a class="mini" style="margin-left:6px" target="_blank" rel="noopener" href="https://wa.me/'+esc(String(o.contactPhone).replace(/\D/g,""))+'?text='+encodeURIComponent('Hola '+(o.contactName||'')+', te escribo de Ninja Hubs por tu cuenta de Ninja WMS.')+'">WhatsApp</a>':"";
     var origen=o.leadSource?esc(origenLegible(o.leadSource)):"";
-    var cuerpo=fila("Contacto",o.contactName?esc(o.contactName):"")+fila("Celular",tel+wa)+fila("Email",mail)+fila("Se registró como",pista?esc(pista):"")+fila("Origen",origen)+fila("Fecha de alta",alta?esc(alta):"");
+    var webL=o.contactWebsite?'<a href="'+esc(o.contactWebsite)+'" target="_blank" rel="noopener">'+esc(String(o.contactWebsite).replace(/^https?:\/\//,''))+'</a>':"";
+    var cuerpo=fila("Contacto",o.contactName?esc(o.contactName):"")+fila("Celular",tel+wa)+fila("Email",mail)+fila("Web",webL)+fila("Su negocio",o.businessAbout?esc(o.businessAbout):"")+fila("Se registró como",pista?esc(pista):"")+fila("Origen",origen)+fila("Fecha de alta",alta?esc(alta):"");
     if(!cuerpo) return "";
     return '<div class="opficha"><div class="ofi-h">'+(o.selfServe?"Registro self-serve":"Datos de contacto")+(o.selfServe&&!o.reviewedAt?'<span class="opnueva">Nueva · sin revisar</span>':'')+'</div>'+cuerpo+'</div>';
   }
@@ -7389,6 +7392,8 @@
       +(isEdit?('<div class="fld"><label>Persona de contacto</label><input id="of-cname" value="'+esc(o.contactName||'')+'" placeholder="Camila Rojas"></div>'
         +'<div class="row2"><div class="fld"><label>Celular</label><input id="of-cphone" type="tel" value="'+esc(o.contactPhone||'')+'" placeholder="+56 9 1234 5678"></div>'
         +'<div class="fld"><label>Email de contacto</label><input id="of-cemail" type="email" value="'+esc(o.contactEmail||'')+'" placeholder="tu@empresa.cl"></div></div>'
+        +'<div class="fld"><label>Página web</label><input id="of-cweb" type="url" value="'+esc(o.contactWebsite||'')+'" placeholder="https://www.tuempresa.cl"></div>'
+        +'<div class="fld"><label>Su negocio</label><textarea id="of-cabout" rows="2" maxlength="300">'+esc(o.businessAbout||'')+'</textarea></div>'
         +'<span class="hint">Lo que la cuenta declaró al registrarse. Corrígelo si te dieron otro número; vaciar un campo lo borra.</span>'):'')
       +'<div class="ferr" id="of-err"></div>'
       +'<div class="acts"><span class="hint">'+(isEdit?esc(o.id):'Nueva bodega / administrador aislado')+'</span><div style="display:flex;gap:10px"><button class="btn" id="of-cancel">Cancelar</button><button class="btn pri" id="of-save">'+(isEdit?'Guardar':'Crear operación')+'</button></div></div>'
@@ -7407,6 +7412,8 @@
         if($("#of-cname"))cuerpo.contactName=$("#of-cname").value.trim();
         if($("#of-cphone"))cuerpo.contactPhone=$("#of-cphone").value.trim();
         if($("#of-cemail"))cuerpo.contactEmail=$("#of-cemail").value.trim();
+        if($("#of-cweb"))cuerpo.contactWebsite=$("#of-cweb").value.trim();
+        if($("#of-cabout"))cuerpo.businessAbout=$("#of-cabout").value.trim();
         p=api('/operations/'+o.id,{method:'PATCH',body:cuerpo});
       }
       else{var id=$("#of-id").value.trim();p=api('/operations',{method:'POST',body:id?{id:id,name:name}:{name:name}});}
@@ -8367,6 +8374,8 @@
     var company=$("#rg-company").value.trim(), name=$("#rg-name").value.trim();
     var email=$("#rg-email").value.trim(), pass=$("#rg-pass").value, track=$("#rg-track").value;
     var phone=($("#rg-phone")?$("#rg-phone").value:"").trim();
+    var web=($("#rg-web")?$("#rg-web").value:"").trim();
+    var about=($("#rg-about")?$("#rg-about").value:"").replace(/\s+/g," ").trim();
     $("#rg-err").textContent="";
     if(!company||!name||!email||!phone||!pass){ $("#rg-err").textContent="Completa todos los campos."; return; }
     // Mismo criterio que el servidor (dominio `esTelefonoPlausible`): entre 8 y 15
@@ -8375,9 +8384,12 @@
     if(phone.replace(/\D/g,"").length<8||phone.replace(/\D/g,"").length>15){
       $("#rg-err").textContent="Ingresa un celular válido con código de país. Ej: +56 9 1234 5678"; return;
     }
+    if(!about){ $("#rg-err").textContent="Cuéntanos brevemente de tu negocio."; if($("#rg-about"))$("#rg-about").focus(); return; }
+    if(about.split(" ").length>20){ $("#rg-err").textContent="Cuéntanos de tu negocio en no más de 20 palabras."; return; }
+    if(web&&!/^(https?:\/\/)?[^\s.]+\.[^\s]{2,}$/i.test(web)){ $("#rg-err").textContent="Revisa la dirección de tu página web (ej: www.tuempresa.cl)."; return; }
     if(pass.length<6){ $("#rg-err").textContent="La contraseña debe tener al menos 6 caracteres."; return; }
     var btn=$("#rg-btn"); btn.disabled=true; btn.textContent="Creando…";
-    api('/auth/register',{method:'POST',body:{companyName:company,name:name,email:email,phone:phone,password:pass,track:track,source:origenLead()||undefined}}).then(function(r){
+    api('/auth/register',{method:'POST',body:{companyName:company,name:name,email:email,phone:phone,password:pass,track:track,website:web||undefined,about:about,source:origenLead()||undefined}}).then(function(r){
       $("#rg-pass").value="";
       marcaConversionRegistro();
       try{ sessionStorage.removeItem('nwms.lead.source'); }catch(e){}
@@ -8386,6 +8398,11 @@
     }).catch(function(e){ $("#rg-err").textContent=e.message; }).then(function(){ btn.disabled=false; btn.textContent="Crear cuenta gratis"; });
   }
   if($("#rg-btn"))$("#rg-btn").addEventListener("click",doRegister);
+  // Contador de palabras de "Cuéntanos de tu negocio" (máx. 20).
+  if($("#rg-about"))$("#rg-about").addEventListener("input",function(){
+    var t=$("#rg-about").value.replace(/\s+/g," ").trim(), n=t?t.split(" ").length:0, c=$("#rg-about-n");
+    if(c){ c.textContent=n+"/20 palabras"; c.classList.toggle("over",n>20); }
+  });
   if($("#rg-pass"))$("#rg-pass").addEventListener("keydown",function(e){if(e.key==="Enter")doRegister();});
   if($("#rg-phone"))$("#rg-phone").addEventListener("keydown",function(e){if(e.key==="Enter")doRegister();});
 

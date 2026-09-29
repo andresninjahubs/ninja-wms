@@ -2766,6 +2766,22 @@ async function run() {
     assert.equal(janOnly.feed[0].detail?.includes('+5 un'), true);
   });
 
+  await test('self-serve: guarda la web y la descripción del negocio, y acota el largo', async () => {
+    const { facade } = buildFacade();
+    const res = await facade.registerSelfServe({ companyName: 'Web Co', name: 'Wen', email: 'wen@web.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand', website: 'www.webco.cl', about: 'Vendemos ropa por Shopify y Mercado Libre' });
+    const op = (await facade.listOperations()).find((o) => o.id === res.operationId)!;
+    assert.equal(op.contactWebsite, 'https://www.webco.cl', 'agrega https:// si falta');
+    assert.equal(op.businessAbout, 'Vendemos ropa por Shopify y Mercado Libre');
+    await assert.rejects(
+      () => facade.registerSelfServe({ companyName: 'Largo Co', name: 'L', email: 'l@largo.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand', about: Array(30).fill('palabra').join(' ') }),
+      /20 palabras/,
+    );
+    await assert.rejects(
+      () => facade.registerSelfServe({ companyName: 'Mala Web', name: 'M', email: 'm@mala.cl', phone: '+56 9 1234 5678', password: 'clave12345', track: 'brand', website: 'no es web', about: 'Tienda' }),
+      /página web/,
+    );
+  });
+
   await test('self-serve: registro de marca provisiona operación + admin + seller', async () => {
     const { facade } = buildFacade();
     const res = await facade.registerSelfServe({ companyName: 'Tienda Aurora', name: 'Camila', email: 'camila@aurora.cl', phone: '+56 9 1234 5678', password: 'secreto123', track: 'brand' });

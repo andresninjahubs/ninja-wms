@@ -48,6 +48,7 @@ export class OperationsController {
     return this.wms.updateOperation(operationId, {
       name: dto.name, active: dto.active,
       contactName: dto.contactName, contactEmail: dto.contactEmail, contactPhone: dto.contactPhone,
+      contactWebsite: dto.contactWebsite, businessAbout: dto.businessAbout,
     });
   }
 

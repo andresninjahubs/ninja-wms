@@ -2619,7 +2619,7 @@ export class WmsFacade {
     return this.operationsService.list();
   }
   /** Edita nombre/estado de una operación (solo PLATFORM_ADMIN vía guard). */
-  updateOperation(operationId: string, patch: { name?: string; active?: boolean; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null }): Promise<Operation> {
+  updateOperation(operationId: string, patch: { name?: string; active?: boolean; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null; contactWebsite?: string | null; businessAbout?: string | null }): Promise<Operation> {
     return this.operationsService.update(operationId, patch);
   }
   listSellers(operationId: string): Promise<Seller[]> {
@@ -2848,6 +2848,7 @@ export class WmsFacade {
   async listNewSignups(): Promise<Array<{
     id: string; name: string; track: string | null; contactName: string | null; contactEmail: string | null; contactPhone: string | null;
     leadSource: string | null; createdAt: string | null; planId: string | null; trialEndsAt: string | null; active: boolean;
+    contactWebsite: string | null; businessAbout: string | null;
     progress: { done: number; total: number; next: string | null };
   }>> {
     const ops = (await this.operationsService.list()).filter((o) => o.selfServe && !o.reviewedAt);
@@ -2860,6 +2861,7 @@ export class WmsFacade {
         id: o.id, name: o.name, track: o.track ?? null, contactName: o.contactName ?? null, contactEmail: o.contactEmail ?? null,
         contactPhone: o.contactPhone ?? null, leadSource: o.leadSource ?? null, createdAt: o.createdAt ?? null,
         planId: o.planId ?? null, trialEndsAt: o.trialEndsAt ?? null, active: o.active,
+        contactWebsite: o.contactWebsite ?? null, businessAbout: o.businessAbout ?? null,
         progress: { done: st ? st.steps.filter((x) => x.done).length : 0, total: st ? st.steps.length : 0, next: next ? next.label : null },
       });
     }
@@ -3324,7 +3326,7 @@ export class WmsFacade {
    * por defecto; emite el token de verificación, envía el correo y devuelve un JWT para
    * aterrizar dentro del producto de inmediato. El email nace SIN verificar.
    */
-  async registerSelfServe(input: { companyName: string; name: string; email: string; phone: string; password: string; track: 'brand' | 'operator'; source?: string | null }): Promise<{ token: string; user: User; operationId: string; sellerId: string | null; verification: { sent: boolean; devToken?: string } }> {
+  async registerSelfServe(input: { companyName: string; name: string; email: string; phone: string; password: string; track: 'brand' | 'operator'; source?: string | null; website?: string | null; about?: string | null }): Promise<{ token: string; user: User; operationId: string; sellerId: string | null; verification: { sent: boolean; devToken?: string } }> {
     const companyName = (input.companyName || '').trim();
     const name = (input.name || '').trim();
     const email = (input.email || '').trim().toLowerCase();
@@ -3335,6 +3337,13 @@ export class WmsFacade {
     if (!email.includes('@')) throw new ValidationError('Ingresa un email válido');
     if (!esTelefonoPlausible(phone)) throw new ValidationError('Ingresa un celular válido con código de país. Ej: +56 9 1234 5678');
     if (!input.password || input.password.length < 6) throw new ValidationError('La contraseña debe tener al menos 6 caracteres');
+    const about = (input.about || '').replace(/\s+/g, ' ').trim();
+    const palabras = about ? about.split(' ').length : 0;
+    // Obligatorio en el formulario (RegisterDto); acá solo se acota el largo.
+    if (palabras > 25) throw new ValidationError('Cuéntanos de tu negocio en no más de 20 palabras');
+    let website = (input.website || '').trim();
+    if (website && !/^https?:\/\//i.test(website)) website = 'https://' + website;
+    if (website && !/^https?:\/\/[^\s.]+\.[^\s]{2,}$/i.test(website)) throw new ValidationError('Revisa la dirección de tu página web (ej: www.tuempresa.cl)');
     const existing = await this.usersService.findByEmail(email);
     if (existing) throw new ValidationError('Ya existe una cuenta con ese email. Inicia sesión o recupera tu contraseña.');
     // 1) Operación (tenant) con su pista de onboarding y reverse-trial:
@@ -3347,6 +3356,8 @@ export class WmsFacade {
       // poder llamar a quien se registró sin depender de que el correo llegue.
       contactName: name, contactEmail: email, contactPhone: phone,
       leadSource: (input.source || '').trim().slice(0, 400) || null,
+      contactWebsite: website || null,
+      businessAbout: about || null,
       createdAt: this.nowIso(),
     });
     // 2) Admin de la operación (email sin verificar todavía).
@@ -3362,7 +3373,7 @@ export class WmsFacade {
     // 4) Verificación por correo.
     const verification = await this.issueVerification(user);
     // 5) Aviso inmediato al equipo comercial (no bloquea el alta si falla).
-    void this.avisarNuevoLead({ companyName, name, email, phone, track, source: operation.leadSource ?? null, operationId: operation.id });
+    void this.avisarNuevoLead({ companyName, name, email, phone, track, source: operation.leadSource ?? null, website: website || null, about, operationId: operation.id });
     // 6) Auto-login.
     return { token: signToken(user), user: safeUser(user), operationId: operation.id, sellerId, verification };
   }
@@ -3373,7 +3384,7 @@ export class WmsFacade {
    *   LEAD_NOTIFY_EMAIL  → correo con los datos (si hay SMTP configurado)
    * El compromiso comercial es contactar en menos de una hora; sin aviso no hay hora.
    */
-  private async avisarNuevoLead(lead: { companyName: string; name: string; email: string; phone: string; track: string; source: string | null; operationId: string }): Promise<void> {
+  private async avisarNuevoLead(lead: { companyName: string; name: string; email: string; phone: string; track: string; source: string | null; website: string | null; about: string; operationId: string }): Promise<void> {
     const at = this.nowIso();
     const url = (process.env.LEAD_WEBHOOK_URL || '').trim();
     if (url) {
@@ -3386,7 +3397,7 @@ export class WmsFacade {
     }
     const to = (process.env.LEAD_NOTIFY_EMAIL || '').trim();
     if (to) {
-      const cuerpo = `Nueva cuenta Free en Ninja WMS\n\nEmpresa: ${lead.companyName}\nContacto: ${lead.name}\nCelular: ${lead.phone}\nEmail: ${lead.email}\nSe registró como: ${lead.track === 'operator' ? 'Operador 3PL' : 'Marca / tienda'}\nOrigen: ${lead.source || 'directo'}\nHora: ${at}\n\nWhatsApp: https://wa.me/${lead.phone.replace(/\D/g, '')}`;
+      const cuerpo = `Nueva cuenta Free en Ninja WMS\n\nEmpresa: ${lead.companyName}\nContacto: ${lead.name}\nCelular: ${lead.phone}\nEmail: ${lead.email}\nSe registró como: ${lead.track === 'operator' ? 'Operador 3PL' : 'Marca / tienda'}\nWeb: ${lead.website || '—'}\nSu negocio: ${lead.about}\nOrigen: ${lead.source || 'directo'}\nHora: ${at}\n\nWhatsApp: https://wa.me/${lead.phone.replace(/\D/g, '')}`;
       await this.sendMail(to, `Nuevo lead WMS: ${lead.companyName} (${lead.name})`, cuerpo);
     }
   }

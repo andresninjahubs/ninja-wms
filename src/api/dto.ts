@@ -520,6 +520,10 @@ export class UpdateOperationDto {
   @IsOptional() @IsString() @MaxLength(160) contactEmail?: string;
 
   @IsOptional() @IsString() @MaxLength(40) contactPhone?: string;
+
+  @IsOptional() @IsString() @MaxLength(200) contactWebsite?: string;
+
+  @IsOptional() @IsString() @MaxLength(300) businessAbout?: string;
 }
 
 export class ReceiveDto {
@@ -1385,6 +1389,11 @@ export class RegisterDto {
   @IsString() @MinLength(6) @MaxLength(200) password!: string;
 
   @IsIn(['brand', 'operator']) track!: 'brand' | 'operator';
+
+  // Sitio web (opcional) y el negocio en pocas palabras (máx. 20 palabras).
+  @IsOptional() @IsString() @MaxLength(200) website?: string;
+
+  @IsString() @MinLength(3) @MaxLength(300) about!: string;
 
   // Origen de campaña (utm_*, gclid) que el panel capturó de la URL de llegada.
   @IsOptional() @IsString() @MaxLength(400) source?: string;

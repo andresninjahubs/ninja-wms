@@ -14,7 +14,7 @@ export class OperationService {
     private readonly ids: IdGenerator,
   ) {}
 
-  async create(input: { id?: string; name: string; track?: 'brand' | 'operator' | null; selfServe?: boolean; planId?: string | null; trialPlan?: string | null; trialEndsAt?: string | null; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null; leadSource?: string | null; createdAt?: string | null }): Promise<Operation> {
+  async create(input: { id?: string; name: string; track?: 'brand' | 'operator' | null; selfServe?: boolean; planId?: string | null; trialPlan?: string | null; trialEndsAt?: string | null; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null; leadSource?: string | null; contactWebsite?: string | null; businessAbout?: string | null; createdAt?: string | null }): Promise<Operation> {
     if (!input.name || !input.name.trim()) throw new ValidationError('La operación necesita un nombre');
     const id = input.id ?? this.ids.next();
     if (await this.operations.findById(id)) throw new ValidationError(`Ya existe la operación ${id}`);
@@ -31,6 +31,8 @@ export class OperationService {
       contactEmail: input.contactEmail ?? null,
       contactPhone: input.contactPhone ?? null,
       leadSource: input.leadSource ?? null,
+      contactWebsite: input.contactWebsite ?? null,
+      businessAbout: input.businessAbout ?? null,
       createdAt: input.createdAt ?? null,
     };
     await this.operations.save(operation);
@@ -81,7 +83,7 @@ export class OperationService {
    * está: si no se distinguieran, editar solo el nombre desde el panel borraría el
    * teléfono sin que nadie lo pidiera.
    */
-  async update(operationId: string, patch: { name?: string; active?: boolean; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null }): Promise<Operation> {
+  async update(operationId: string, patch: { name?: string; active?: boolean; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null; contactWebsite?: string | null; businessAbout?: string | null }): Promise<Operation> {
     const op = await this.operations.findById(operationId);
     if (!op) throw new NotFoundError(`Operación no encontrada: ${operationId}`);
     const texto = (v: string | null | undefined, actual: string | null | undefined): string | null =>
@@ -93,6 +95,8 @@ export class OperationService {
       contactName: texto(patch.contactName, op.contactName),
       contactEmail: texto(patch.contactEmail, op.contactEmail),
       contactPhone: texto(patch.contactPhone, op.contactPhone),
+      contactWebsite: texto(patch.contactWebsite, op.contactWebsite),
+      businessAbout: texto(patch.businessAbout, op.businessAbout),
     };
     await this.operations.save(updated);
     return updated;

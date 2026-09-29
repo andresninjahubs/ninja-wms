@@ -1212,9 +1212,17 @@
 .nop-bar{display:inline-block;width:60px;height:6px;border-radius:99px;background:var(--line);overflow:hidden}
 .nop-bar i{display:block;height:100%;background:var(--primary)}
 .nop-a{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.nop-about{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--surface-2);font-size:13.5px;color:var(--ink);line-height:1.45;font-style:italic}
+.nop-about span{display:block;font-style:normal;font-size:11.5px;color:var(--ink-3);font-weight:600;margin-bottom:2px}
 .nop-foot{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap}
 .nop-a a.btn,.nop-a a.btn:hover{text-decoration:none}
 .nop-foot .btn{white-space:nowrap}
+/* Registro: web opcional y descripción del negocio */
+#loginov .rg-opt{font-weight:500;color:var(--ink-3)}
+#loginov .rg-count{float:right;font-weight:500;font-size:12px;color:var(--ink-3)}
+#loginov .rg-count.over{color:var(--crit);font-weight:700}
+#loginov textarea#rg-about{width:100%;box-sizing:border-box;resize:vertical;min-height:64px;font:inherit;font-size:15px;line-height:1.4;padding:10px 14px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface-2,#F8F9FC);color:var(--ink);margin-bottom:14px}
+#loginov textarea#rg-about:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 4px var(--primary-ring,rgba(18,240,147,.18))}
 /* Empaque masivo */
 .pkm-all{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px dashed var(--line-2);border-radius:12px;background:var(--surface-2)}
 .pkm-all .lbl{font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}
@@ -2415,6 +2423,10 @@
       <input id="rg-email" type="email" placeholder="tu@empresa.cl" autocomplete="username">
       <label>Celular</label>
       <input id="rg-phone" type="tel" placeholder="+56 9 1234 5678" autocomplete="tel" inputmode="tel">
+      <label>Página web <span class="rg-opt">(si tienes)</span></label>
+      <input id="rg-web" type="url" placeholder="www.tuempresa.cl" autocomplete="url" inputmode="url">
+      <label>Cuéntanos de tu negocio <span class="rg-count" id="rg-about-n">0/20 palabras</span></label>
+      <textarea id="rg-about" rows="2" maxlength="300" placeholder="Ej: Vendemos ropa por Shopify y Mercado Libre, despachamos unos 300 pedidos al mes."></textarea>
       <label>Contraseña</label>
       <input id="rg-pass" type="password" placeholder="mínimo 6 caracteres" autocomplete="new-password">
       <button class="b" id="rg-btn">Crear cuenta gratis</button>

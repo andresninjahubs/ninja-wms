@@ -260,6 +260,9 @@ export interface Operation {
   contactPhone?: string | null;
   /** Origen del alta (utm/gclid como query string), para saber qué campaña trajo la cuenta. */
   leadSource?: string | null;
+  /** Sitio web del negocio (opcional) y su descripción breve, del formulario de registro. */
+  contactWebsite?: string | null;
+  businessAbout?: string | null;
   /** Alta revisada por la plataforma (popup de nuevas operaciones). null = pendiente de revisar. */
   reviewedAt?: string | null;
   reviewedBy?: string | null;
