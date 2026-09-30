@@ -738,12 +738,15 @@
     var b=D.brand||{};
     brandLogoDraft=undefined;
     var logo=b.logoDataUri||"";
-    var color=b.primaryColor||"#0E9F6E";
+    var NINJA_COLOR="#12F093";
+    var color=b.primaryColor||NINJA_COLOR;
+    // Un color casi sin saturación (gris) deja botones, avisos y menú en gris.
+    function esGris(h){var m=/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(h||"");if(!m)return false;var r=parseInt(m[1],16),g=parseInt(m[2],16),bb=parseInt(m[3],16),mx=Math.max(r,g,bb),mn=Math.min(r,g,bb);return mx-mn<24&&mx>40&&mn<225;}
     function row(id,label,val,ph){return '<div class="fld"><label>'+label+'</label><input id="'+id+'" value="'+esc(val||"")+'" placeholder="'+esc(ph||"")+'"'+(canEdit?'':' disabled')+'></div>';}
     host.innerHTML=''
       +'<p class="muted" style="margin:0 0 14px;max-width:70ch">Personaliza la marca de tu operación. Estos datos y el logo reemplazan a los de Ninja Hubs en <b>todo lo que ve o descarga tu cliente</b>: el panel, la factura/pre-factura y el manifiesto de recepción. Si dejas algo vacío, se usa el valor por defecto.</p>'
       +'<div class="row2"><div class="fld"><label>Nombre visible (marca)</label><input id="br-company" value="'+esc(b.companyName||"")+'" placeholder="Ej: Bodegas del Sur" '+(canEdit?'':'disabled')+'></div>'
-      +'<div class="fld"><label>Color primario</label><input id="br-color" type="color" value="'+esc(color)+'" style="height:40px;padding:4px" '+(canEdit?'':'disabled')+'></div></div>'
+      +'<div class="fld"><label>Color primario</label><div style="display:flex;gap:8px;align-items:center"><input id="br-color" type="color" value="'+esc(color)+'" style="height:40px;padding:4px;flex:1" '+(canEdit?'':'disabled')+'>'+(canEdit?'<button class="btn mini" id="br-color-reset" type="button" title="Volver al verde Ninja">Color por defecto</button>':'')+'</div><div class="hint" id="br-color-hint" style="margin-top:4px">'+(b.primaryColor?'':'Usando el color por defecto de Ninja.')+'</div></div></div>'
       +'<div class="row2">'+row('br-legal','Razón social',b.legalName,'Bodegas del Sur SpA')+row('br-tax','RUT / ID tributario',b.taxId,'76.123.456-7')+'</div>'
       +'<div class="fld"><label>Dirección</label><input id="br-address" value="'+esc(b.address||"")+'" placeholder="Av. Ejemplo 123, Santiago" '+(canEdit?'':'disabled')+'></div>'
       +'<div class="row2">'+row('br-email','Email',b.email,'contacto@empresa.cl')+row('br-phone','Teléfono',b.phone,'+56 2 2345 6789')+'</div>'
@@ -756,6 +759,11 @@
       +'<div class="ferr" id="br-err"></div>'
       +(canEdit?'<div class="acts" style="margin-top:8px"><span class="hint">Se aplica de inmediato a tus clientes.</span><button class="btn pri" id="br-save">Guardar marca</button></div>':'<p class="hint">Solo el administrador de la operación puede editar la marca.</p>');
     if(!canEdit)return;
+    var colorDraft=b.primaryColor||null; // null = color por defecto (no se fija marca)
+    function pintaHintColor(){var h=$("#br-color-hint");if(!h)return;if(!colorDraft){h.textContent="Usando el color por defecto de Ninja.";h.style.color="";}else if(esGris(colorDraft)){h.textContent="Ojo: este color es gris, así que botones, avisos y menú se verán grises.";h.style.color="var(--warn,#B54708)";}else{h.textContent="";h.style.color="";}}
+    pintaHintColor();
+    $("#br-color").addEventListener("input",function(){colorDraft=this.value;pintaHintColor();});
+    $("#br-color-reset").addEventListener("click",function(){colorDraft=null;$("#br-color").value=NINJA_COLOR;pintaHintColor();});
     $("#br-logo-file").addEventListener("change",function(){
       var f=this.files&&this.files[0]; if(!f)return;
       if(f.size>210000){$("#br-err").textContent="El logo supera ~200 KB. Usa una imagen más liviana.";this.value="";return;}
@@ -769,7 +777,7 @@
       var body={
         companyName:$("#br-company").value.trim(), legalName:$("#br-legal").value.trim(), taxId:$("#br-tax").value.trim(),
         address:$("#br-address").value.trim(), email:$("#br-email").value.trim(), phone:$("#br-phone").value.trim(),
-        website:$("#br-web").value.trim(), primaryColor:$("#br-color").value
+        website:$("#br-web").value.trim(), primaryColor:colorDraft
       };
       if(brandLogoDraft!==undefined)body.logoDataUri=brandLogoDraft; // null quita, string nuevo
       $("#br-save").disabled=true;
@@ -1024,23 +1032,27 @@
     // --- Las cinco tarjetas de control ---
     var p=d.precision, t=d.tiempos, oc=d.ocupacion, de=d.despacho;
     var cards=[
-      {cls: de.atrasadas?'good':'good', l:'Órdenes por despachar a tiempo', v:fmtInt(de.aTiempo),
+      {ic:'clock', cls: de.atrasadas?'good':'good', l:'Órdenes por despachar a tiempo', v:fmtInt(de.aTiempo),
        s:'de '+fmtInt(de.conCompromiso)+' con compromiso · '+fmtInt(de.sinCompromiso)+' sin deadline'},
-      {cls: de.atrasadas?'crit':'good', l:'Órdenes por despachar atrasadas', v:fmtInt(de.atrasadas),
+      {ic:'alert', cls: de.atrasadas?'crit':'good', l:'Órdenes por despachar atrasadas', v:fmtInt(de.atrasadas),
        s: de.atrasadas? 'requieren atención inmediata':'ninguna pasada de su deadline'},
-      {cls:'info', l:'Precisión de preparación', v:(p.pct==null?'—':p.pct+'%'),
+      (function(){ var o=d.otf||{}; var tend=(o.pct!=null&&o.anteriorPct!=null)?(' · ant.: '+o.anteriorPct+'%'):'';
+        return {ic:'otf', cls:(o.pct==null?'info':o.pct>=95?'good':o.pct>=85?'warn':'crit'), l:'On Time Fulfillment', v:(o.pct==null?'—':o.pct+'%'),
+         s:(o.pct==null? 'sin despachos con deadline en la ventana'
+            : fmtInt(o.aTiempo)+' de '+fmtInt(o.despachadasConDeadline)+' despachadas a tiempo'+(o.tarde?' · '+fmtInt(o.tarde)+' tarde':'')+tend)}; })(),
+      {ic:'target', cls:'info', l:'Precisión de preparación', v:(p.pct==null?'—':p.pct+'%'),
        s:(p.pct==null? 'aún sin pedidos verificados al empacar'
           : fmtInt(p.pedidosVerificados)+' verificados · '+fmtInt(p.pedidosConError)+' con diferencia · '+p.ventanaDias+' días')},
-      {cls:'info', duo:[{v:hrs(t.b2bHoras,t.b2bMin), l:'h B2B'},{v:hrs(t.b2cHoras,t.b2cMin), l:'h B2C'}],
+      {ic:'timer', cls:'info', duo:[{v:hrs(t.b2bHoras,t.b2bMin), l:'h B2B'},{v:hrs(t.b2cHoras,t.b2cMin), l:'h B2C'}],
        l:'Tiempo de preparación', s:'promedio de reserva a empaque · últimos '+t.ventanaDias+' días'},
-      {cls:(oc.pct==null?'info':oc.pct>=90?'crit':oc.pct>=75?'warn':'good'), l:'Ocupación de bodega',
+      {ic:'warehouse', cls:(oc.pct==null?'info':oc.pct>=90?'crit':oc.pct>=75?'warn':'good'), l:'Ocupación de bodega',
        v:(oc.pct==null?'—':oc.pct+'%'), s:fmtInt(oc.usado)+' de '+fmtInt(oc.capacidad)+' '+oc.unidad+' · '+oc.ubicaciones+' ubicaciones'}
     ];
     $("#dash-cards").innerHTML=cards.map(function(c){
       var cuerpo=c.duo
         ? '<div class="duo">'+c.duo.map(function(x){return '<div><div class="v">'+x.v+'</div><div class="s">'+x.l+'</div></div>';}).join('')+'</div>'
         : '<div class="v">'+c.v+'</div>';
-      return '<div class="dcard '+c.cls+'"><div class="l">'+esc(c.l)+'</div>'+cuerpo+'<div class="s">'+esc(c.s)+'</div></div>';
+      return '<div class="dcard '+c.cls+(c.ic?' dc-'+c.ic:'')+'"'+(c.ic==='otf'?' title="De las órdenes con deadline despachadas en la ventana, % que salió antes de su deadline"':'')+'><div class="l">'+esc(c.l)+'</div>'+cuerpo+'<div class="s">'+esc(c.s)+'</div></div>';
     }).join('');
 
     // --- Productividad ---

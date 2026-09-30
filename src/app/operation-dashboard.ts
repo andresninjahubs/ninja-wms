@@ -153,6 +153,43 @@ export async function buildOperationDashboard(facade: WmsFacade, operationId: st
     sinCompromiso: abiertas.length - conDeadline.length,
   };
 
+  // ---- 4b. On Time Fulfillment (OTF) ------------------------------------------
+  // De las órdenes CON deadline que se despacharon dentro de la ventana, cuántas
+  // salieron a tiempo (despacho <= dueAt). Se compara con la ventana anterior.
+  const otf = (() => {
+    const custom = !!(opts.from && opts.to);
+    const hasta = custom ? Date.parse(opts.to as string) : now;
+    const desde = custom ? Date.parse(opts.from as string) : now - WIN_DAYS[ventana] * 86400000;
+    const largo = Math.max(1, hasta - desde);
+    const despachoEn = (o: SalesOrder): number | null => {
+      if (o.status !== OrderStatus.SHIPPED) return null;
+      const ev = (o.events || []).filter((e) => e.type === 'SHIPPED').pop();
+      const t = ev ? Date.parse(ev.at) : Date.parse(((o as any).shippedAt || (o as any).updatedAt || '') as string);
+      return isNaN(t) ? null : t;
+    };
+    const medir = (d0: number, d1: number) => {
+      let total = 0, aTiempo = 0;
+      for (const o of allOrders) {
+        if (!o.dueAt) continue;
+        const t = despachoEn(o);
+        if (t == null || t < d0 || t > d1) continue;
+        total++;
+        if (t <= Date.parse(o.dueAt as string)) aTiempo++;
+      }
+      return { total, aTiempo };
+    };
+    const cur = medir(desde, hasta), prev = medir(desde - largo, desde);
+    const sinDeadline = allOrders.filter((o) => !o.dueAt && (() => { const t = despachoEn(o); return t != null && t >= desde && t <= hasta; })()).length;
+    return {
+      pct: pct(cur.aTiempo, cur.total),
+      aTiempo: cur.aTiempo,
+      tarde: cur.total - cur.aTiempo,
+      despachadasConDeadline: cur.total,
+      despachadasSinDeadline: sinDeadline,
+      anteriorPct: pct(prev.aTiempo, prev.total),
+    };
+  })();
+
   // ---- 5. Precisión de preparación (verificación al empacar) -------------------
   const precision = (() => {
     const desde = now - 30 * 86400000;
@@ -284,7 +321,7 @@ export async function buildOperationDashboard(facade: WmsFacade, operationId: st
     generadoEn: nowIso,
     alcance: { operationId, sellerId: opts.sellerId || null, clientes: sellers.length, consolidado: !opts.sellerId },
     ventana: opts.from && opts.to ? { tipo: 'personalizado', desde: opts.from, hasta: opts.to } : { tipo: ventana, dias: WIN_DAYS[ventana] },
-    actividad, productividad, prefacturacion, despacho, precision, tiempos, ocupacion,
+    actividad, productividad, prefacturacion, despacho, otf, precision, tiempos, ocupacion,
     cargaPorCliente, colaPorCourier, ordenesPorEstado, embalaje, excepciones,
     faltantes,
   };

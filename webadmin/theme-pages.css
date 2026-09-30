@@ -148,7 +148,7 @@ input[type=file]::file-selector-button{font:inherit;font-weight:600;font-size:13
 .dash-live{color:var(--good);font-size:12.5px;font-weight:600}
 .dash-live::before{background:var(--good)}
 
-/* Cinco tarjetas de control (#dash-cards): el look del canvas, con la
+/* Seis tarjetas de control (#dash-cards): el look del canvas, con la
    pastilla de ícono arriba a la derecha en vez de la franja lateral gruesa.
    El ícono se dibuja con mask y toma el color del estado de la tarjeta. */
 .dashcards{gap:16px;margin-top:20px}
@@ -161,10 +161,11 @@ input[type=file]::file-selector-button{font:inherit;font-weight:600;font-size:13
 .dcard::before{content:"";position:absolute;top:18px;right:18px;width:36px;height:36px;border-radius:10px;background:var(--dc-wash)}
 .dcard::after{content:"";position:absolute;top:27px;right:27px;width:18px;height:18px;background:var(--dc);
   -webkit-mask:var(--ic-clock) center/contain no-repeat;mask:var(--ic-clock) center/contain no-repeat}
-.dcard:nth-child(2)::after{-webkit-mask-image:var(--ic-alert);mask-image:var(--ic-alert)}
-.dcard:nth-child(3)::after{-webkit-mask-image:var(--ic-target);mask-image:var(--ic-target)}
-.dcard:nth-child(4)::after{-webkit-mask-image:var(--ic-timer);mask-image:var(--ic-timer)}
-.dcard:nth-child(5)::after{-webkit-mask-image:var(--ic-warehouse);mask-image:var(--ic-warehouse)}
+.dcard.dc-alert::after{-webkit-mask-image:var(--ic-alert);mask-image:var(--ic-alert)}
+.dcard.dc-otf::after{-webkit-mask-image:var(--ic-check);mask-image:var(--ic-check)}
+.dcard.dc-target::after{-webkit-mask-image:var(--ic-target);mask-image:var(--ic-target)}
+.dcard.dc-timer::after{-webkit-mask-image:var(--ic-timer);mask-image:var(--ic-timer)}
+.dcard.dc-warehouse::after{-webkit-mask-image:var(--ic-warehouse);mask-image:var(--ic-warehouse)}
 .dcard .l{padding-right:44px;min-height:38px;font-size:14px;font-weight:500;color:var(--ink-2);line-height:1.35}
 .dcard .v{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:10px 0 4px;color:var(--ink)}
 .dcard.crit .v{color:var(--c-red)}
