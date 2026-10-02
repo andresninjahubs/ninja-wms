@@ -611,6 +611,27 @@ export class ShipToDto {
 
   @IsOptional() @IsString() @MaxLength(120)
   region?: string;
+
+  // ---- Datos del destinatario (v125): el front y la carga masiva los envían.
+  // Sin declararlos aquí, el ValidationPipe (forbidNonWhitelisted) rechazaba la
+  // orden con "shipTo.property rut should not exist".
+  @IsOptional() @IsString() @MaxLength(200)
+  razonSocial?: string;
+
+  @IsOptional() @IsString() @MaxLength(20)
+  rut?: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  consigneeId?: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  addressId?: string;
+
+  @IsOptional() @IsString() @MaxLength(120)
+  addressAlias?: string;
+
+  @IsOptional() @IsString() @MaxLength(160)
+  contacto?: string;
 }
 
 export class OrderLineDto {
