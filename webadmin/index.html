@@ -1250,6 +1250,18 @@
 #loginov .rg-count.over{color:var(--crit);font-weight:700}
 #loginov textarea#rg-about{width:100%;box-sizing:border-box;resize:vertical;min-height:64px;font:inherit;font-size:15px;line-height:1.4;padding:10px 14px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface-2,#F8F9FC);color:var(--ink);margin-bottom:14px}
 #loginov textarea#rg-about:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 4px var(--primary-ring,rgba(18,240,147,.18))}
+
+/* Registro: el formulario es largo. La capa del login debe poder desplazarse
+   (escritorio y móvil) y, en pantallas anchas, los campos van de a dos. */
+.loginov{overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;align-items:flex-start;padding:24px 0}
+.loginov>.loginstage{margin:auto 0}
+.rg-row{display:grid;grid-template-columns:1fr;column-gap:14px}
+.rg-row>div{min-width:0}
+@media(min-width:640px){
+  .loginbox:has(.lgview[data-view="register"]:not([hidden])){width:580px}
+  .rg-row{grid-template-columns:1fr 1fr}
+}
+#loginov .lgview[data-view="register"] h1{margin-bottom:4px}
 /* Empaque masivo */
 .pkm-all{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px dashed var(--line-2);border-radius:12px;background:var(--surface-2)}
 .pkm-all .lbl{font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}
@@ -2447,20 +2459,26 @@
         <option value="brand">Una marca / tienda — uso el WMS para mi propio inventario</option>
         <option value="operator">Un operador 3PL — gestiono a varios clientes</option>
       </select>
-      <label>Nombre de tu empresa</label>
-      <input id="rg-company" type="text" placeholder="Tienda Aurora" autocomplete="organization">
-      <label>Tu nombre</label>
-      <input id="rg-name" type="text" placeholder="Camila Rojas" autocomplete="name">
-      <label>Email de trabajo</label>
-      <input id="rg-email" type="email" placeholder="tu@empresa.cl" autocomplete="username">
-      <label>Celular</label>
-      <input id="rg-phone" type="tel" placeholder="+56 9 1234 5678" autocomplete="tel" inputmode="tel">
-      <label>Página web <span class="rg-opt">(si tienes)</span></label>
-      <input id="rg-web" type="url" placeholder="www.tuempresa.cl" autocomplete="url" inputmode="url">
+      <div class="rg-row">
+        <div><label>Nombre de tu empresa</label>
+        <input id="rg-company" type="text" placeholder="Tienda Aurora" autocomplete="organization"></div>
+        <div><label>Tu nombre</label>
+        <input id="rg-name" type="text" placeholder="Camila Rojas" autocomplete="name"></div>
+      </div>
+      <div class="rg-row">
+        <div><label>Email de trabajo</label>
+        <input id="rg-email" type="email" placeholder="tu@empresa.cl" autocomplete="username"></div>
+        <div><label>Celular</label>
+        <input id="rg-phone" type="tel" placeholder="+56 9 1234 5678" autocomplete="tel" inputmode="tel"></div>
+      </div>
+      <div class="rg-row">
+        <div><label>Página web <span class="rg-opt">(si tienes)</span></label>
+        <input id="rg-web" type="url" placeholder="www.tuempresa.cl" autocomplete="url" inputmode="url"></div>
+        <div><label>Contraseña</label>
+        <input id="rg-pass" type="password" placeholder="mínimo 6 caracteres" autocomplete="new-password"></div>
+      </div>
       <label>Cuéntanos de tu negocio <span class="rg-count" id="rg-about-n">0/20 palabras</span></label>
       <textarea id="rg-about" rows="2" maxlength="300" placeholder="Ej: Vendemos ropa por Shopify y Mercado Libre, despachamos unos 300 pedidos al mes."></textarea>
-      <label>Contraseña</label>
-      <input id="rg-pass" type="password" placeholder="mínimo 6 caracteres" autocomplete="new-password">
       <button class="b" id="rg-btn">Crear cuenta gratis</button>
       <div class="hint">¿Ya tienes cuenta? <button class="lg-link" data-go="login">Inicia sesión</button></div>
     </div>
