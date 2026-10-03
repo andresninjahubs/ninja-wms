@@ -1509,6 +1509,7 @@ export class PrismaLocationRepository implements LocationRepository {
       id: l.id, operationId: l.operationId, warehouseId: l.warehouseId, code: l.code,
       zoneType: l.zoneType as ZoneType, capacity: l.capacity, pickRank: l.pickRank, active: l.active,
       x: l.x ?? null, y: l.y ?? null,
+      deletedAt: l.deletedAt ? new Date(l.deletedAt).toISOString() : null,
     };
   }
   async findById(locationId: string): Promise<Location | null> {
@@ -1516,13 +1517,18 @@ export class PrismaLocationRepository implements LocationRepository {
     return l ? this.toDomain(l) : null;
   }
   async findByCode(operationId: string, code: string): Promise<Location | null> {
+    const l = await this.db.location.findFirst({ where: { operationId, code, deletedAt: null } });
+    return l ? this.toDomain(l) : null;
+  }
+  async findByCodeIncludingDeleted(operationId: string, code: string): Promise<Location | null> {
     const l = await this.db.location.findFirst({ where: { operationId, code } });
     return l ? this.toDomain(l) : null;
   }
   async save(location: Location): Promise<void> {
+    const deletedAt = location.deletedAt ? new Date(location.deletedAt) : null;
     await this.db.location.upsert({
       where: { id: location.id },
-      create: { ...location },
+      create: { ...location, deletedAt },
       update: {
         operationId: location.operationId,
         warehouseId: location.warehouseId,
@@ -1533,11 +1539,12 @@ export class PrismaLocationRepository implements LocationRepository {
         active: location.active,
         x: location.x ?? null,
         y: location.y ?? null,
+        deletedAt,
       },
     });
   }
   async listByOperation(operationId: string): Promise<Location[]> {
-    const rows = await this.db.location.findMany({ where: { operationId } });
+    const rows = await this.db.location.findMany({ where: { operationId, deletedAt: null } });
     return rows.map((l: any) => this.toDomain(l));
   }
   async delete(locationId: string): Promise<void> {
@@ -1708,6 +1715,8 @@ export class PrismaReceiptOrderRepository implements ReceiptOrderRepository {
           events: order.events as unknown as object,
           createdAt: new Date(order.createdAt),
           createdBy: order.createdBy,
+          arrivedAt: order.arrivedAt ? new Date(order.arrivedAt) : null,
+          arrivedBy: order.arrivedBy ?? null,
         },
         update: {
           supplier: order.supplier,
@@ -1715,6 +1724,8 @@ export class PrismaReceiptOrderRepository implements ReceiptOrderRepository {
           locationId: order.locationId,
           notes: order.notes,
           status: order.status,
+          arrivedAt: order.arrivedAt ? new Date(order.arrivedAt) : null,
+          arrivedBy: order.arrivedBy ?? null,
           lines: order.lines as unknown as object,
           events: order.events as unknown as object,
         },
@@ -1752,6 +1763,8 @@ export class PrismaReceiptOrderRepository implements ReceiptOrderRepository {
       lines: (o.lines as any) ?? [],
       createdAt: (o.createdAt instanceof Date ? o.createdAt.toISOString() : o.createdAt),
       createdBy: o.createdBy ?? 'system',
+      arrivedAt: o.arrivedAt ? (o.arrivedAt instanceof Date ? o.arrivedAt.toISOString() : o.arrivedAt) : null,
+      arrivedBy: o.arrivedBy ?? null,
       events: (o.events as any) ?? [],
     };
   }

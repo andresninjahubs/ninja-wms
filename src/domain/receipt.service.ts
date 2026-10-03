@@ -150,8 +150,8 @@ export class ReceiptOrderService {
   async update(sellerId: string, orderId: string, input: CreateReceiptInput, actor?: string): Promise<ReceiptOrder> {
     const order = await this.receipts.findById(sellerId, orderId);
     if (!order) throw new NotFoundError(`Orden de recepción no encontrada: ${orderId}`);
-    if (order.status !== ReceiptOrderStatus.PENDING) {
-      throw new ValidationError('Solo se puede editar una recepción pendiente (aún sin recibir). Anúlala si necesitas rehacerla.');
+    if (order.status !== ReceiptOrderStatus.PENDING && order.status !== ReceiptOrderStatus.ARRIVED) {
+      throw new ValidationError('Solo se puede editar una recepción creada o en bodega (aún sin recibir). Anúlala si necesitas rehacerla.');
     }
     const seller = await this.sellers.findById(sellerId);
     if (!seller) throw new NotFoundError(`Seller no encontrado: ${sellerId}`);
@@ -163,6 +163,39 @@ export class ReceiptOrderService {
     order.locationId = newLocationId;
     order.lines = newLines;
     order.events.push(this.ev('EDITADA', actor, `${newLines.length} línea(s) · ${this.expectedUnits(order)} un esperadas`));
+    await this.receipts.save(order);
+    return order;
+  }
+
+  /**
+   * La carga LLEGÓ a la bodega pero todavía no se abre ni se cuenta (ej. un pallet
+   * esperando en el andén). Pasa de "Creada" a "En bodega" y deja registrado
+   * cuándo y quién la marcó: el tiempo entre la llegada y el inicio del cotejo es
+   * el que después se mide como espera en andén.
+   */
+  async markArrived(sellerId: string, orderId: string, actor?: string, nota?: string | null): Promise<ReceiptOrder> {
+    const order = await this.receipts.findById(sellerId, orderId);
+    if (!order) throw new NotFoundError(`Orden de recepción no encontrada: ${orderId}`);
+    if (order.status === ReceiptOrderStatus.ARRIVED) return order;
+    if (order.status !== ReceiptOrderStatus.PENDING) {
+      throw new ValidationError(`Solo una recepción "Creada" se puede marcar en bodega (esta está ${order.status}).`);
+    }
+    order.status = ReceiptOrderStatus.ARRIVED;
+    order.arrivedAt = this.clock.now();
+    order.arrivedBy = actor || 'system';
+    order.events.push(this.ev('EN BODEGA', actor, nota ? `La carga llegó · ${nota}` : 'La carga llegó; pendiente de abrir y contar'));
+    await this.receipts.save(order);
+    return order;
+  }
+
+  /** Deshace "En bodega" (marcada por error): vuelve a "Creada". */
+  async unmarkArrived(sellerId: string, orderId: string, actor?: string): Promise<ReceiptOrder> {
+    const order = await this.receipts.findById(sellerId, orderId);
+    if (!order) throw new NotFoundError(`Orden de recepción no encontrada: ${orderId}`);
+    if (order.status !== ReceiptOrderStatus.ARRIVED) throw new ValidationError('La recepción no está marcada en bodega.');
+    order.status = ReceiptOrderStatus.PENDING;
+    order.arrivedAt = null; order.arrivedBy = null;
+    order.events.push(this.ev('CREADA', actor, 'Se deshizo "En bodega"'));
     await this.receipts.save(order);
     return order;
   }

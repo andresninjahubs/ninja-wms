@@ -408,6 +408,7 @@ table.matrix td.z{color:var(--ink-3)}
 .fchip[data-f="RECEIVED"]::before{background:var(--c-sky)}
 .fchip[data-f="ALLOCATED"]::before,.fchip[data-f="PENDING"]::before{background:var(--c-amber)}
 .fchip[data-f="RESERVED"]::before,.fchip[data-f="PARTIAL"]::before{background:var(--c-orange)}
+.fchip[data-f="ARRIVED"]::before{background:var(--c-purple)}
 .fchip[data-f="PICKING"]::before,.fchip[data-f="PICKED"]::before{background:var(--c-purple)}
 .fchip[data-f="PACKED"]::before{background:var(--c-blue)}
 .fchip[data-f="SHIPPED"]::before{background:var(--c-green)}

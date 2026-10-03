@@ -98,6 +98,29 @@ export class ReceiptsController {
     );
   }
 
+  /** Marca que la carga llegó a la bodega ("En bodega"), antes de abrirla y contarla. */
+  @Post(':orderId/arrive')
+  @RequirePermission('inventory:receive')
+  arrive(
+    @Param('sellerId') sellerId: string,
+    @Param('orderId') orderId: string,
+    @Body() body: { nota?: string | null },
+    @CurrentUser() user: User | null,
+  ) {
+    return this.wms.markReceiptArrived(sellerId, orderId, actorOf(user), body?.nota ?? null);
+  }
+
+  /** Deshace "En bodega" (vuelve a "Creada"). */
+  @Post(':orderId/unarrive')
+  @RequirePermission('inventory:receive')
+  unarrive(
+    @Param('sellerId') sellerId: string,
+    @Param('orderId') orderId: string,
+    @CurrentUser() user: User | null,
+  ) {
+    return this.wms.unmarkReceiptArrived(sellerId, orderId, actorOf(user));
+  }
+
   /** Cierra la orden como recibida aunque falte mercadería (parcial). */
   @Post(':orderId/close')
   @RequirePermission('inventory:receive')

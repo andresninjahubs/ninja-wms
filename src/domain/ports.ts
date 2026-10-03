@@ -510,6 +510,8 @@ export interface LocationRepository {
   findByCode(operationId: string, code: string): Promise<Location | null>;
   save(location: Location): Promise<void>;
   listByOperation(operationId: string): Promise<Location[]>;
+  /** Busca por código incluyendo las eliminadas (para reutilizar el código al recrearla). */
+  findByCodeIncludingDeleted?(operationId: string, code: string): Promise<Location | null>;
   /** Elimina físicamente una ubicación (solo se permite si nunca tuvo movimientos). */
   delete(locationId: string): Promise<void>;
 }

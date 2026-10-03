@@ -138,7 +138,8 @@ import {
   ReplenishItem,
 } from '../domain/copilot';
 import { askCopilotAgent, askCopilotChat, askCopilotLlmDetailed, listModels as listLlmModels, PROVIDER_DEFAULTS as COPILOT_PROVIDERS } from '../domain/copilot-llm';
-import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS, COPILOT_MANAGE_TOOLS } from '../domain/copilot-tools';
+import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS, COPILOT_MANAGE_TOOLS, COPILOT_VISUAL_TOOL } from '../domain/copilot-tools';
+import { validarWidget as validarWidgetVisual, transformar as transformarVisual } from '../domain/ai-dashboard';
 
 /** SHA-256 del secreto de una llave. Lo mismo al emitir y al autenticar. */
 function hashApiKey(secreto: string): string {
@@ -640,6 +641,58 @@ export class WmsFacade {
     return { insights: buildInsights(snap) };
   }
   /** Lotes con saldo cuyo vencimiento está próximo (≤14 días) o ya pasó. */
+  /**
+   * Lotes y vencimiento (Inventario → Lotes y vencimiento).
+   *
+   * Productos con manejo de lote (o vencimiento) y, por cada lote con stock, su
+   * vencimiento, cantidad y ubicaciones. Estado del lote: vencido (< hoy),
+   * proximo (vence dentro de `dias`), vigente, o sin_vencimiento.
+   */
+  async lotsOverview(sellerId: string, opts?: { dias?: number }): Promise<{
+    generadoEn: string; dias: number;
+    productos: Array<{ sku: string; descripcion: string; lotControlled: boolean; expiryControlled: boolean; stock: number;
+      lotes: Array<{ lote: string; vencimiento: string | null; recibido: string | null; diasParaVencer: number | null; estado: 'vencido' | 'proximo' | 'vigente' | 'sin_vencimiento'; cantidad: number; ubicaciones: Array<{ locationId: string; qty: number }> }> }>;
+    resumen: { productos: number; lotes: number; vencidos: number; proximos: number; vigentes: number; sinVencimiento: number; unidadesVencidas: number; unidadesProximas: number };
+  }> {
+    const dias = Math.max(1, Math.min(365, Math.floor(opts?.dias || 30)));
+    const nowIso = this.clockNow(); const now = Date.parse(nowIso); const DAY = 86400000;
+    const skus = await this.skus.list(sellerId);
+    const balances = (await this.inventory.getStock({ sellerId })).filter((b) => b.qty > 0 && b.lot);
+    const porSku = new Map<string, Map<string, Array<{ locationId: string; qty: number }>>>();
+    for (const b of balances) {
+      const m = porSku.get(b.sku) || new Map(); const arr = m.get(b.lot as string) || [];
+      arr.push({ locationId: b.locationId, qty: b.qty }); m.set(b.lot as string, arr); porSku.set(b.sku, m);
+    }
+    const productos: any[] = [];
+    const res = { productos: 0, lotes: 0, vencidos: 0, proximos: 0, vigentes: 0, sinVencimiento: 0, unidadesVencidas: 0, unidadesProximas: 0 };
+    for (const s of skus) {
+      const lotsMap = porSku.get(s.sku);
+      if (!s.lotControlled && !s.expiryControlled && !lotsMap) continue;
+      const lotes: any[] = [];
+      for (const [lote, ubic] of lotsMap || new Map()) {
+        const meta = this.lots ? await this.lots.get(sellerId, s.sku, lote).catch(() => null) : null;
+        const venc = meta?.expiryDate || null;
+        const d = venc ? Math.floor((Date.parse(venc) - now) / DAY) : null;
+        const estado = d == null ? 'sin_vencimiento' : d < 0 ? 'vencido' : d <= dias ? 'proximo' : 'vigente';
+        const cantidad = ubic.reduce((t: number, u: any) => t + u.qty, 0);
+        lotes.push({ lote, vencimiento: venc, recibido: meta?.receivedAt || null, diasParaVencer: d, estado, cantidad, ubicaciones: ubic.sort((a: any, b: any) => b.qty - a.qty) });
+        res.lotes++;
+        if (estado === 'vencido') { res.vencidos++; res.unidadesVencidas += cantidad; }
+        else if (estado === 'proximo') { res.proximos++; res.unidadesProximas += cantidad; }
+        else if (estado === 'vigente') res.vigentes++; else res.sinVencimiento++;
+      }
+      // FEFO visual: primero lo que vence antes; sin vencimiento al final.
+      lotes.sort((a, b) => (a.diasParaVencer ?? 1e9) - (b.diasParaVencer ?? 1e9) || a.lote.localeCompare(b.lote));
+      productos.push({ sku: s.sku, descripcion: s.description, lotControlled: !!s.lotControlled, expiryControlled: !!s.expiryControlled, stock: lotes.reduce((t, l) => t + l.cantidad, 0), lotes });
+      res.productos++;
+    }
+    productos.sort((a, b) => {
+      const peor = (p: any) => Math.min(...p.lotes.map((l: any) => l.diasParaVencer ?? 1e9), 1e9);
+      return peor(a) - peor(b) || a.sku.localeCompare(b.sku);
+    });
+    return { generadoEn: nowIso, dias, productos, resumen: res };
+  }
+
   private async expiringLots(sellerId: string, now: number): Promise<{ sku: string; lot: string; days: number; qty: number }[]> {
     if (!this.lots) return [];
     const DAY = 86400000;
@@ -876,6 +929,35 @@ export class WmsFacade {
 
     return null; // no reconoció la intención: que conteste el LLM (o las sugerencias)
   }
+  /**
+   * Herramienta `visualizar` del copiloto: valida la especificación con el mismo
+   * validador de widgets del Dashboard AI, trae los datos por el camino de lectura
+   * del copiloto (con el alcance del usuario) y los transforma. Devuelve al modelo
+   * un resumen con una muestra para que pueda corregir la ruta si se equivocó.
+   */
+  async copilotVisual(args: any, operationId: string, sellerId: string | null, visuals: Array<{ widget: any; data: any }>): Promise<any> {
+    if (visuals.length >= 8) return { error: 'Máximo 8 gráficos o tablas por respuesta.' };
+    const lectura = COPILOT_TOOLS.map((t) => t.name);
+    const raw = { ...(args || {}), ancho: 12, alto: 8 };
+    const v = validarWidgetVisual(raw, lectura, () => 'cv-' + this.ids.next());
+    if (!v.ok) return { error: v.error };
+    const w = v.widget;
+    try {
+      const bruto = await this.runCopilotTool(w.source!.tool, (w.source!.args || {}) as any, operationId, sellerId);
+      if (bruto && (bruto as any).error) return { error: `La herramienta ${w.source!.tool} respondió: ${(bruto as any).error}` };
+      const t = transformarVisual(bruto, w);
+      const filas = (t.filas || []).slice(0, 1000);
+      if (!filas.length && t.valor == null) {
+        const claves = bruto && typeof bruto === 'object' ? Object.keys(bruto).slice(0, 12) : [];
+        return { error: `No salieron filas con path "${w.source!.path || '(raíz)'}". Campos disponibles en la respuesta: ${claves.join(', ') || '—'}.` };
+      }
+      visuals.push({ widget: w, data: { filas, valor: t.valor } });
+      return { ok: true, dibujado: w.titulo, filas: filas.length, columnas: filas[0] ? Object.keys(filas[0]).slice(0, 15) : [], muestra: filas.slice(0, 3), valor: t.valor };
+    } catch (e: any) {
+      return { error: (e && e.message) || 'no se pudo consultar' };
+    }
+  }
+
   /** Respuesta conversacional con el LLM del tenant, grounded en el contexto completo. */
   private async copilotLlmAnswer(operationId: string, sellerId: string | null, question: string, history: { role: 'user' | 'assistant'; content: string }[], cred: AiCredential, actor?: { id?: string; role?: string } | null, pista?: CopilotAnswer | null): Promise<CopilotAnswer> {
     const ctx = await this.copilotContext(operationId, sellerId);
@@ -910,6 +992,7 @@ export class WmsFacade {
       if (canManage) sys += ' Con guardar_instruccion puedes anotar directrices del administrador para el agente (ej. "hoy priorizar Chilexpress") y quedan vigentes en los próximos ciclos.';
       sys += ' POLÍTICA DEL AGENTE: ' + describePolicy(settings);
     }
+    sys += ' GRÁFICOS, TABLAS Y REPORTES: cuando el usuario pida graficar, ver una tabla, comparar, armar un reporte o exportar a Excel, usa la herramienta visualizar (una llamada por cada gráfico o tabla; un reporte = varias). El panel los dibuja bajo tu respuesta y cada uno se puede exportar a Excel, y el reporte completo también. En ese caso tu texto es una introducción corta de 1 a 2 frases con el hallazgo principal: no repitas los datos de la tabla en el texto. Si una visualización vuelve con error, corrige la ruta (path) o los campos mirando la muestra que te devolvió y vuelve a intentarlo.';
     sys += `\n\n=== RESUMEN DE LA OPERACIÓN (punto de partida; usa herramientas para profundizar) ===\n${ctx}`;
     // Pista: la respuesta que el router determinista ya calculó para esta pregunta.
     // Son cifras exactas y recién consultadas; el modelo las usa en vez de ir a
@@ -922,10 +1005,13 @@ export class WmsFacade {
     // las intenta, no propone algo que va a ser rechazado y no le promete al operario
     // un movimiento de carga que no va a ocurrir.
     const accion = canManage ? COPILOT_ACTION_TOOLS : COPILOT_ACTION_TOOLS.filter((t) => !COPILOT_MANAGE_TOOLS.has(t.name));
-    const tools = canWrite ? [...COPILOT_TOOLS, ...accion] : COPILOT_TOOLS;
+    const tools = canWrite ? [...COPILOT_TOOLS, ...accion, COPILOT_VISUAL_TOOL] : [...COPILOT_TOOLS, COPILOT_VISUAL_TOOL];
     // Recolectamos TODAS las acciones propuestas en el turno (el LLM puede pedir varias).
     const pendingActions: CopilotPendingAction[] = [];
+    // Gráficos/tablas del turno (herramienta `visualizar`).
+    const visuals: Array<{ widget: any; data: { filas: any[]; valor: number | null; error?: string } }> = [];
     const exec = async (name: string, args: any) => {
+      if (name === 'visualizar') return this.copilotVisual(args, operationId, sellerId, visuals);
       // Herramientas de ACCIÓN (escritura): se resuelven en copilotExecAction, un
       // método directamente testeable. Si no es una acción, cae a las de lectura.
       const r = await this.copilotExecAction(name, args, { operationId, sellerId, mode, canWrite, question, actor: actor ?? null, pendingActions, settings });
@@ -936,7 +1022,7 @@ export class WmsFacade {
     const res = await askCopilotAgent(cred, sys, turns, tools, exec);
     // Auditoría de LECTURAS: qué consultó el copiloto y sobre qué alcance (una entrada por turno).
     if (res.toolsUsed && res.toolsUsed.length) await this.journal(operationId, 'tools', actor?.id || 'copiloto', `Consultó: ${res.toolsUsed.join(', ')} (alcance ${sellerId || 'operación'})`, { toolsUsed: res.toolsUsed, sellerId });
-    if (res.text) return { intent: 'help', answer: res.text, link: null, toolsUsed: res.toolsUsed, pendingAction: pendingActions[0] || undefined, pendingActions: pendingActions.length ? pendingActions : undefined };
+    if (res.text || visuals.length) return { intent: 'help', answer: res.text || 'Aquí tienes lo que pediste.', link: null, toolsUsed: res.toolsUsed, pendingAction: pendingActions[0] || undefined, pendingActions: pendingActions.length ? pendingActions : undefined, visuals: visuals.length ? visuals : undefined };
     return {
       intent: 'help',
       answer: `La IA (${((COPILOT_PROVIDERS as any)[cred.provider] || {}).label || cred.provider}) no pudo responder — ${res.error || 'error desconocido'}. Mientras tanto puedes usar estas preguntas:`,
@@ -2396,7 +2482,7 @@ export class WmsFacade {
     // Recepciones abiertas.
     try {
       const rec: string[] = []; let n = 0;
-      for (const sid of scope) for (const r of await this.listReceipts(sid)) if (r.status === 'PENDING' || r.status === 'PARTIAL') { n++; if (rec.length < 10) rec.push(`${r.reference || r.id} [${r.status}, ${nm(sid)}]`); }
+      for (const sid of scope) for (const r of await this.listReceipts(sid)) if (r.status === 'PENDING' || r.status === 'ARRIVED' || r.status === 'PARTIAL') { n++; if (rec.length < 10) rec.push(`${r.reference || r.id} [${r.status}, ${nm(sid)}]`); }
       counters.recepcionesAbiertas = n;
       L.push(`Recepciones abiertas ${n}${rec.length ? ': ' + rec.join('; ') + (n > rec.length ? ' …' : '') : ''}.`);
     } catch { missing.push('recepciones'); }
@@ -3004,28 +3090,59 @@ export class WmsFacade {
   }
 
   /**
-   * Elimina una ubicación. Solo se permite si NUNCA tuvo movimientos de stock
-   * (de ningún cliente) y ninguna recepción abierta apunta a ella. Si tuvo
-   * historia, la respuesta correcta es desactivarla (el kardex la referencia).
+   * Elimina una ubicación. Regla: tiene que estar VACÍA (sin stock de ningún
+   * cliente, en ningún estado) y sin recepciones abiertas apuntándola.
+   *  - Si nunca tuvo movimientos, se borra físicamente.
+   *  - Si tuvo historia, se borra de forma lógica (deletedAt): desaparece de listas
+   *    y escaneos, y el kardex sigue mostrando su código. Si después se crea otra
+   *    ubicación con el mismo código, se reutiliza la ficha.
    */
-  async deleteLocation(locationId: string, actor?: User | null): Promise<{ ok: true; id: string; code: string }> {
+  async deleteLocation(locationId: string, actor?: User | null): Promise<{ ok: true; id: string; code: string; modo: 'fisico' | 'logico' }> {
     const loc = await this.locations.findById(locationId);
-    if (!loc) throw new NotFoundError(`Ubicación no encontrada: ${locationId}`);
+    if (!loc || loc.deletedAt) throw new NotFoundError(`Ubicación no encontrada: ${locationId}`);
     if (actor && actor.operationId && actor.operationId !== loc.operationId) {
       throw new ForbiddenError('No puedes eliminar ubicaciones de otra operación');
     }
-    if (await this.inventory.locationHasHistory(locationId)) {
-      throw new ValidationError(`La ubicación ${loc.code} tiene movimientos de stock registrados y no se puede eliminar. Desactívala para que deje de usarse.`);
-    }
     const sellers = await this.listSellers(loc.operationId);
+    let unidades = 0;
+    const clientes: string[] = [];
     for (const s of sellers) {
-      const open = (await this.receipts.list(s.id)).filter((r) => r.locationId === locationId && r.status !== ReceiptOrderStatus.CANCELLED);
+      const q = (await this.inventory.getStock({ sellerId: s.id, locationId })).reduce((t, b) => t + (b.qty > 0 ? b.qty : 0), 0);
+      if (q > 0) { unidades += q; clientes.push(s.name); }
+    }
+    if (unidades > 0) {
+      throw new ValidationError(`La ubicación ${loc.code} no está vacía: tiene ${unidades} unidad(es)${clientes.length ? ' de ' + clientes.join(', ') : ''}. Muévelas a otra ubicación antes de eliminarla.`);
+    }
+    for (const s of sellers) {
+      const open = (await this.receipts.list(s.id)).filter((r) => r.locationId === locationId && r.status !== ReceiptOrderStatus.CANCELLED && r.status !== ReceiptOrderStatus.RECEIVED);
       if (open.length) {
-        throw new ValidationError(`La ubicación ${loc.code} está asociada a ${open.length} recepción(es) del cliente ${s.name}. Cancélalas o cambia su ubicación antes de eliminarla.`);
+        throw new ValidationError(`La ubicación ${loc.code} está asociada a ${open.length} recepción(es) abiertas del cliente ${s.name}. Ciérralas o cambia su ubicación antes de eliminarla.`);
       }
     }
+    if (await this.inventory.locationHasHistory(locationId)) {
+      await this.locations.save({ ...loc, active: false, deletedAt: this.clockNow() });
+      return { ok: true, id: locationId, code: loc.code, modo: 'logico' };
+    }
     await this.locations.delete(locationId);
-    return { ok: true, id: locationId, code: loc.code };
+    return { ok: true, id: locationId, code: loc.code, modo: 'fisico' };
+  }
+
+  /** Eliminación masiva: aplica la misma regla a cada una y devuelve el detalle. */
+  async deleteLocations(ids: string[], actor?: User | null): Promise<{ eliminadas: Array<{ id: string; code: string }>; rechazadas: Array<{ id: string; code: string | null; motivo: string }> }> {
+    const eliminadas: Array<{ id: string; code: string }> = [];
+    const rechazadas: Array<{ id: string; code: string | null; motivo: string }> = [];
+    for (const id of Array.from(new Set((ids || []).filter(Boolean))).slice(0, 500)) {
+      try { const r = await this.deleteLocation(id, actor); eliminadas.push({ id, code: r.code }); }
+      catch (e: any) { const l = await this.locations.findById(id).catch(() => null); rechazadas.push({ id, code: l?.code ?? null, motivo: (e && e.message) || 'Error' }); }
+    }
+    return { eliminadas, rechazadas };
+  }
+
+  /** Una ubicación por id, incluida una eliminada (para rotular el kardex). */
+  async getLocationScoped(locationId: string, operationId?: string | null): Promise<Location> {
+    const loc = await this.locations.findById(locationId);
+    if (!loc || (operationId && loc.operationId !== operationId)) throw new NotFoundError(`Ubicación no encontrada: ${locationId}`);
+    return loc;
   }
 
   // ---- Códigos de barra y unidades de medida --------------------------------
@@ -4103,7 +4220,7 @@ export class WmsFacade {
         if ((nowMs - Date.parse(lastAt)) / 3600000 >= RISK_H) enRiesgo++;
       }
       let recepcionesPendientes = 0;
-      try { for (const r of await this.listReceipts(sid)) if (r.status === 'PENDING' || r.status === 'PARTIAL') recepcionesPendientes++; } catch { /* */ }
+      try { for (const r of await this.listReceipts(sid)) if (r.status === 'PENDING' || r.status === 'ARRIVED' || r.status === 'PARTIAL') recepcionesPendientes++; } catch { /* */ }
       let stockOnHand = 0;
       try { for (const b of await this.inventory.getStock({ sellerId: sid })) stockOnHand += Math.max(0, b.qty); } catch { /* */ }
       let facturacionMes = 0, currency = 'CLP';
@@ -4312,7 +4429,7 @@ export class WmsFacade {
       // Recepciones pendientes/parciales (inbound) por cotejar.
       for (const sid of sellers) {
         for (const r of await this.listReceipts(sid)) {
-          if (r.status !== 'PENDING' && r.status !== 'PARTIAL') continue;
+          if (r.status !== 'PENDING' && r.status !== 'ARRIVED' && r.status !== 'PARTIAL') continue;
           const pend = (r.lines || []).reduce((s, l) => s + Math.max(0, l.expectedQty - (l.receivedQty || 0)), 0);
           // Recepción: cada línea pendiente es un producto distinto que cotejar.
           const lineasPend = (r.lines || []).filter((l) => Math.max(0, l.expectedQty - (l.receivedQty || 0)) > 0).length;
@@ -4675,6 +4792,86 @@ export class WmsFacade {
       .map((u) => ({ id: u.id, nombre: u.name, activo: u.active !== false, ultimaConexion: lastLogin[u.id] ?? null, tareasAbiertas: openByOp.get(u.id) || 0 }))
       .sort((a, b) => (a.activo === b.activo ? a.nombre.localeCompare(b.nombre) : (a.activo ? -1 : 1)));
     return { operarios, activos: operarios.filter((o) => o.activo).length, inactivos: operarios.filter((o) => !o.activo).length };
+  }
+
+  /**
+   * Tablero de CARGAS en tiempo real (Equipo → Cargas).
+   *
+   * Por operario: qué está ejecutando ahora (in_progress, con cuánto lleva) y qué
+   * tiene en cola (assigned, con cuánto espera), más unidades y horas estimadas.
+   * Incluye a los operarios sin carga (para ver quién está libre) y a los inactivos
+   * que aún tengan tareas abiertas, marcados, para que nada quede escondido.
+   */
+  async teamLoadBoard(operationId: string): Promise<{
+    generadoEn: string;
+    operarios: Array<{
+      id: string; nombre: string; activo: boolean; ultimaConexion: string | null;
+      estado: 'ejecutando' | 'con_cola' | 'libre';
+      enEjecucion: Array<{ id: string; tipo: string; ref: string; sellerId: string | null; unidades: number; paradas: number; asignadaEn: string; iniciadaEn: string | null; minutosEnCurso: number | null; minutosEstimados: number; prioridad: number | null; motivo: string | null }>;
+      asignadas: Array<{ id: string; tipo: string; ref: string; sellerId: string | null; unidades: number; paradas: number; asignadaEn: string; iniciadaEn: string | null; minutosEsperando: number; minutosEstimados: number; prioridad: number | null; motivo: string | null }>;
+      unidades: number; minutosEstimados: number;
+    }>;
+    totales: { operarios: number; ejecutando: number; conCola: number; libres: number; tareasEnEjecucion: number; tareasAsignadas: number; unidades: number; minutosEstimados: number };
+    pendientesSinAsignar: Record<string, number>;
+  }> {
+    const nowIso = this.clockNow(); const now = Date.parse(nowIso);
+    const users = (await this.listUsers(operationId)).filter((u) => String(u.role) === 'OPERATOR');
+    const roster = await this.operatorRoster(operationId);
+    const rosterById = new Map(roster.map((r) => [r.id, r] as const));
+    const lastLogin = await this.platformUsageService.lastLoginByOperation(operationId).catch(() => ({} as Record<string, string>));
+    const open = this.assignments ? await this.assignments.listOpen(operationId) : [];
+    const byOp = new Map<string, WorkAssignment[]>();
+    for (const a of open) { const arr = byOp.get(a.operator) || []; arr.push(a); byOp.set(a.operator, arr); }
+    // "En ejecución" vive en dos lugares: el estado de la asignación y el ledger de
+    // tareas (la PWA marca ahí el inicio). Se toma cualquiera de los dos.
+    const ledger = this.taskLedger ? await this.taskLedger.list(operationId, { limit: 2000 }).catch(() => [] as any[]) : [];
+    const running = new Map<string, string | null>();
+    for (const t of ledger as any[]) if (t.state === 'in_progress') running.set(`${t.type}:${t.entityId}`, t.startedAt || t.createdAt || null);
+    const corriendo = (a: WorkAssignment) => a.status === 'in_progress' || running.has(`${a.type}:${a.entityId}`);
+    const inicio = (a: WorkAssignment) => a.startedAt || running.get(`${a.type}:${a.entityId}`) || null;
+    const min = (iso: string | null) => (iso ? Math.max(0, Math.round((now - Date.parse(iso)) / 60000)) : null);
+    const operarios = users
+      .filter((u) => u.active !== false || (byOp.get(u.id) || []).length > 0)
+      .map((u) => {
+        const r = rosterById.get(u.id);
+        const list = (byOp.get(u.id) || []).slice().sort((a, b) => (a.priority ?? 1e9) - (b.priority ?? 1e9) || a.assignedAt.localeCompare(b.assignedAt));
+        const estMin = (a: WorkAssignment) => (r ? Math.round(r.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate }) * 60) : 0);
+        const base = (a: WorkAssignment) => ({
+          id: a.id, tipo: a.type, ref: a.entityRef || a.entityId, sellerId: a.sellerId,
+          unidades: a.unitsEstimate, paradas: Math.max(1, a.linesEstimate || 1),
+          asignadaEn: a.assignedAt, iniciadaEn: inicio(a), minutosEstimados: estMin(a),
+          prioridad: a.priority ?? null, motivo: (a as any).priorityReason ?? null,
+        });
+        const enEjecucion = list.filter((a) => corriendo(a)).map((a) => ({ ...base(a), minutosEnCurso: min(inicio(a) || a.assignedAt) }));
+        const asignadas = list.filter((a) => !corriendo(a)).map((a) => ({ ...base(a), minutosEsperando: min(a.assignedAt) || 0 }));
+        const estado: 'ejecutando' | 'con_cola' | 'libre' = enEjecucion.length ? 'ejecutando' : asignadas.length ? 'con_cola' : 'libre';
+        return {
+          id: u.id, nombre: u.name, activo: u.active !== false, ultimaConexion: lastLogin[u.id] ?? null, estado,
+          enEjecucion, asignadas,
+          unidades: list.reduce((t, a) => t + a.unitsEstimate, 0),
+          minutosEstimados: list.reduce((t, a) => t + estMin(a), 0),
+        };
+      })
+      .sort((a, b) => {
+        const rank = { ejecutando: 0, con_cola: 1, libre: 2 } as const;
+        return rank[a.estado] - rank[b.estado] || b.minutosEstimados - a.minutosEstimados || a.nombre.localeCompare(b.nombre, 'es');
+      });
+    const totales = {
+      operarios: operarios.length,
+      ejecutando: operarios.filter((o) => o.estado === 'ejecutando').length,
+      conCola: operarios.filter((o) => o.estado === 'con_cola').length,
+      libres: operarios.filter((o) => o.estado === 'libre' && o.activo).length,
+      tareasEnEjecucion: operarios.reduce((t, o) => t + o.enEjecucion.length, 0),
+      tareasAsignadas: operarios.reduce((t, o) => t + o.asignadas.length, 0),
+      unidades: operarios.reduce((t, o) => t + o.unidades, 0),
+      minutosEstimados: operarios.reduce((t, o) => t + o.minutosEstimados, 0),
+    };
+    const pendientesSinAsignar: Record<string, number> = {};
+    for (const t of ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
+      const n = (await this.getTaskPool(operationId, t, { onlyUnassigned: true }).catch(() => [])).length;
+      if (n) pendientesSinAsignar[t] = n;
+    }
+    return { generadoEn: nowIso, operarios, totales, pendientesSinAsignar };
   }
 
   // ---- Agente proactivo (Nivel 3, Fase 1: reglas + barrido + alertas in-app) -----
@@ -5051,7 +5248,7 @@ export class WmsFacade {
       const out: Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'ORDER' }> = [];
       for (const s of sellers) {
         for (const r of await this.receipts.list(s).catch(() => [])) {
-          if (r.status !== ReceiptOrderStatus.PENDING && r.status !== ReceiptOrderStatus.PARTIAL) continue;
+          if (r.status !== ReceiptOrderStatus.PENDING && r.status !== ReceiptOrderStatus.ARRIVED && r.status !== ReceiptOrderStatus.PARTIAL) continue;
           const horas = this.horasDesde(r.createdAt, nowMs);
           if (horas < cfg.threshold) continue;
           const esperadas = r.lines.reduce((a, l) => a + (l.expectedQty || 0), 0);
@@ -6433,8 +6630,11 @@ export class WmsFacade {
   async createLocation(input: CreateLocationInput): Promise<Location> {
     await this.operationsService.mustGet(input.operationId);
     await this.assertQuota(input.operationId, 'warehouses');
+    // Si existe una eliminada (lógica) con el mismo código, se reutiliza su ficha:
+    // el código es único por operación y el kardex viejo sigue apuntando a ese id.
+    const previa = this.locations.findByCodeIncludingDeleted ? await this.locations.findByCodeIncludingDeleted(input.operationId, input.code) : null;
     const location: Location = {
-      id: this.ids.next(),
+      id: previa && previa.deletedAt ? previa.id : this.ids.next(),
       operationId: input.operationId,
       warehouseId: input.warehouseId ?? 'W1',
       code: input.code,
@@ -6444,6 +6644,7 @@ export class WmsFacade {
       active: true,
       x: input.x ?? null,
       y: input.y ?? null,
+      deletedAt: null,
     };
     await this.locations.save(location);
     return location;
@@ -6742,6 +6943,13 @@ export class WmsFacade {
     // La mercadería recibida entra al pool de guardado → repartir si hay auto-balanceo.
     if (opId) await this.continuousHook(opId, 'PUTAWAY', null);
     return order;
+  }
+  /** La carga llegó a la bodega (pallet en andén, aún sin abrir ni contar). */
+  markReceiptArrived(sellerId: string, orderId: string, actor?: string, nota?: string | null): Promise<ReceiptOrder> {
+    return this.receipts.markArrived(sellerId, orderId, actor, nota);
+  }
+  unmarkReceiptArrived(sellerId: string, orderId: string, actor?: string): Promise<ReceiptOrder> {
+    return this.receipts.unmarkArrived(sellerId, orderId, actor);
   }
   /** Cierra la orden como recibida aunque falte mercadería (parcial). */
   async closeReceipt(sellerId: string, orderId: string, actor?: string): Promise<ReceiptOrder> {

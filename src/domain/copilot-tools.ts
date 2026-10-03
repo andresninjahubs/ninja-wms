@@ -524,3 +524,25 @@ export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
     parameters: { type: 'object', properties: {} },
   },
 ];
+
+/**
+ * Herramienta de PRESENTACIÓN: el copiloto la usa para dibujar en el chat un
+ * gráfico, una tabla o un KPI con datos de otra herramienta de lectura. No lee ni
+ * escribe nada por sí misma: valida la especificación (mismo esquema que los
+ * widgets del Dashboard AI), trae los datos y se los entrega al panel.
+ */
+export const COPILOT_VISUAL_TOOL: ToolSpec = {
+  name: 'visualizar',
+  description: 'Dibuja en el chat un GRÁFICO, una TABLA o un KPI con datos en vivo, exportable a Excel. Úsala cuando el usuario pida graficar, comparar visualmente, ver una tabla, armar un reporte o exportar. Llámala UNA VEZ POR CADA gráfico o tabla (un reporte = varias llamadas). source.tool es una herramienta de LECTURA del catálogo (ej. listar_ordenes, inventario_resumen, productividad_operarios, facturacion_cliente, lotes_por_vencer); source.path es la ruta al arreglo dentro de su respuesta (ej. "ordenes", "operarios", "lotes"). Con transform agrupas (groupBy + field + agg: suma|promedio|conteo|maximo|minimo), filtras, ordenas y limitas. Para tablas indica display.columnas [{campo,titulo,formato}]. Tipos: tabla, barras, lineas, area, rosco, apiladas, treemap, radar, gauge, kpi, lista.',
+  parameters: {
+    type: 'object',
+    properties: {
+      tipo: { type: 'string', enum: ['tabla', 'barras', 'lineas', 'area', 'rosco', 'apiladas', 'treemap', 'radar', 'gauge', 'kpi', 'lista'], description: 'tipo de visual' },
+      titulo: str('título corto del gráfico o tabla'),
+      source: { type: 'object', description: 'de dónde salen los datos', properties: { tool: str('herramienta de lectura'), args: { type: 'object', description: 'argumentos de esa herramienta (usa solo los que ella acepta)', properties: { sellerId: str('id del cliente'), estado: str('estado'), sku: str('SKU'), orden: str('orden'), limite: int('máximo de resultados'), dias: int('ventana en días'), year: int('año'), month: int('mes 1-12'), tipo: str('tipo'), agrupar: str('agrupación') } }, path: str('ruta al arreglo en la respuesta, con puntos (opcional)') }, required: ['tool'] },
+      transform: { type: 'object', description: 'agrupar/filtrar/ordenar (opcional)', properties: { groupBy: str('campo para agrupar'), field: str('campo a agregar'), agg: str('suma|promedio|conteo|maximo|minimo|primero'), sortBy: str('campo para ordenar'), sortDir: str('asc|desc'), limit: int('máximo de filas'), filter: { type: 'object', properties: { field: str('campo'), op: str('= != > >= < <= contiene'), value: str('valor') } } } },
+      display: { type: 'object', description: 'presentación (opcional)', properties: { columnas: { type: 'array', items: { type: 'object', properties: { campo: str('campo'), titulo: str('encabezado'), formato: str('texto|numero|dinero|porcentaje|fecha') } } }, formato: str('texto|numero|dinero|porcentaje|fecha'), unidad: str('unidad'), nota: str('nota al pie') } },
+    },
+    required: ['tipo', 'titulo', 'source'],
+  },
+};

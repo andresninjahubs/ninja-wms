@@ -729,6 +729,11 @@ export interface Location {
   active: boolean;
   x?: number | null; // coordenada (G7): geometría para distancia real de traslado
   y?: number | null;
+  /**
+   * Eliminada (borrado lógico). Se usa cuando la ubicación está vacía pero tuvo
+   * movimientos: desaparece de listas y escaneos, y el kardex conserva su código.
+   */
+  deletedAt?: string | null;
 }
 
 /** Sugerencia de ubicación para guardar, con su puntaje y las razones. */
@@ -1465,7 +1470,8 @@ export interface ReturnOrder {
  *   CANCELLED — anulada: el stock recibido (si hubo) fue revertido del ledger.
  */
 export enum ReceiptOrderStatus {
-  PENDING = 'PENDING',
+  PENDING = 'PENDING', // "Creada": registrada, la carga aún no llega
+  ARRIVED = 'ARRIVED', // "En bodega": la carga llegó pero aún no se abre ni se cuenta
   PARTIAL = 'PARTIAL',
   RECEIVED = 'RECEIVED',
   CANCELLED = 'CANCELLED',
@@ -1501,5 +1507,8 @@ export interface ReceiptOrder {
   lines: ReceiptLine[];
   createdAt: string;
   createdBy: string; // usuario que registró la recepción
+  /** Cuándo y quién marcó que la carga llegó a la bodega (estado ARRIVED). */
+  arrivedAt?: string | null;
+  arrivedBy?: string | null;
   events: OrderEvent[]; // auditoría append-only (CREADA | RECEPCIÓN | CERRADA | ANULADA)
 }

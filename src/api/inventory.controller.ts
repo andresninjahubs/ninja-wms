@@ -229,6 +229,13 @@ export class InventoryController {
     return this.wms.getStock({ sellerId, sku, locationId });
   }
 
+  /** Lotes y vencimiento: productos con lote, sus lotes, vencimientos y estado. */
+  @Get('lots')
+  @RequirePermission('stock:read')
+  lots(@Param('sellerId') sellerId: string, @Query('dias') dias?: string) {
+    return this.wms.lotsOverview(sellerId, { dias: dias ? parseInt(dias, 10) : undefined });
+  }
+
   /** Sugerencia de guardado dirigido (motor caótico): dónde guardar `qty` de `sku`. */
   @Get('putaway-suggestions')
   @RequirePermission('inventory:putaway')

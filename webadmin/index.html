@@ -1250,6 +1250,92 @@
 #loginov .rg-count.over{color:var(--crit);font-weight:700}
 #loginov textarea#rg-about{width:100%;box-sizing:border-box;resize:vertical;min-height:64px;font:inherit;font-size:15px;line-height:1.4;padding:10px 14px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface-2,#F8F9FC);color:var(--ink);margin-bottom:14px}
 #loginov textarea#rg-about:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 4px var(--primary-ring,rgba(18,240,147,.18))}
+#usr-state .segbtn b{margin-left:4px;font-weight:700;opacity:.65;font-variant-numeric:tabular-nums}
+#usr-head th[data-usort]{cursor:pointer;user-select:none;white-space:nowrap}
+#usr-head th[data-usort]:hover{color:var(--ink)}
+#usr-head th[data-usort]::after{content:"↕";margin-left:6px;opacity:.35;font-size:.95em}
+#usr-head th[data-usort].asc::after{content:"↑";opacity:1;color:var(--primary-ink)}
+#usr-head th[data-usort].desc::after{content:"↓";opacity:1;color:var(--primary-ink)}
+/* Copiloto: visuals (gráficos, tablas dinámicas, reportes) */
+.cv-list{display:flex;flex-direction:column;gap:12px;margin-top:10px}
+.cv-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.cv-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.cv-h b{font-size:13.5px}.cv-n{font-size:12px}
+.cv-b{padding:4px 10px!important;font-size:12px!important}
+.cv-b.on{background:var(--primary-wash);color:var(--primary-ink);border-color:color-mix(in srgb,var(--primary) 40%,var(--line))}
+.cv-body{position:relative}
+.cv-body.graf{height:320px}
+.cv-body.kpi{height:110px}
+.cv-body .aid-row .b{flex:1}
+.cv-dyn-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.cv-dyn-bar .cv-q{min-width:160px;width:200px;height:34px}
+.cv-dyn-bar select{width:auto;height:34px;margin:0}
+.cv-tw{max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.cv-tbl th{position:sticky;top:0;background:var(--surface-2);cursor:pointer;white-space:nowrap;user-select:none}
+.cv-tbl th.asc::after{content:" ↑"}.cv-tbl th.desc::after{content:" ↓"}
+.cv-tbl td.num{text-align:right;font-variant-numeric:tabular-nums}
+.cv-nota{font-size:12px;margin-top:6px}
+.cv-itools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.cv-itools .btn{padding:5px 11px;font-size:12px}
+/* Copiloto: bloque de atención plegable */
+.cop-ins-h{cursor:pointer;user-select:none;gap:10px;align-items:center}
+.cop-ins-h .cop-chev{display:inline-block;transition:transform .18s ease;color:var(--ink-3);font-size:14px;width:14px}
+.cop-ins-h.collapsed .cop-chev{transform:rotate(-90deg)}
+.cop-ins-h.collapsed{border-bottom:0}
+#cop-insights.collapsed{display:none}
+.cop-ins-sum{display:inline-flex;gap:6px;flex-wrap:wrap}
+.cop-ins-sum .s{font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.cop-ins-sum .s.t{background:var(--surface-3);color:var(--ink-2)}
+.cop-ins-sum .s.crit{background:var(--c-red-wash);color:var(--c-red)}
+.cop-ins-sum .s.warn{background:var(--c-amber-wash);color:var(--c-amber)}
+.cop-ins-sum .s.info{background:var(--primary-wash);color:var(--primary-ink)}
+/* Ubicaciones: selección y eliminación masiva */
+.loc-bulk{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;margin:0 0 12px;border:1px solid color-mix(in srgb,var(--c-red) 35%,var(--line));background:var(--c-red-wash);border-radius:12px;font-size:14px}
+.loc-bulk.hidden{display:none}
+#loc-body input[type=checkbox],#loc-selall,.locc input[data-lsel]{width:17px;height:17px;accent-color:var(--primary);cursor:pointer;margin:0}
+#loc-body input[disabled],.locc input[disabled]{cursor:not-allowed;opacity:.35}
+.locc{position:relative}.locc .lsel{position:absolute;top:10px;right:10px}
+/* Lotes y vencimiento */
+#lt-filter .segbtn b{margin-left:4px;font-weight:700;opacity:.7}
+#lt-body tr.lt-first td{border-top:1px solid var(--line-2)}
+#lt-body td.lt-prod b{display:block;font-size:14px}#lt-body td.lt-prod span{font-size:12px;color:var(--ink-3)}
+#lt-body .lt-tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap}
+#lt-body .lt-tag i{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block}
+.lt-vencido{background:var(--c-red-wash);color:var(--c-red)}
+.lt-proximo{background:var(--c-amber-wash);color:var(--c-amber)}
+.lt-vigente{background:var(--c-green-wash);color:var(--c-green)}
+.lt-sin_vencimiento{background:var(--surface-3);color:var(--ink-3)}
+#lt-body .lt-ub{font-size:12.5px;color:var(--ink-2)}
+#lt-body td.lt-q{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+/* Cargas del equipo */
+.crg-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:14px 0 10px}
+.crg-kpi{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.crg-kpi span{display:block;font-size:12.5px;color:var(--ink-3);font-weight:600}
+.crg-kpi b{display:block;font-size:26px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums}
+.crg-pend{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 14px;font-size:13px;color:var(--ink-3)}
+.crg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.crg-card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.crg-card.ejecutando{border-color:color-mix(in srgb,var(--c-green) 45%,var(--line))}
+.crg-card.inactivo{opacity:.7}
+.crg-hd{display:flex;align-items:center;gap:10px}
+.crg-av{width:38px;height:38px;border-radius:50%;background:var(--primary-wash);color:var(--primary-ink);display:flex;align-items:center;justify-content:center;font-weight:800;flex:none}
+.crg-nm{flex:1;min-width:0}.crg-nm b{display:block;font-size:15px}.crg-nm span{font-size:12px;color:var(--ink-3)}
+.crg-st{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap}
+.crg-st.ejecutando{background:var(--c-green-wash);color:var(--c-green)}
+.crg-st.con_cola{background:var(--c-amber-wash);color:var(--c-amber)}
+.crg-st.libre{background:var(--surface-3);color:var(--ink-3)}
+.crg-nums{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.crg-nums span{font-size:11.5px;color:var(--ink-3);line-height:1.2}.crg-nums b{display:block;color:var(--ink);font-size:16px;font-weight:800;margin-bottom:2px;font-variant-numeric:tabular-nums}
+.crg-sec{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-top:2px}
+.crg-t{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:var(--surface-2);font-size:13px}
+.crg-t.run{background:var(--c-green-wash)}
+.crg-t .ty{font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--surface);border:1px solid var(--line);white-space:nowrap}
+.crg-t .rf{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.crg-t .tm{font-size:12px;color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
+.crg-t .tm.late{color:var(--c-red);font-weight:700}
+.crg-more{font-size:12px;color:var(--ink-3)}
+.crg-empty{font-size:13px;color:var(--ink-3);padding:6px 0}
+@media(max-width:1100px){.crg-kpis{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:640px){.crg-kpis{grid-template-columns:repeat(2,1fr)}#crg-q{width:100%!important}}
 
 /* Registro: el formulario es largo. La capa del login debe poder desplazarse
    (escritorio y móvil) y, en pantallas anchas, los campos van de a dos. */
@@ -1346,9 +1432,19 @@
       <div class="navcat-body">
         <button class="nav sub" data-pg="inventory"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 10 5-10 5L2 7z M2 17l10 5 10-5 M2 12l10 5 10-5"/></svg></span> Inventario</button>
         <button class="nav sub" data-pg="products"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z M7 7h.01"/></svg></span> Productos</button>
+        <button class="nav sub" data-pg="lotes"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4M8 14h3M8 17h6"/></svg></span> Lotes y vencimiento</button>
         <button class="nav sub" data-pg="consignees"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg></span> Destinatarios</button>
         <button class="nav sub" data-pg="packaging"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v13H3V8 M1 3h22v5H1z M10 12h4"/></svg></span> Embalajes</button>
         <button class="nav sub" data-pg="locations"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18 M3 15h18 M9 3v18 M15 3v18"/></svg></span> Ubicaciones</button>
+      </div>
+    </div>
+
+    <div class="navcat collapsed" data-cat="equipo">
+      <button class="navcat-h" data-cat-toggle="equipo"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75"/></svg></span> <span class="navcat-lbl">Equipo</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
+      <div class="navcat-body">
+        <button class="nav sub" data-pg="cargas"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6" rx="1"/><rect x="12" y="8" width="3" height="10" rx="1"/><rect x="17" y="5" width="3" height="13" rx="1"/></svg></span> Cargas</button>
+        <button class="nav sub" data-pg="activity"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01"/></svg></span> Actividad</button>
+        <button class="nav sub" data-pg="asignaciones"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg></span> Asignaciones</button>
       </div>
     </div>
 
@@ -1373,14 +1469,6 @@
       <div class="navcat-body">
         <button class="nav sub" data-pg="webhooks"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span> Webhooks</button>
         <button class="nav sub" data-pg="mcp"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01 M6 18h.01"/></svg></span> Conexión MCP</button>
-      </div>
-    </div>
-
-    <div class="navcat collapsed" data-cat="equipo">
-      <button class="navcat-h" data-cat-toggle="equipo"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75"/></svg></span> <span class="navcat-lbl">Equipo</span> <span class="navcat-arrow"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
-      <div class="navcat-body">
-        <button class="nav sub" data-pg="activity"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01"/></svg></span> Actividad</button>
-        <button class="nav sub" data-pg="asignaciones"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg></span> Asignaciones</button>
       </div>
     </div>
 
@@ -1556,7 +1644,7 @@
       <!-- Copiloto del WMS -->
       <section class="page" data-pg="copilot">
         <div class="card" style="margin-bottom:14px">
-          <div class="h"><h3>✨ Copiloto · qué necesita tu atención</h3><div class="sp" style="flex:1"></div><button class="btn" id="cop-refresh" style="padding:6px 12px">Actualizar</button></div>
+          <div class="h cop-ins-h" id="cop-ins-h" role="button" tabindex="0" aria-expanded="true" aria-controls="cop-insights" title="Mostrar u ocultar"><span class="cop-chev" aria-hidden="true">▾</span><h3>✨ Copiloto · qué necesita tu atención</h3><span class="cop-ins-sum" id="cop-ins-sum"></span><div class="sp" style="flex:1"></div><button class="btn" id="cop-refresh" style="padding:6px 12px">Actualizar</button></div>
           <div class="b" id="cop-insights"><div class="muted">Analizando tu operación…</div></div>
         </div>
         <div class="card">
@@ -1716,8 +1804,9 @@
           <button class="btn" id="loc-export">Exportar</button><button class="btn hidden" id="loc-import">⇪ Carga masiva</button><button class="btn pri hidden" id="loc-new">＋ Nueva ubicación</button>
         </div>
         <div class="locs" id="loc-grid"></div>
+        <div class="loc-bulk hidden" id="loc-bulk"><b id="loc-bulk-n">0</b> ubicación(es) seleccionada(s) <button class="btn danger" id="loc-bulk-del">Eliminar seleccionadas</button><button class="btn" id="loc-bulk-clear">Quitar selección</button><span class="muted" style="font-size:12.5px">Solo se pueden eliminar ubicaciones vacías.</span></div>
         <div class="card hidden" id="loc-listwrap"><div class="tablewrap"><table>
-          <thead><tr><th data-sort="code">Código</th><th data-sort="zone">Zona</th><th data-sort="occ" style="text-align:right">Ocupación</th><th>Uso</th><th data-sort="state">Estado</th><th data-action></th></tr></thead>
+          <thead><tr><th class="selcol loc-selth" style="width:36px"><input type="checkbox" id="loc-selall" title="Seleccionar todas las vacías"></th><th data-sort="code">Código</th><th data-sort="zone">Zona</th><th data-sort="occ" style="text-align:right">Ocupación</th><th>Uso</th><th data-sort="state">Estado</th><th data-action></th></tr></thead>
           <tbody id="loc-body"></tbody>
         </table></div></div>
       </section>
@@ -2001,9 +2090,9 @@
 
       <!-- Usuarios -->
       <section class="page" data-pg="users">
-        <div class="toolbar"><span class="muted" id="usr-scope">Usuarios y roles.</span><div class="sp" style="flex:1"></div><button class="btn pri hidden" id="usr-new">＋ Nuevo usuario</button></div>
+        <div class="toolbar"><span class="muted" id="usr-scope">Usuarios y roles.</span><div class="sp" style="flex:1"></div><select id="usr-role" aria-label="Filtrar por rol" style="width:auto;min-width:170px;margin:0 10px 0 0"><option value="">Todos los roles</option></select><div class="billtabs" id="usr-state" role="tablist" aria-label="Estado de los usuarios" style="margin:0 10px 0 0"><button class="segbtn on" data-ust="active" role="tab">Activos <b id="usr-n-act"></b></button><button class="segbtn" data-ust="inactive" role="tab">Inactivos <b id="usr-n-inact"></b></button></div><button class="btn pri hidden" id="usr-new">＋ Nuevo usuario</button></div>
         <div class="card"><div class="tablewrap"><table>
-          <thead><tr><th>Usuario</th><th>Email</th><th>Rol</th><th>Operación</th><th>Alcance</th><th>Estado</th><th data-action></th></tr></thead>
+          <thead id="usr-head"><tr><th data-usort="name">Usuario</th><th data-usort="email">Email</th><th data-usort="role">Rol</th><th data-usort="op">Operación</th><th data-usort="scope">Alcance</th><th data-usort="state">Estado</th><th data-action></th></tr></thead>
           <tbody id="usr-body"></tbody>
         </table></div></div>
       </section>
@@ -2068,6 +2157,45 @@
       </section>
 
       <!-- Asignaciones: balanceo de carga de tareas (Camino B) -->
+      <!-- Lotes y vencimiento (Inventario y ubicaciones) -->
+      <section class="page" data-pg="lotes">
+        <div class="toolbar">
+          <span class="muted" id="lt-scope">Productos con manejo de lote, sus lotes y vencimientos.</span>
+          <div class="sp" style="flex:1"></div>
+          <input id="lt-q" class="ops-q" type="search" placeholder="Buscar SKU, producto o lote…" style="min-width:220px;width:240px;margin:0 10px 0 0">
+          <div class="billtabs" id="lt-filter" style="margin:0 10px 0 0">
+            <button class="segbtn on" data-ltf="all">Todos</button>
+            <button class="segbtn" data-ltf="proximo">Próximos a vencer <b id="lt-n-prox"></b></button>
+            <button class="segbtn" data-ltf="vencido">Vencidos <b id="lt-n-venc"></b></button>
+          </div>
+          <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:13px">Próximo = vence en
+            <select id="lt-dias" style="width:auto;margin:0"><option value="7">7 días</option><option value="15">15 días</option><option value="30" selected>30 días</option><option value="60">60 días</option><option value="90">90 días</option></select></label>
+        </div>
+        <div class="crg-kpis" id="lt-kpis"></div>
+        <div class="card"><div class="tablewrap"><table>
+          <thead><tr><th>Producto</th><th>Lote</th><th>Vencimiento</th><th>Estado</th><th style="text-align:right">Cantidad</th><th>Ubicaciones</th></tr></thead>
+          <tbody id="lt-body"></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Cargas del equipo en tiempo real (Equipo → Cargas) -->
+      <section class="page" data-pg="cargas">
+        <div class="toolbar">
+          <span class="muted" id="crg-scope">Lo que cada operario está ejecutando y lo que tiene en cola, en vivo.</span>
+          <div class="sp" style="flex:1"></div>
+          <input id="crg-q" class="ops-q" type="search" placeholder="Buscar operario…" style="min-width:200px;width:200px;margin:0 10px 0 0">
+          <div class="billtabs" id="crg-filter" style="margin:0 10px 0 0">
+            <button class="segbtn on" data-cgf="all">Todos</button>
+            <button class="segbtn" data-cgf="busy">Con carga</button>
+            <button class="segbtn" data-cgf="free">Libres</button>
+          </div>
+          <span class="dash-live" id="crg-live">En vivo</span>
+        </div>
+        <div class="crg-kpis" id="crg-kpis"></div>
+        <div class="crg-pend" id="crg-pend"></div>
+        <div class="crg-grid" id="crg-grid"></div>
+      </section>
+
       <section class="page" data-pg="asignaciones">
         <div class="toolbar">
           <div class="billtabs" id="asg-view" style="margin:0">

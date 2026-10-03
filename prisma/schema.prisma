@@ -840,6 +840,8 @@ model Location {
   active      Boolean @default(true)
   x           Float? // coordenada (G7): geometría para distancia real
   y           Float?
+  /// Borrado lógico: vacía pero con historia. Oculta en listas y escaneos.
+  deletedAt   DateTime?
 
   @@unique([operationId, code])
   @@index([operationId])
@@ -965,11 +967,14 @@ model ReceiptOrder {
   reference  String? // documento del proveedor (guía / factura / OC)
   locationId String // ubicación de recepción destino
   notes      String?
-  status     String // OPEN | CANCELLED
+  status     String // PENDING (Creada) | ARRIVED (En bodega) | PARTIAL | RECEIVED | CANCELLED
   lines      Json // [{ lineNo, sku, qty, uom, lot, expiry }] (compat)
   events     Json // auditoría [{ type, at, actor, detail }]
   createdAt  DateTime
   createdBy  String   @default("system")
+  /// "En bodega": cuándo llegó la carga y quién lo marcó (antes de abrir y contar).
+  arrivedAt  DateTime?
+  arrivedBy  String?
 
   seller   Seller        @relation(fields: [sellerId], references: [id])
   lineRows ReceiptLine[] // normalizado (G8): analytics por línea sin parsear JSON

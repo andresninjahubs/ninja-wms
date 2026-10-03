@@ -59,6 +59,14 @@ export class AssignmentsController {
     return this.wms.operatorLoad(actorOperation(user, operationId));
   }
 
+  /** Tablero de cargas en tiempo real: qué ejecuta y qué tiene en cola cada operario. */
+  @Get('team-load')
+  @RequirePermission('master:manage')
+  teamLoad(@CurrentUser() user: User | null, @Query('operationId') operationId?: string) {
+    this.soloPersonal(user);
+    return this.wms.teamLoadBoard(actorOperation(user, operationId));
+  }
+
   /** "Mis tareas": las asignaciones abiertas del operario autenticado (o de `operator`). */
   @Get('mine')
   @RequirePermission('stock:read')

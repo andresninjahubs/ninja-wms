@@ -461,6 +461,10 @@ export class InMemoryLocationRepository implements LocationRepository {
     return this.store.get(id) ?? null;
   }
   async findByCode(operationId: string, code: string): Promise<Location | null> {
+    const found = [...this.store.values()].find((l) => l.operationId === operationId && l.code === code && !l.deletedAt);
+    return found ? { ...found } : null;
+  }
+  async findByCodeIncludingDeleted(operationId: string, code: string): Promise<Location | null> {
     const found = [...this.store.values()].find((l) => l.operationId === operationId && l.code === code);
     return found ? { ...found } : null;
   }
@@ -468,7 +472,7 @@ export class InMemoryLocationRepository implements LocationRepository {
     this.store.set(location.id, { ...location });
   }
   async listByOperation(operationId: string): Promise<Location[]> {
-    return [...this.store.values()].filter((l) => l.operationId === operationId).map((l) => ({ ...l }));
+    return [...this.store.values()].filter((l) => l.operationId === operationId && !l.deletedAt).map((l) => ({ ...l }));
   }
   async delete(locationId: string): Promise<void> {
     this.store.delete(locationId);

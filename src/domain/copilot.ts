@@ -55,6 +55,12 @@ export interface CopilotAnswer {
   toolsUsed?: string[];           // herramientas que el LLM consultó (transparencia)
   pendingAction?: CopilotPendingAction; // (compat) primera acción propuesta pendiente de confirmación
   pendingActions?: CopilotPendingAction[]; // TODAS las acciones propuestas en el turno, en orden
+  /**
+   * Gráficos y tablas que el copiloto armó en el turno (herramienta `visualizar`).
+   * Cada uno trae la especificación del widget (mismo esquema del Dashboard AI) y
+   * sus datos ya transformados; el panel los dibuja y los exporta a Excel.
+   */
+  visuals?: Array<{ widget: any; data: { filas: any[]; valor: number | null; error?: string } }>;
 }
 
 /** Acción de escritura propuesta por el copiloto, pendiente de confirmación del usuario. */

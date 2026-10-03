@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Inject, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post } from '@nestjs/common';
 import { WmsFacade } from '../app/wms.facade';
 import { CreateLocationDto, UpdateLocationDto } from './dto';
 import { actorOperation, CurrentUser } from './auth/current-user.decorator';
@@ -50,6 +50,20 @@ export class LocationsController {
    * Elimina una ubicación que NUNCA tuvo movimientos (ni recepciones abiertas).
    * Si tuvo historia, responde 400 explicando que debe desactivarse.
    */
+  /** Eliminación masiva: cada una debe estar vacía; devuelve eliminadas y rechazadas con motivo. */
+  @Post('bulk-delete')
+  @RequirePermission('master:manage')
+  bulkDelete(@Body() body: { ids?: string[] }, @CurrentUser() user: User | null) {
+    return this.wms.deleteLocations(Array.isArray(body?.ids) ? body.ids.map(String) : [], user);
+  }
+
+  /** Una ubicación por id (incluye eliminadas, para rotular historia). */
+  @Get(':locationId')
+  @RequirePermission('stock:read')
+  getLocation(@Param('locationId') locationId: string, @CurrentUser() user: User | null) {
+    return this.wms.getLocationScoped(locationId, user?.role === 'PLATFORM_ADMIN' ? null : user?.operationId ?? null);
+  }
+
   @Delete(':locationId')
   @RequirePermission('master:manage')
   deleteLocation(@Param('locationId') locationId: string, @CurrentUser() user: User | null) {
