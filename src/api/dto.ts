@@ -84,6 +84,12 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  /** Habilidades del operario (tipos de tarea permitidos). null = todas. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allowedTasks?: string[] | null;
 }
 
 export class LoginDto {

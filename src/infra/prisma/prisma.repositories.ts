@@ -265,10 +265,11 @@ export class PrismaUserRepository implements UserRepository {
       active: u.active,
       emailVerified: u.emailVerified ?? true,
       passwordHash: u.passwordHash ?? null,
+      allowedTasks: typeof u.allowedTasks === 'string' ? u.allowedTasks.split(',').map((x: string) => x.trim()).filter(Boolean) : null,
     };
   }
   async save(user: User): Promise<void> {
-    const data = { name: user.name, email: user.email, role: user.role, operationId: user.operationId, sellerId: user.sellerId, active: user.active, emailVerified: user.emailVerified ?? true, passwordHash: user.passwordHash ?? null };
+    const data = { name: user.name, email: user.email, role: user.role, operationId: user.operationId, sellerId: user.sellerId, active: user.active, emailVerified: user.emailVerified ?? true, passwordHash: user.passwordHash ?? null, allowedTasks: Array.isArray(user.allowedTasks) ? user.allowedTasks.join(',') : null };
     await this.db.user.upsert({ where: { id: user.id }, create: { id: user.id, ...data }, update: data });
   }
   async findById(userId: string): Promise<User | null> {

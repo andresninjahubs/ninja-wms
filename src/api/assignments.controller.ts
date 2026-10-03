@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import { WmsFacade } from '../app/wms.facade';
 import { actorOf, actorOperation, CurrentUser } from './auth/current-user.decorator';
 import { RequirePermission } from './auth/permissions.decorator';
@@ -60,6 +60,22 @@ export class AssignmentsController {
   }
 
   /** Tablero de cargas en tiempo real: qué ejecuta y qué tiene en cola cada operario. */
+  /** Habilidades de los operarios (qué actividades tiene permitidas cada uno). ?operator= filtra uno. */
+  @Get('skills')
+  @RequirePermission('stock:read')
+  skills(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('operator') operator?: string) {
+    this.soloPersonal(user);
+    return this.wms.operatorSkills(actorOperation(user, operationId), operator || null);
+  }
+
+  /** Fija las habilidades de un operario. Body: { actividades: ["PICK","PACK"] | "todas" | null }. */
+  @Put('skills/:operator')
+  @RequirePermission('user:manage')
+  setSkills(@CurrentUser() user: User | null, @Param('operator') operator: string, @Body() body: { operationId?: string; actividades?: unknown; allowedTasks?: unknown }) {
+    const v = body?.actividades !== undefined ? body.actividades : body?.allowedTasks;
+    return this.wms.setOperatorSkills(actorOperation(user, body?.operationId), operator, v === undefined ? null : v, user?.id);
+  }
+
   @Get('team-load')
   @RequirePermission('master:manage')
   teamLoad(@CurrentUser() user: User | null, @Query('operationId') operationId?: string) {

@@ -310,6 +310,13 @@ export interface User {
   // Hash de contraseña (bcrypt). null/undefined = sin credencial fijada aún (invitación pendiente).
   // NUNCA se expone al cliente: se elimina en la capa de API antes de responder.
   passwordHash?: string | null;
+  /**
+   * Habilidades del OPERARIO: qué tipos de tarea tiene permitidos (PICK, PACK, SHIP,
+   * PUTAWAY, RECEIVE, RESTOCK, COUNT, RESLOT). null/undefined = todas (compatibilidad:
+   * los operarios existentes siguen pudiendo hacer todo hasta que el admin lo acote).
+   * La respetan la asignación manual, el balanceo, el agente, el copiloto y la app.
+   */
+  allowedTasks?: string[] | null;
 }
 
 /** Tipo de token de un solo uso para flujos de cuenta (verificación / reset de clave). */

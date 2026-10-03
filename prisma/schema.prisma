@@ -233,6 +233,8 @@ model User {
   active        Boolean  @default(true)
   emailVerified Boolean  @default(true)
   passwordHash  String? // bcrypt; null = invitación pendiente
+  /// Habilidades del operario: tipos de tarea permitidos, separados por coma ("PICK,PACK"). null = todas.
+  allowedTasks  String?
   createdAt     DateTime @default(now())
 
   @@index([operationId])

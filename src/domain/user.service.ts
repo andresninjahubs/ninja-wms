@@ -29,6 +29,31 @@ export interface UpdateUserInput {
   role?: UserRole;
   sellerId?: string | null;
   active?: boolean;
+  /** Habilidades del operario (tipos de tarea permitidos). null = todas. */
+  allowedTasks?: string[] | null;
+}
+
+/** Tipos de tarea que puede tener habilitados un operario. */
+export const OPERATOR_TASK_TYPES = ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'COUNT', 'RESLOT'] as const;
+export const OPERATOR_TASK_LABEL: Record<string, string> = {
+  PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', PUTAWAY: 'Guardado', RECEIVE: 'Recepción', RESTOCK: 'Reposición', COUNT: 'Conteo', RESLOT: 'Re-slotting',
+};
+/** Normaliza una lista de habilidades: solo tipos válidos, sin repetir. null = todas. */
+export function normalizarHabilidades(v: unknown): string[] | null {
+  if (v == null) return null;
+  if (!Array.isArray(v)) throw new ValidationError('Las habilidades deben ser una lista de tipos de tarea.');
+  const out: string[] = [];
+  for (const x of v) {
+    const t = String(x || '').trim().toUpperCase();
+    if (!(OPERATOR_TASK_TYPES as readonly string[]).includes(t)) throw new ValidationError(`Tipo de tarea desconocido: "${x}". Válidos: ${OPERATOR_TASK_TYPES.join(', ')}.`);
+    if (!out.includes(t)) out.push(t);
+  }
+  return out.length === OPERATOR_TASK_TYPES.length ? null : out;
+}
+/** ¿El usuario puede hacer este tipo de tarea? (null/undefined = todas). */
+export function puedeHacer(u: { allowedTasks?: string[] | null } | null | undefined, tipo: string): boolean {
+  if (!u || !Array.isArray(u.allowedTasks)) return true;
+  return u.allowedTasks.includes(String(tipo).toUpperCase());
 }
 
 export class UserService {
@@ -116,6 +141,7 @@ export class UserService {
       role,
       sellerId: this.normalizeSellerId(role, sellerId),
       active: patch.active ?? user.active,
+      allowedTasks: patch.allowedTasks !== undefined ? normalizarHabilidades(patch.allowedTasks) : (user.allowedTasks ?? null),
     };
     await this.users.save(updated);
     return updated;
