@@ -64,7 +64,7 @@ window.NINJA_TOUR_GUIDES = {
     steps:[
       {el:'#cg-q', place:'bottom', title:'Buscar', text:'Encuentra un destinatario por nombre, RUT o dirección.'},
       {el:'#cg-new', place:'bottom', title:'Nuevo destinatario', text:'Nombre, <b>RUT validado</b> (dígito verificador incluido), contacto y una o varias <b>direcciones</b>. Al crear una orden, eliges el destinatario y su dirección desde la lista.'},
-      {el:'#cg-body', place:'top', title:'Editar, desactivar o eliminar', text:'Desde cada fila puedes corregir datos o agregar direcciones. Uno que ya tiene órdenes se <b>desactiva</b> (conserva el historial); uno sin uso se puede <b>eliminar</b>.'}
+      {el:'#cg-body', place:'top', title:'Editar, desactivar o eliminar', text:'Para <b>eliminar</b> una ubicación debe estar <b>vacía</b> (sin stock de ningún cliente) y sin recepciones abiertas. Su historial de movimientos se conserva. Si prefieres que deje de usarse sin borrarla, <b>desactívala</b>.'}
     ],
     tips:['Un usuario cliente administra sus propios destinatarios desde su portal.']
   },
@@ -140,9 +140,10 @@ window.NINJA_TOUR_GUIDES = {
     icon:'✨', title:'Copiloto',
     summary:'Un asistente con inteligencia artificial que analiza tu operación en vivo, te avisa qué necesita atención y responde preguntas con tus datos reales.',
     steps:[
-      {el:'#cop-insights', title:'Qué necesita tu atención', text:'El copiloto revisa órdenes, stock y tareas y te muestra <b>insights accionables</b>: SKUs por quebrar, órdenes atrasadas, recepciones pendientes. Pulsa «Actualizar» para volver a analizar.'},
+      {el:['#cop-ins-h','#cop-insights'], title:'Qué necesita tu atención', text:'El copiloto revisa órdenes, stock y tareas y te muestra <b>alertas accionables</b>: SKUs por quebrar, órdenes atrasadas, recepciones pendientes. Haz clic en el título para <b>plegar o desplegar</b> el bloque; plegado, muestra el resumen de cuántas alertas hay activas y de qué gravedad.'},
       {el:'#cop-chips', place:'top', title:'Preguntas sugeridas', text:'Estos chips son preguntas frecuentes listas para usar. Haz clic en una para ver la respuesta al instante y aprender qué tipo de cosas puedes preguntar.'},
       {el:'#cop-q', place:'top', title:'Pregúntale a tu WMS', text:'Escribe en lenguaje natural: <b>«¿qué SKUs están por quebrar stock?»</b>, <b>«¿cuántas órdenes hay listas para despachar?»</b> o <b>«asigna el picking pendiente a Pedro»</b>. El copiloto consulta y también puede ejecutar acciones.'},
+      {el:['#cop-q','#cop-answer'], place:'top', title:'Gráficos, tablas y reportes', text:'Pide <b>«grafícame las órdenes por estado»</b>, <b>«dame una tabla de stock por cliente»</b> o <b>«arma un reporte de productividad»</b>. El copiloto dibuja los gráficos bajo su respuesta; cada uno se puede ver como <b>tabla dinámica</b> (ordenar, filtrar, agrupar) y exportar a <b>Excel</b>, y el reporte completo sale en un libro con una hoja por gráfico.'},
       {el:'#cop-answer', title:'Respuestas con datos en vivo', text:'Las respuestas se construyen con la información actual de tu operación, no con datos genéricos. Cuando la acción modifica algo (por ejemplo, asignar una tarea), te pedirá confirmación antes de ejecutarla.'},
       {el:'#cop-ai-status', place:'bottom', title:'Conectar la IA', text:'Con <b>Conectar IA</b> eliges proveedor y modelo, pegas tu API key y la pruebas. <b>Ver contexto</b> muestra exactamente qué información de tu operación recibe el modelo; <b>Desconectar</b> la retira.'},
       {el:'#cop-settings', place:'bottom', title:'Confirmar o ejecutar directo', text:'Cuando el copiloto propone una acción (reservar, asignar, mover), puedes pedir que <b>confirme contigo</b> antes o que la <b>ejecute directo</b>. Empieza con confirmación.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
@@ -212,11 +213,12 @@ window.NINJA_TOUR_GUIDES = {
     icon:'▼', title:'Recepción',
     summary:'Controla la entrada de mercadería: cada recepción tiene lo esperado versus lo realmente contado, con recepción parcial y cierre con faltantes.',
     steps:[
-      {el:'#inb-filters', title:'Estados de recepción', text:'<b>Pendiente</b>: se anunció pero aún no llega. <b>Parcial</b>: llegó una parte. <b>Recepcionada</b>: cerrada. Filtra con los chips para enfocarte en lo que falta por recibir.'},
+      {el:'#inb-filters', title:'Estados de recepción', text:'<b>Creada</b>: se anunció pero la carga aún no llega. <b>En bodega</b>: la carga llegó pero aún no se abre ni se cuenta (un pallet esperando en el andén). <b>Parcial</b>: se recibió una parte. <b>Recepcionada</b>: cerrada. Filtra con los chips para enfocarte en lo que falta.'},
+      {el:['#inb-body [data-rarrive]','#inb-body'], place:'left', title:'Marcar en bodega', text:'Cuando llega la carga y todavía no se abre, usa <b>Marcar en bodega</b>: queda registrado cuándo llegó y quién la recibió, con una nota opcional. El stock aún no entra: eso pasa al recepcionar.'},
       {el:'#inb-new', place:'bottom', title:'Nueva orden de recepción', text:'Crea el aviso de llegada con proveedor, referencia y los SKUs con cantidad <b>esperada</b>. Recibe un ID propio (OR-AAAAMMDD-XXXX) para seguirla.'},
       {el:'#inb-import', place:'bottom', title:'Carga masiva', text:'Importa varias recepciones desde Excel a la vez, ideal cuando el proveedor te envía su packing list.'},
       {el:['#inb-body [data-redit]','#inb-body'], place:'left', title:'Editar o eliminar', text:'Una recepción <b>Pendiente</b> se puede <b>editar</b> (líneas, proveedor, referencia) o <b>eliminar</b> si se creó por error. Una vez que registra unidades, queda en el kardex y ya no se elimina.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
-      {el:'#inb-body', place:'top', title:'Cotejo físico vs. teórico', text:'Al abrir una recepción, el equipo cuenta cada SKU y confirma lo recibido. El stock entra al inventario <b>solo al confirmar</b>. Puedes recibir en varios eventos y cerrar con faltante si el proveedor no completó.'},
+      {el:'#inb-body', place:'top', title:'Cotejo físico vs. teórico', text:'Con <b>Recepcionar</b> el equipo cuenta cada SKU. «Recibido ahora» <b>parte en 0</b>: ingresa lo que realmente cuentas, con lote y vencimiento si aplica. El stock entra al inventario <b>solo al confirmar</b>, y puedes recibir en varias entregas.'},
       {el:'#inb-body tr', place:'bottom', title:'Manifiesto y auditoría', text:'Cada recepción se puede imprimir como <b>manifiesto PDF</b> con esperado, recibido y diferencia, y guarda una bitácora de quién contó qué y cuándo.'}
     ],
     tips:['Lo recibido queda en zona de recepción: guárdalo en su ubicación desde «Almacenado».','Una recepción pendiente se puede editar; una con stock ya recibido se puede anular revirtiendo el stock si sigue íntegro.']
@@ -326,6 +328,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:['#loc-q','#loc-zone'], place:'bottom', title:'Buscar y filtrar', text:'Busca por código o filtra por <b>zona</b> (recepción, almacenaje, picking, despacho, cuarentena). El contador muestra cuántas ubicaciones cumplen el filtro.'},
       {el:['#loc-view','#loc-export'], place:'bottom', title:'Lista o tarjetas, y exportar', text:'La vista de <b>lista</b> es más densa para bodegas grandes; la de <b>tarjetas</b> muestra la ocupación con color. <b>Exportar</b> descarga el mapa completo a Excel.'},
       {el:['#loc-grid','#loc-listwrap'], place:'top', title:'Ocupación en vivo', text:'Cada tarjeta muestra la ubicación, su zona y cuántas unidades tiene. Haz clic para ver qué SKUs y de qué clientes están ahí. El color indica el nivel de ocupación.'},
+      {el:['#loc-selall','#loc-listwrap','#loc-grid'], place:'bottom', title:'Eliminar varias a la vez', text:'Marca la casilla de cada ubicación (o la del encabezado para todas las vacías) y usa <b>Eliminar seleccionadas</b>. Solo se pueden eliminar ubicaciones <b>vacías</b>: las que tienen stock aparecen bloqueadas. Al terminar ves cuáles se eliminaron y cuáles no, con el motivo.'},
       {el:['#loc-grid','#loc-listwrap'], place:'top', title:'Editar, desactivar o eliminar', text:'Una ubicación que nunca tuvo movimientos se puede <b>eliminar</b>. Si ya registró stock, el kardex la referencia: en ese caso se <b>desactiva</b> y deja de usarse para guardado y picking.'}
     ],
     tips:['Imprime las etiquetas de ubicación para el escaneo desde la app móvil.']
@@ -449,7 +452,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#asg-load-body', place:'top', title:'Carga por operario', text:'Velocidad histórica en unidades por hora, tareas abiertas, unidades y horas estimadas. Así ves quién terminará primero y quién va atrasado.'},
       {el:['#tt-body','#tt-learn'], place:'top', title:'Modelo de tiempo', text:'En la vista <b>Por tipo de tarea</b> ves cuánto tarda cada familia (picking, guardado, recepción) por unidad y por ubicación visitada. <b>Reajustar</b> vuelve a calcularlo con los tiempos reales de tu bodega; con eso la <b>proyección de carga</b> tras balancear es realista.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN'],
         before:function(h){ var on=document.querySelector('#asg-view .segbtn.on'), t=document.querySelector('#asg-view .segbtn[data-asgv=tipo]'); if(t&&on!==t){ t.click(); return function(){ if(on)on.click(); }; } }},
-      {el:'#asg-pool-body', place:'top', title:'Pool de pendientes', text:'Cada tarea pendiente con su cliente y unidades. Asigna a un operario desde la última columna o deja que el balanceo lo haga.'}
+      {el:'#asg-pool-body', place:'top', title:'Pool de pendientes', text:'Cada tarea pendiente con su cliente y unidades. Asigna a un operario desde la última columna o deja que el balanceo lo haga. Los operarios que no tienen esa <b>habilidad</b> aparecen deshabilitados: el sistema no les asigna esa actividad.'}
     ],
     tips:[{t:'El copiloto de voz puede activar el balanceo: «mantén el equipo balanceado solo».',mod:'voz'}]
   },
@@ -489,14 +492,61 @@ window.NINJA_TOUR_GUIDES = {
     ]
   },
 
+  deadlines: {
+    icon:'⏱', title:'Deadlines',
+    summary:'Define reglas para que cada orden reciba su deadline de preparación apenas entra al WMS, cliente por cliente: hasta qué hora sale el mismo día, cuántos días hábiles después y a qué hora, con horas fijas por courier.',
+    steps:[
+      {el:'#dlp-cal', place:'right', title:'Calendario hábil', text:'Marca los <b>días hábiles</b> de tu bodega y agrega los <b>feriados</b>. Los días no hábiles no cuentan: una orden que entra un sábado se trata como ingresada el lunes a primera hora.'},
+      {el:'#dlp-seller', place:'bottom', title:'Elige el cliente', text:'Cada cliente tiene sus propias reglas. La lista te dice cuáles ya tienen reglas activas.'},
+      {el:['#dlp-activo','#dlp-rules'], place:'bottom', title:'Activar el deadline automático', text:'Con esta casilla las órdenes del cliente reciben su deadline solas al entrar. Si la orden ya trae deadline desde el OMS, se respeta el del OMS.'},
+      {el:['#dlp-rules .dlp-tbl','#dlp-rules'], place:'top', title:'Reglas por horario de ingreso', text:'Ejemplo: <b>Ingreso hasta 14:00 → Mismo día hábil, a las 18:00</b>; si entra después, <b>Día hábil siguiente</b>. También puedes poner <b>2, 3… días hábiles</b>. Una regla con <b>courier</b> aplica solo a ese courier; la regla sin courier vale para el resto.'},
+      {el:['#dlp-hcs','#dlp-rules'], place:'top', title:'Hora por courier', text:'Si un courier retira a una hora fija (por ejemplo Blue Express a las 16:00), agrégala aquí: el deadline de sus órdenes queda a esa hora en vez de la hora de la regla.'},
+      {el:['#dlp-save','#dlp-rules'], place:'top', title:'Guardar', text:'Guarda las reglas del cliente. Rigen para las órdenes que entren desde ese momento.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
+      {el:'#dlp-sim', place:'left', title:'Simulador', text:'Antes de guardar, prueba: elige courier y la fecha y hora de ingreso, y verás qué deadline recibiría la orden y qué regla lo decidió.'},
+      {el:'#dlp-cortes', place:'bottom', title:'Cortes generales', text:'Para los clientes sin reglas propias se usan los <b>cortes generales por courier</b> de la operación y, si no hay, el SLA del cliente.'}
+    ],
+    tips:['Con el deadline puesto, la cola de preparación prioriza sola lo que vence antes.',{t:'Activa la regla «Deadline en riesgo» del agente para que vigile estas órdenes.',mod:'agente'}]
+  },
+
+  lotes: {
+    icon:'📅', title:'Lotes y vencimiento',
+    summary:'Todos los productos con manejo de lote, sus lotes con stock y su fecha de vencimiento, con aviso de lo que vence pronto y de lo ya vencido.',
+    steps:[
+      {el:'#lt-kpis', place:'bottom', title:'Resumen', text:'Cuántos productos y lotes manejan lote, cuántos están <b>vencidos</b> y cuántos <b>vencen pronto</b>, con las unidades comprometidas.'},
+      {el:'#lt-filter', place:'bottom', title:'Próximos a vencer y vencidos', text:'Filtra para ver solo los lotes <b>próximos a vencer</b> o los <b>ya vencidos</b>. El número junto a cada filtro dice cuántos hay.'},
+      {el:'#lt-dias', place:'bottom', title:'Qué es «próximo»', text:'Define la ventana: un lote es <b>próximo a vencer</b> si vence dentro de 7, 15, 30, 60 o 90 días.'},
+      {el:'#lt-body', place:'top', title:'Lotes con su etiqueta', text:'Cada lote con su vencimiento, cantidad y ubicaciones. La etiqueta lo distingue: <b>Vencido</b> (rojo), <b>Vence en N días</b> (ámbar), <b>Vigente</b> (verde) o <b>Sin vencimiento</b>. Se ordenan por el que vence primero, como en FEFO.'},
+      {el:'#lt-q', place:'bottom', title:'Buscar', text:'Busca por SKU, nombre de producto o número de lote. La tabla se exporta a Excel con el botón de arriba a la derecha.'}
+    ],
+    tips:['Los lotes se cargan al recepcionar: captura el lote y el vencimiento en el cotejo.',{t:'El agente avisa los lotes por vencer en «Alertas activas».',mod:'agalertas'}]
+  },
+
+  cargas: {
+    icon:'📊', title:'Cargas',
+    summary:'Qué está haciendo cada operario en este momento y qué tiene en cola, en tiempo real.',
+    steps:[
+      {el:'#crg-kpis', place:'bottom', title:'El equipo de un vistazo', text:'Cuántos operarios están <b>ejecutando</b>, cuántos tienen tareas <b>en cola</b>, cuántos están <b>libres</b>, y el total de tareas en ejecución y en cola.'},
+      {el:'#crg-pend', place:'bottom', title:'Trabajo sin dueño', text:'Las tareas que aún nadie tiene asignadas, por tipo. Desde aquí vas directo a <b>Asignaciones</b> para repartirlas.'},
+      {el:'#crg-grid', place:'top', title:'Una tarjeta por operario', text:'Arriba, lo que está <b>en ejecución</b> y cuánto lleva; abajo, lo que tiene <b>en cola</b> y cuánto espera. También ves sus habilidades, unidades y tiempo estimado. Una tarea en curso que supera su tiempo estimado se marca en rojo.'},
+      {el:['#crg-filter','#crg-q'], place:'bottom', title:'Filtrar y buscar', text:'Ve a todos, solo a los que tienen carga o solo a los libres, y busca a un operario por nombre.'},
+      {el:'#crg-live', place:'bottom', title:'En vivo', text:'La pantalla se actualiza sola cada 10 segundos; aquí ves la hora de la última actualización.'}
+    ],
+    tips:['Ideal para dejarla abierta en una pantalla de la bodega.',{t:'Para mover trabajo entre personas usa «Asignaciones».',mod:'asignaciones'}]
+  },
+
   users: {
     icon:'◍', title:'Usuarios',
     summary:'Administra quién entra al sistema y con qué permisos: administradores, supervisores, operarios y usuarios de cliente.',
     steps:[
       {el:'#usr-new', place:'bottom', title:'Nuevo usuario', text:'Nombre, email, rol y, para los clientes, el seller al que pertenecen. El usuario recibe sus credenciales y puede cambiar su contraseña desde el panel.'},
       {el:'#usr-body', place:'top', title:'Roles y alcance', text:'<b>Admin</b> administra toda la operación. <b>Supervisor</b> gestiona sin tocar configuración crítica. <b>Operario</b> ejecuta movimientos, también desde la app móvil. <b>Cliente</b> solo ve su seller.'},
-      {el:['#usr-body td:last-child','#usr-body'], place:'left', title:'Activar y desactivar', text:'Un usuario desactivado no puede entrar pero conserva su historial de actividad. Restablece contraseñas desde la misma acción.'}
-    ]
+      {el:['#usr-body td:last-child','#usr-body'], place:'left', title:'Activar y desactivar', text:'Un usuario desactivado no puede entrar pero conserva su historial de actividad. Restablece contraseñas desde la misma acción.'},
+      {el:'#usr-state', place:'bottom', title:'Activos e inactivos', text:'Este switch alterna entre los usuarios <b>activos</b> y los <b>inactivos</b>, con su contador. Al reactivar a alguien pasa solo a la otra vista. La elección se recuerda.'},
+      {el:'#usr-role', place:'bottom', title:'Filtrar por rol', text:'Muestra solo administradores, supervisores, operarios o clientes. Cada opción dice cuántos hay.'},
+      {el:'#usr-head', place:'bottom', title:'Ordenar por columna', text:'Haz clic en cualquier encabezado para ordenar de la A a la Z; un segundo clic invierte el orden. La flecha marca la columna activa.'},
+      {el:['#usr-body [data-uskill]','#usr-body'], place:'left', title:'Habilidades de cada operario', text:'Con <b>Habilidades</b> eliges qué actividades puede hacer un operario (picking, empaque, despacho, recepción, guardado, reposición, conteo, re-slotting). El sistema <b>solo le asigna tareas de esas actividades</b>: en la asignación manual, el balanceo automático, el agente, el copiloto y la app. Puedes cambiarlas cuando quieras.', roles:['ADMIN','PLATFORM_ADMIN']}
+    ],
+    tips:['Las habilidades también se consultan y cambian por API (<b>/assignments/skills</b>) y por MCP (habilidades_operarios / fijar_habilidades_operario).']
   },
 
   pkgmatrix: {

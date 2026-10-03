@@ -90,10 +90,10 @@
     }).join("");
   }
   var NAV_BY_ROLE={
-    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
-    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","branding","clients","users"],
+    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","deadlines","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
+    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","deadlines","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","branding","clients","users"],
     // Sin "billing": la facturación es del administrador de la operación, no del supervisor.
-    SUPERVISOR:["dashboard","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan"],
+    SUPERVISOR:["dashboard","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","deadlines","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan"],
     OPERATOR:["dashboard","copilot","inventory","lotes","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","voicechannel"],
     CLIENT:["dashboard","copilot","inventory","products","lotes","consignees","orders","inbound","returns","movements","billing","chat","webhooks"]
   };
@@ -3073,7 +3073,8 @@
         : '';
       var pool=r[1]||[];
       $("#asg-pool-sub").textContent=pool.length+" tareas";
-      var opts='<option value="">—</option>'+asgOperators.map(function(o){return '<option value="'+esc(o.id)+'">'+esc(o.name||o.id)+'</option>';}).join("");
+      // Habilidades: quien no tiene la actividad aparece deshabilitado (el servidor igual lo rechaza).
+      var opts='<option value="">—</option>'+asgOperators.map(function(o){var u=byId(D.users||[],o.id);var ok=!u||!Array.isArray(u.allowedTasks)||u.allowedTasks.indexOf(asgType)>=0;return '<option value="'+esc(o.id)+'"'+(ok?'':' disabled')+'>'+esc(o.name||o.id)+(ok?'':' · sin habilidad')+'</option>';}).join("");
       $("#asg-pool-body").innerHTML=pool.length?pool.map(function(t){
         return '<tr><td class="mono2">'+esc(t.entityRef)+'</td><td>'+esc(t.sellerId)+'</td><td class="num">'+t.unidades+'</td><td>'+(t.asignadoA?('<span class="chip st-RESERVED"><span class="dot"></span>'+esc(t.asignadoA)+'</span>'):'<span class="muted">sin asignar</span>')+'</td>'
           +'<td><select class="asg-pick" data-eid="'+esc(t.entityId)+'" data-ref="'+esc(t.entityRef)+'" data-sid="'+esc(t.sellerId)+'" data-un="'+t.unidades+'" data-par="'+(t.paradas||1)+'" data-note="'+esc(t.note||'')+'" style="padding:4px 6px">'+opts+'</select></td></tr>';
@@ -4319,7 +4320,7 @@
     var dur=h>0?(h+' h'+(r?' '+r+' min':'')):(r+' min');
     return{level:level,min:min,texto:(min<0?'vencida hace ':'vence en ')+dur};
   }
-  var DL_LABEL={oms:'del canal',manual:'fijado a mano',corte:'corte del courier',sla:'SLA del cliente'};
+  var DL_LABEL={oms:'del canal',manual:'fijado a mano',regla:'regla del cliente',corte:'corte del courier',sla:'SLA del cliente'};
   /** Chip de deadline para tablas y listas. */
   function dlChip(o){
     // Una orden despachada o cancelada ya no tiene cuenta regresiva: mostrarla sería ruido.
@@ -7496,20 +7497,66 @@
       if(manage){
         acts='<div class="rowacts"><button class="mini" data-uedit="'+esc(u.id)+'">Editar</button>'
           +'<button class="mini" data-upass="'+esc(u.id)+'">Clave</button>'
+          +(u.role==='OPERATOR'?'<button class="mini" data-uskill="'+esc(u.id)+'" title="Actividades que puede hacer este operario">Habilidades</button>':'')
           +(u.id===me.id?'' : (u.active
               ? '<button class="mini danger" data-udeact="'+esc(u.id)+'">Desactivar</button>'
               : '<button class="mini" data-uact="'+esc(u.id)+'">Activar</button>'))
           +'</div>';
       }
-      return '<tr><td class="sku">'+esc(u.name)+'</td><td>'+esc(u.email)+'</td><td><span class="rolechip r-'+u.role+'">'+esc(u.role.replace("_"," "))+'</span></td><td>'+esc(u.operationId||'—')+'</td><td>'+esc(u.sellerId?('Cliente · '+u.sellerId):(u.role==="PLATFORM_ADMIN"?"Plataforma":"Operación"))+'</td><td><span class="chip st-'+(u.active?'AVAILABLE':'CANCELLED')+'"><span class="dot"></span>'+(u.active?'Activo':'Inactivo')+'</span></td><td>'+acts+'</td></tr>';
-    }).join(""):'<tr><td colspan="7" class="empty">'+(usrRol?('No hay usuarios '+(usrEstado==='inactive'?'inactivos':'activos')+' con rol '+esc(ROL_LABEL[usrRol]||usrRol)+'.'):(usrEstado==='inactive'?'No hay usuarios inactivos.':'Sin usuarios activos visibles.'))+'</td></tr>';
+      return '<tr><td class="sku">'+esc(u.name)+'</td><td>'+esc(u.email)+'</td><td><span class="rolechip r-'+u.role+'">'+esc(u.role.replace("_"," "))+'</span></td><td>'+esc(u.operationId||'—')+'</td><td>'+esc(u.sellerId?('Cliente · '+u.sellerId):(u.role==="PLATFORM_ADMIN"?"Plataforma":"Operación"))+'</td><td>'+skillsChips(u)+'</td><td><span class="chip st-'+(u.active?'AVAILABLE':'CANCELLED')+'"><span class="dot"></span>'+(u.active?'Activo':'Inactivo')+'</span></td><td>'+acts+'</td></tr>';
+    }).join(""):'<tr><td colspan="8" class="empty">'+(usrRol?('No hay usuarios '+(usrEstado==='inactive'?'inactivos':'activos')+' con rol '+esc(ROL_LABEL[usrRol]||usrRol)+'.'):(usrEstado==='inactive'?'No hay usuarios inactivos.':'Sin usuarios activos visibles.'))+'</td></tr>';
     if(manage){
       $$("#usr-body [data-uedit]").forEach(function(b){b.addEventListener("click",function(){openUserForm(byId(D.users,b.getAttribute("data-uedit")));});});
       $$("#usr-body [data-udeact]").forEach(function(b){b.addEventListener("click",function(){var u=byId(D.users,b.getAttribute("data-udeact"));openConfirm("Desactivar usuario","El usuario "+u.name+" no podrá iniciar sesión.",function(){api('/users/'+u.id+'/deactivate',{method:'POST'}).then(function(){toast("Usuario desactivado");reloadUsers();}).catch(err);});});});
       $$("#usr-body [data-uact]").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-uact");api('/users/'+id,{method:'PATCH',body:{active:true}}).then(function(){toast("Usuario activado");reloadUsers();}).catch(err);});});
       $$("#usr-body [data-upass]").forEach(function(b){b.addEventListener("click",function(){openSetPassword(byId(D.users,b.getAttribute("data-upass")));});});
+      $$("#usr-body [data-uskill]").forEach(function(b){b.addEventListener("click",function(){openSkillsForm(byId(D.users,b.getAttribute("data-uskill")));});});
     }
   }
+
+  // ----- Habilidades del operario: qué actividades tiene permitidas -----
+  var SKILL_TYPES=[['PICK','Picking','Recolectar las órdenes'],['PACK','Empaque','Embalar y etiquetar'],['SHIP','Despacho','Entregar al courier'],['RECEIVE','Recepción','Recibir y contar la carga'],['PUTAWAY','Guardado','Llevar a su ubicación'],['RESTOCK','Reposición','Devolver a su ubicación'],['COUNT','Conteo','Conteo cíclico'],['RESLOT','Re-slotting','Reubicar productos']];
+  function skillLabel(t){var x=SKILL_TYPES.filter(function(k){return k[0]===t;})[0];return x?x[1]:t;}
+  function skillsChips(u){
+    if(u.role!=='OPERATOR')return '<span class="muted">—</span>';
+    var a=u.allowedTasks;
+    if(!a||!Array.isArray(a))return '<span class="skl"><span class="s all">Todas</span></span>';
+    if(!a.length)return '<span class="skl"><span class="s none">Ninguna</span></span>';
+    var lb=a.map(skillLabel);
+    return '<span class="skl">'+lb.slice(0,4).map(function(l){return '<span class="s">'+esc(l)+'</span>';}).join('')+(lb.length>4?'<span class="s">+'+(lb.length-4)+'</span>':'')+'</span>';
+  }
+  function openSkillsForm(u){
+    if(!u)return;
+    var todas=!Array.isArray(u.allowedTasks), sel=todas?SKILL_TYPES.map(function(k){return k[0];}):u.allowedTasks.slice();
+    var html='<div class="form"><p class="muted" style="margin:0">Elige qué actividades puede hacer <b>'+esc(u.name)+'</b>. El sistema solo le asignará tareas de estas actividades: asignación manual, balanceo automático, agente, copiloto y la app del operario. Puedes cambiarlo cuando quieras.</p>'
+      +'<label id="sk-all-l" style="display:flex;align-items:center;gap:10px;margin:12px 0 2px;font-weight:700"><input type="checkbox" id="sk-all" style="width:17px;height:17px;accent-color:var(--primary)"'+(todas?' checked':'')+'> Todas las actividades</label>'
+      +'<div class="skg" id="sk-grid">'+SKILL_TYPES.map(function(k){var on=sel.indexOf(k[0])>=0;return '<label class="'+(on?'on':'')+'"><input type="checkbox" data-sk="'+k[0]+'"'+(on?' checked':'')+'><span>'+esc(k[1])+'<small>'+esc(k[2])+'</small></span></label>';}).join('')+'</div>'
+      +'<div class="ferr" id="sk-err"></div><div class="hint" id="sk-warn" style="color:var(--c-amber)"></div>'
+      +'<div class="acts"><span class="hint" id="sk-count"></span><div style="display:flex;gap:10px"><button class="btn" id="sk-cancel">Cancelar</button><button class="btn pri" id="sk-save">Guardar habilidades</button></div></div></div>';
+    openModal('Habilidades · '+u.name,html);
+    function sync(){var c=$$('#sk-grid [data-sk]').filter(function(x){return x.checked;}).length;$("#sk-all").checked=c===SKILL_TYPES.length;$("#sk-all").indeterminate=c>0&&c<SKILL_TYPES.length;
+      $$('#sk-grid label').forEach(function(l){l.classList.toggle('on',l.querySelector('input').checked);});
+      $("#sk-count").textContent=c===SKILL_TYPES.length?'Sin restricciones':(c+' de '+SKILL_TYPES.length+' actividades');
+      $("#sk-warn").textContent=c===0?'Sin actividades, este operario no recibirá ninguna tarea.':'';}
+    $$('#sk-grid [data-sk]').forEach(function(x){x.addEventListener('change',sync);});
+    $("#sk-all").addEventListener('change',function(){var v=this.checked;$$('#sk-grid [data-sk]').forEach(function(x){x.checked=v;});sync();});
+    sync();
+    $("#sk-cancel").addEventListener('click',closeModal);
+    $("#sk-save").addEventListener('click',function(){
+      var lista=$$('#sk-grid [data-sk]').filter(function(x){return x.checked;}).map(function(x){return x.getAttribute('data-sk');});
+      var body={operationId:u.operationId||op,actividades:lista.length===SKILL_TYPES.length?'todas':lista};
+      var btn=this;btn.disabled=true;
+      api('/assignments/skills/'+encodeURIComponent(u.id),{method:'PUT',body:body}).then(function(r){
+        closeModal();
+        if(r.tareasFueraDeHabilidad&&r.tareasFueraDeHabilidad.length){
+          openModal('Habilidades guardadas','<p style="margin:0 0 10px">'+esc(u.name)+' tiene <b>'+r.tareasFueraDeHabilidad.length+'</b> tarea(s) asignada(s) de actividades que ya no tiene habilitadas. No se las quitamos solas: reasígnalas desde Asignaciones si corresponde.</p><div style="max-height:30vh;overflow:auto">'+r.tareasFueraDeHabilidad.map(function(t){return '<div class="kv"><span>'+esc(t.tipo)+'</span><b>'+esc(t.ref)+'</b></div>';}).join('')+'</div><div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px"><button class="btn" id="m-asg">Ir a Asignaciones</button><button class="btn pri" id="m-yes">Entendido</button></div>');
+          $("#m-yes").addEventListener('click',closeModal);$("#m-asg").addEventListener('click',function(){closeModal();go('asignaciones');});
+        } else toast('Habilidades de '+u.name+' guardadas');
+        return reloadUsers();
+      }).catch(function(e){btn.disabled=false;$("#sk-err").textContent=e.message;});
+    });
+  }
+
 
   // ----- Fijar/restablecer contraseña (admin) -----
   function openSetPassword(u){
@@ -8222,6 +8269,120 @@
   // detiene al salir de la página para no consultar de fondo.
 
 
+
+  // ===== Workflows → Deadlines: reglas de deadline automático por cliente =====
+  // Cada cliente puede tener reglas "las órdenes que entran hasta las HH:MM vencen
+  // el mismo día hábil / N días hábiles después, a las HH:MM" y una hora fija por
+  // courier. El servidor las aplica al ingresar la orden (si no trae deadline propio).
+  var DLP={cfg:null,seller:null,rules:null,dirty:false};
+  var DLP_DIAS=[[1,'Lun'],[2,'Mar'],[3,'Mié'],[4,'Jue'],[5,'Vie'],[6,'Sáb'],[0,'Dom']];
+  function dlpOpts(sel,auto){var o=auto?'<option value=""'+(sel==null?' selected':'')+'>Un día hábil más</option>':'';for(var i=0;i<=10;i++)o+='<option value="'+i+'"'+(sel===i?' selected':'')+'>'+(i===0?'Mismo día hábil':i===1?'Día hábil siguiente':i+' días hábiles')+'</option>';return o;}
+  function renderDeadlines(){
+    var manage=can('master');
+    return api('/operations/'+encodeURIComponent(op)+'/deadline-config').then(function(cfg){
+      DLP.cfg=cfg||{};
+      var ss=$("#dlp-seller");
+      var lista=(D.sellers||[]);
+      if(!DLP.seller||!byId(lista,DLP.seller))DLP.seller=seller||(lista[0]&&lista[0].id)||null;
+      var cl=DLP.cfg.clientes||{};
+      ss.innerHTML=lista.map(function(s){var r=cl[s.id];var on=r&&r.activo!==false&&r.reglas&&r.reglas.length;return '<option value="'+esc(s.id)+'"'+(s.id===DLP.seller?' selected':'')+'>'+esc(s.name)+(on?' · reglas activas':' · sin reglas')+'</option>';}).join('');
+      dlpPintaCal(manage); dlpPintaSim(); return dlpCargaCliente(manage);
+    }).catch(err);
+  }
+  function dlpPintaCal(manage){
+    var c=DLP.cfg, dh=(c.diasHabiles&&c.diasHabiles.length)?c.diasHabiles:[1,2,3,4,5], fer=(c.feriados||[]).slice();
+    var html='<div class="dlp-lbl">Días hábiles de la bodega</div><div class="dlp-days">'+DLP_DIAS.map(function(d){return '<label class="'+(dh.indexOf(d[0])>=0?'on':'')+'"><input type="checkbox" data-dlpd="'+d[0]+'"'+(dh.indexOf(d[0])>=0?' checked':'')+(manage?'':' disabled')+'>'+d[1]+'</label>';}).join('')+'</div>'
+      +'<div class="dlp-lbl" style="margin-top:14px">Feriados <span class="muted" style="font-weight:500">(no cuentan como día hábil)</span></div>'
+      +'<div class="dlp-fer" id="dlp-fer">'+(fer.length?fer.map(function(f){return '<span class="dlp-chip">'+esc(ltFecha(f+'T12:00:00Z'))+(manage?'<button data-dlpfx="'+esc(f)+'" title="Quitar">×</button>':'')+'</span>';}).join(''):'<span class="muted" style="font-size:13px">Sin feriados cargados.</span>')+'</div>'
+      +(manage?'<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><input type="date" id="dlp-fer-new" style="width:auto;margin:0"><button class="btn" id="dlp-fer-add">Agregar feriado</button><button class="btn pri" id="dlp-cal-save">Guardar calendario</button></div>':'')
+      +'<div class="hint" style="margin-top:10px">Zona horaria de la bodega: UTC'+((c.offsetHoras!=null?c.offsetHoras:-3)>=0?'+':'')+(c.offsetHoras!=null?c.offsetHoras:-3)+' · Riesgo: '+(c.riesgoHoras!=null?c.riesgoHoras:4)+' h antes del deadline.</div>';
+    $("#dlp-cal").innerHTML=html;
+    if(!manage)return;
+    $$('#dlp-cal [data-dlpd]').forEach(function(x){x.addEventListener('change',function(){x.parentNode.classList.toggle('on',x.checked);});});
+    $$('#dlp-cal [data-dlpfx]').forEach(function(b){b.addEventListener('click',function(){var f=b.getAttribute('data-dlpfx');DLP.cfg.feriados=(DLP.cfg.feriados||[]).filter(function(x){return x!==f;});dlpPintaCal(true);});});
+    $("#dlp-fer-add").addEventListener('click',function(){var v=$("#dlp-fer-new").value;if(!v)return;DLP.cfg.feriados=(DLP.cfg.feriados||[]).concat([v]).filter(function(x,i,a){return a.indexOf(x)===i;}).sort();var keep=$$('#dlp-cal [data-dlpd]').filter(function(x){return x.checked;}).map(function(x){return +x.getAttribute('data-dlpd');});DLP.cfg.diasHabiles=keep;dlpPintaCal(true);});
+    $("#dlp-cal-save").addEventListener('click',function(){
+      var dias=$$('#dlp-cal [data-dlpd]').filter(function(x){return x.checked;}).map(function(x){return +x.getAttribute('data-dlpd');});
+      if(!dias.length){toast('Elige al menos un día hábil');return;}
+      api('/operations/'+encodeURIComponent(op)+'/deadline-calendar',{method:'PUT',body:{diasHabiles:dias,feriados:DLP.cfg.feriados||[]}}).then(function(c){DLP.cfg=c;toast('Calendario guardado');dlpPintaCal(true);}).catch(err);
+    });
+  }
+  function dlpCargaCliente(manage){
+    if(!DLP.seller){$("#dlp-rules").innerHTML='<div class="empty">Crea un cliente para configurar sus reglas.</div>';return Promise.resolve();}
+    return api('/operations/'+encodeURIComponent(op)+'/deadline-rules/'+encodeURIComponent(DLP.seller)).then(function(r){DLP.rules=JSON.parse(JSON.stringify(r));DLP.dirty=false;dlpPintaReglas(manage);});
+  }
+  function dlpPintaReglas(manage){
+    var R=DLP.rules, dis=manage?'':' disabled';
+    var cour='<datalist id="dlp-couriers">'+CARRIERS.map(function(c){return '<option value="'+esc(c)+'">';}).join('')+'</datalist>';
+    var filas=(R.reglas||[]).map(function(r,i){
+      return '<tr data-i="'+i+'"><td><input class="dlp-in" data-f="nombre" value="'+esc(r.nombre||'')+'" placeholder="Ej: Estándar"'+dis+'></td>'
+        +'<td><input class="dlp-in" data-f="courier" list="dlp-couriers" value="'+esc(r.courier||'')+'" placeholder="Cualquiera"'+dis+'></td>'
+        +'<td><input class="dlp-in" type="time" data-f="corteIngreso" value="'+esc(r.corteIngreso||'14:00')+'"'+dis+'></td>'
+        +'<td><select class="dlp-in" data-f="diasHabiles"'+dis+'>'+dlpOpts(r.diasHabiles==null?0:+r.diasHabiles,false)+'</select></td>'
+        +'<td><select class="dlp-in" data-f="diasHabilesDespues"'+dis+'>'+dlpOpts(r.diasHabilesDespues==null?null:+r.diasHabilesDespues,true)+'</select></td>'
+        +'<td><input class="dlp-in" type="time" data-f="horaDeadline" value="'+esc(r.horaDeadline||'')+'"'+dis+'></td>'
+        +'<td style="text-align:center"><input type="checkbox" class="dlp-in" data-f="activa"'+(r.activa!==false?' checked':'')+dis+'></td>'
+        +'<td>'+(manage?'<button class="mini danger" data-dlpdel="'+i+'">Quitar</button>':'')+'</td></tr>';
+    }).join('');
+    var hc=(R.horasCourier||[]).map(function(h,i){return '<div class="dlp-hc" data-i="'+i+'"><input class="dlp-hcin" data-f="courier" list="dlp-couriers" value="'+esc(h.courier||'')+'" placeholder="Courier"'+dis+'><input class="dlp-hcin" type="time" data-f="hora" value="'+esc(h.hora||'')+'"'+dis+'>'+(manage?'<button class="mini danger" data-dlphcdel="'+i+'">Quitar</button>':'')+'</div>';}).join('');
+    var nombre=(byId(D.sellers||[],DLP.seller)||{}).name||DLP.seller;
+    $("#dlp-rules").innerHTML=cour
+      +'<label class="dlp-switch"><input type="checkbox" id="dlp-activo"'+(R.activo?' checked':'')+dis+'> <b>Asignar deadline automático a las órdenes de '+esc(nombre)+'</b><span class="muted"> · se aplica al ingresar la orden, salvo que traiga su propio deadline desde el OMS</span></label>'
+      +'<div class="dlp-lbl" style="margin-top:14px">Reglas por horario de ingreso</div>'
+      +'<div class="tablewrap"><table class="dlp-tbl"><thead><tr><th>Nombre</th><th>Courier</th><th>Ingreso hasta</th><th>Si entra hasta esa hora</th><th>Si entra después</th><th>Hora del deadline</th><th>Activa</th><th></th></tr></thead><tbody>'
+      +(filas||'<tr><td colspan="8" class="empty">Sin reglas. Agrega la primera: por ejemplo, «lo que entra hasta las 14:00 sale el mismo día hábil a las 18:00».</td></tr>')+'</tbody></table></div>'
+      +(manage?'<button class="btn" id="dlp-add" style="margin-top:8px">＋ Agregar regla</button>':'')
+      +'<div class="hint" style="margin-top:6px">Una regla con courier se usa para las órdenes de ese courier; la regla sin courier vale para el resto. Si la orden entra en un día no hábil, cuenta como ingresada al inicio del siguiente día hábil.</div>'
+      +'<div class="dlp-lbl" style="margin-top:16px">Hora de deadline por courier <span class="muted" style="font-weight:500">(reemplaza la hora de la regla para ese courier)</span></div>'
+      +'<div id="dlp-hcs">'+(hc||'<div class="muted" style="font-size:13px">Sin horas por courier.</div>')+'</div>'
+      +(manage?'<button class="btn" id="dlp-hc-add" style="margin-top:8px">＋ Agregar hora de courier</button>':'')
+      +'<div class="ferr" id="dlp-err"></div>'
+      +(manage?'<div class="acts" style="margin-top:12px"><span class="hint" id="dlp-dirty"></span><div style="display:flex;gap:10px"><button class="btn" id="dlp-undo">Descartar cambios</button><button class="btn pri" id="dlp-save">Guardar reglas</button></div></div>':'');
+    if(!manage)return;
+    function leer(){
+      R.activo=$("#dlp-activo").checked;
+      $$('#dlp-rules .dlp-tbl tbody tr[data-i]').forEach(function(tr){var r=R.reglas[+tr.getAttribute('data-i')];Array.prototype.forEach.call(tr.querySelectorAll('.dlp-in'),function(x){var f=x.getAttribute('data-f');
+        if(f==='activa')r.activa=x.checked;else if(f==='diasHabiles')r.diasHabiles=+x.value;else if(f==='diasHabilesDespues')r.diasHabilesDespues=x.value===''?null:+x.value;else r[f]=x.value.trim()||null;});});
+      $$('#dlp-hcs .dlp-hc').forEach(function(d){var h=R.horasCourier[+d.getAttribute('data-i')];Array.prototype.forEach.call(d.querySelectorAll('.dlp-hcin'),function(x){h[x.getAttribute('data-f')]=x.value.trim();});});
+    }
+    function marca(){DLP.dirty=true;var d=$("#dlp-dirty");if(d)d.textContent='Cambios sin guardar';}
+    $$('#dlp-rules input, #dlp-rules select').forEach(function(x){x.addEventListener('change',function(){leer();marca();});});
+    $("#dlp-add").addEventListener('click',function(){leer();R.reglas.push({nombre:R.reglas.length?'':'Estándar',courier:null,corteIngreso:'14:00',diasHabiles:0,diasHabilesDespues:null,horaDeadline:'18:00',activa:true});if(R.reglas.length===1)R.activo=true;dlpPintaReglas(true);marca();});
+    $$('#dlp-rules [data-dlpdel]').forEach(function(b){b.addEventListener('click',function(){leer();R.reglas.splice(+b.getAttribute('data-dlpdel'),1);dlpPintaReglas(true);marca();});});
+    $("#dlp-hc-add").addEventListener('click',function(){leer();R.horasCourier=(R.horasCourier||[]).concat([{courier:'',hora:'16:00'}]);dlpPintaReglas(true);marca();});
+    $$('#dlp-rules [data-dlphcdel]').forEach(function(b){b.addEventListener('click',function(){leer();R.horasCourier.splice(+b.getAttribute('data-dlphcdel'),1);dlpPintaReglas(true);marca();});});
+    $("#dlp-undo").addEventListener('click',function(){dlpCargaCliente(true);});
+    $("#dlp-save").addEventListener('click',function(){
+      leer();$("#dlp-err").textContent='';
+      R.horasCourier=(R.horasCourier||[]).filter(function(h){return h.courier;});
+      api('/operations/'+encodeURIComponent(op)+'/deadline-rules/'+encodeURIComponent(DLP.seller),{method:'PUT',body:{activo:R.activo,reglas:R.reglas,horasCourier:R.horasCourier}})
+        .then(function(r){DLP.rules=r;DLP.dirty=false;toast('Reglas de '+nombre+' guardadas');renderDeadlines();})
+        .catch(function(e){$("#dlp-err").textContent=e.message;});
+    });
+  }
+  function dlpPintaSim(){
+    var offH0=(DLP.cfg&&DLP.cfg.offsetHoras!=null)?DLP.cfg.offsetHoras:-3;
+    var ahora=new Date(Date.now()+offH0*3600000).toISOString().slice(0,16);
+    $("#dlp-sim").innerHTML='<div class="dlp-simf"><div class="fld"><label>Courier</label><input id="dlp-sc" list="dlp-couriers2" placeholder="Opcional"></div><div class="fld"><label>Ingreso de la orden (hora de la bodega)</label><input id="dlp-si" type="datetime-local" value="'+ahora+'"></div></div>'
+      +'<datalist id="dlp-couriers2">'+CARRIERS.map(function(c){return '<option value="'+esc(c)+'">';}).join('')+'</datalist>'
+      +'<button class="btn pri" id="dlp-sim-go">Calcular deadline</button><div id="dlp-sim-r" class="dlp-simr"></div>'
+      +'<div class="hint" style="margin-top:6px">Usa las reglas que tienes en pantalla, aunque aún no las guardes.</div>';
+    $("#dlp-sim-go").addEventListener('click',function(){
+      // La hora que se escribe es la hora de la BODEGA (no la del navegador).
+      var offH=(DLP.cfg&&DLP.cfg.offsetHoras!=null)?DLP.cfg.offsetHoras:-3;
+      var v=$("#dlp-si").value, ing=v?new Date(Date.parse(v+':00Z')-offH*3600000).toISOString():null;
+      var body={sellerId:DLP.seller,courier:$("#dlp-sc").value||null,ingreso:ing};
+      if(DLP.rules)body.reglas={activo:true,reglas:(DLP.rules.reglas||[]),horasCourier:(DLP.rules.horasCourier||[]).filter(function(h){return h.courier;})};
+      api('/operations/'+encodeURIComponent(op)+'/deadline-simulate',{method:'POST',body:body}).then(function(r){
+        $("#dlp-sim-r").innerHTML=r.dueAt?('<div class="dlp-res"><span>Deadline</span><b>'+esc(new Date(Date.parse(r.dueAt)+offH*3600000).toLocaleString('es-CL',{weekday:'long',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'UTC'}))+' h</b></div><div class="muted" style="font-size:12.5px;margin-top:4px">'+esc(r.detalle)+'</div>'):('<div class="muted">'+esc(r.detalle)+'</div>');
+      }).catch(function(e){$("#dlp-sim-r").innerHTML='<div class="ferr">'+esc(e.message)+'</div>';});
+    });
+  }
+  (function(){
+    var ss=document.getElementById('dlp-seller');
+    if(ss)ss.addEventListener('change',function(){if(DLP.dirty&&!confirm('Tienes cambios sin guardar en las reglas. ¿Descartarlos?')){ss.value=DLP.seller;return;}DLP.seller=ss.value;dlpCargaCliente(can('master'));});
+    var bc=document.getElementById('dlp-cortes');if(bc)bc.addEventListener('click',function(){openDeadlineConfig();});
+  })();
   // ===== Inventario → Lotes y vencimiento =====
   var LOTES={data:null,f:'all',q:'',dias:30};
   (function(){
@@ -8309,6 +8470,7 @@
       var con=o.ultimaConexion?('última conexión '+fmtDate(o.ultimaConexion)):'sin conexiones registradas';
       return '<div class="crg-card '+o.estado+(o.activo?'':' inactivo')+'">'
         +'<div class="crg-hd"><div class="crg-av">'+esc(ini)+'</div><div class="crg-nm"><b>'+esc(o.nombre)+(o.activo?'':' · inactivo')+'</b><span>'+esc(con)+'</span></div><span class="crg-st '+o.estado+'">'+ST[o.estado]+'</span></div>'
+        +'<div class="crg-sk">'+(o.habilidades?(o.habilidades.length?o.habilidades.map(function(t){return '<span>'+esc(skillLabel(t))+'</span>';}).join(''):'<span class="none">Sin actividades habilitadas</span>'):'<span class="all">Todas las actividades</span>')+'</div>'
         +'<div class="crg-nums"><span><b>'+run.length+'</b>en ejecución</span><span><b>'+cola.length+'</b>en cola</span><span><b>'+fmtInt(o.unidades)+'</b>u</span><span><b>'+cgDur(o.minutosEstimados)+'</b>estimado</span></div>'
         +(run.length?'<div class="crg-sec">En ejecución</div>'+run.map(function(t){return fila(t,true);}).join(''):'')
         +(cola.length?'<div class="crg-sec">En cola</div>'+cola.slice(0,MAX).map(function(t){return fila(t,false);}).join('')+(cola.length>MAX?'<div class="crg-more">+ '+(cola.length-MAX)+' más en cola</div>':''):'')
@@ -8546,7 +8708,7 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],lotes:["Lotes y vencimiento","Lotes con stock, vencimientos y alertas de próximo vencimiento"],cargas:["Cargas","Trabajo asignado y en ejecución por operario, en tiempo real"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],consignees:["Destinatarios","Libreta de direcciones frecuentes del cliente"],mcp:["Conexión MCP","Llaves para que agentes externos operen este WMS"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],deadlines:["Deadlines","Reglas de deadline automático por cliente"],lotes:["Lotes y vencimiento","Lotes con stock, vencimientos y alertas de próximo vencimiento"],cargas:["Cargas","Trabajo asignado y en ejecución por operario, en tiempo real"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],consignees:["Destinatarios","Libreta de direcciones frecuentes del cliente"],mcp:["Conexión MCP","Llaves para que agentes externos operen este WMS"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     // Un módulo fuera de plan ya NO devuelve al usuario a otra página: entra, lo ve
     // con los datos reales de su bodega y se topa con el muro recién al operar.
@@ -8556,7 +8718,7 @@
     // servidor están sobre las escrituras, así que la pantalla se ve con el contenido
     // real de la bodega — que es justamente lo que hace que valga la pena activarla.
     // Ver una tabla vacía no convence a nadie de nada.
-    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="consignees")renderConsignees();if(pg==="mcp")renderMcp();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="lotes")renderLotes();if(pg==="cargas"){renderCargas();cargasTick();}else{clearTimeout(CARGAS.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
+    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="consignees")renderConsignees();if(pg==="mcp")renderMcp();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="lotes")renderLotes();if(pg==="deadlines")renderDeadlines();if(pg==="cargas"){renderCargas();cargasTick();}else{clearTimeout(CARGAS.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});

@@ -141,6 +141,16 @@ export const COPILOT_TOOLS: ToolSpec[] = [
     parameters: { type: 'object', properties: {} },
   },
   {
+    name: 'reglas_deadline',
+    description: 'Reglas de deadline automático por cliente (corte de ingreso, días hábiles, hora del deadline, hora por courier), el calendario hábil y feriados de la bodega. Úsalo para "¿qué deadline tienen las órdenes de X?", "¿hasta qué hora sale el mismo día?" o para explicar por qué una orden tiene cierto deadline.',
+    parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional; sin él, todos)') } },
+  },
+  {
+    name: 'habilidades_operarios',
+    description: 'Habilidades de cada operario: qué actividades tiene permitidas (Picking, Empaque, Despacho, Guardado, Recepción, Reposición, Conteo, Re-slotting). Úsalo para "¿qué puede hacer X?", "¿quién puede empacar?" y antes de asignar: el sistema no asigna una tarea a quien no tiene esa habilidad.',
+    parameters: { type: 'object', properties: { operario: str('nombre, email o id del operario (opcional; sin él, todos)') } },
+  },
+  {
     name: 'operarios',
     description: 'Directorio de operarios con su DISPONIBILIDAD: si están ACTIVOS o inactivos, su última conexión y cuántas tareas abiertas tienen. Úsalo para "¿quién está activo/disponible?", "¿a quién le puedo asignar?" y SIEMPRE antes de asignar una tarea, para no asignársela a alguien inactivo.',
     parameters: { type: 'object', properties: {} },
@@ -283,6 +293,7 @@ export const COPILOT_TOOLS: ToolSpec[] = [
  * quedaba dependiendo de por dónde entrara la petición.
  */
 export const COPILOT_MANAGE_TOOLS: ReadonlySet<string> = new Set([
+  'fijar_habilidades_operario',
   'asignar_tarea',
   'asignar_tareas_masivo',
   'liberar_asignacion',
@@ -307,6 +318,19 @@ export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
     name: 'fijar_deadline_orden',
     description: 'Fija o quita el deadline de preparación de una orden (compromiso de salida). Úsalo cuando el courier mueve su hora de retiro o cuando una orden debe adelantarse. Requiere sellerId, orden y la fecha/hora ISO; dueAt vacío quita el deadline.',
     parameters: { type: 'object', required: ['sellerId', 'orden'], properties: { sellerId: str('id del cliente'), orden: str('N° de orden externo o id interno'), dueAt: str('fecha y hora ISO del compromiso; vacío para quitarlo') } },
+  },
+  {
+    name: 'fijar_habilidades_operario',
+    description: 'Cambia las habilidades de un operario: qué actividades tiene permitidas. actividades = lista de tipos (PICK, PACK, SHIP, PUTAWAY, RECEIVE, RESTOCK, COUNT, RESLOT) o "todas" para quitar la restricción. Solo un administrador. Las tareas que ya tenía y quedan fuera se informan, no se le quitan solas.',
+    parameters: {
+      type: 'object',
+      properties: {
+        operario: { type: 'string', description: 'nombre, email o id del operario' },
+        actividades: { type: 'array', items: { type: 'string', enum: ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'COUNT', 'RESLOT'] }, description: 'actividades permitidas; vacío = ninguna' },
+        todas: { type: 'boolean', description: 'true = puede hacer todas las actividades (quita la restricción)' },
+      },
+      required: ['operario'],
+    },
   },
   {
     name: 'guardar_instruccion',

@@ -116,10 +116,23 @@ export class OperationService {
         hora: String(c.hora).trim(),
         dias: Array.isArray(c.dias) && c.dias.length ? c.dias.map((d) => Number(d)).filter((d) => d >= 0 && d <= 6) : undefined,
       }));
+    // Calendario y reglas por cliente: si no vienen en este guardado se CONSERVAN las
+    // actuales (el modal de cortes no las conoce y no debe borrarlas).
+    const prev = (op.deadlineConfig || {}) as DeadlineConfig;
+    const diasHabiles = Array.isArray(cfg.diasHabiles)
+      ? Array.from(new Set(cfg.diasHabiles.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))).sort()
+      : prev.diasHabiles;
+    const feriados = Array.isArray(cfg.feriados)
+      ? Array.from(new Set(cfg.feriados.map((f) => String(f).trim().slice(0, 10)).filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f)))).sort()
+      : prev.feriados;
+    const clientes = cfg.clientes !== undefined ? cfg.clientes : prev.clientes;
     const limpia: DeadlineConfig = {
-      ...(cfg.offsetHoras == null ? {} : { offsetHoras: Number(cfg.offsetHoras) }),
-      ...(cfg.riesgoHoras == null ? {} : { riesgoHoras: Math.max(0, Number(cfg.riesgoHoras)) }),
-      cortes,
+      ...(cfg.offsetHoras == null ? (prev.offsetHoras == null ? {} : { offsetHoras: prev.offsetHoras }) : { offsetHoras: Number(cfg.offsetHoras) }),
+      ...(cfg.riesgoHoras == null ? (prev.riesgoHoras == null ? {} : { riesgoHoras: prev.riesgoHoras }) : { riesgoHoras: Math.max(0, Number(cfg.riesgoHoras)) }),
+      cortes: cfg.cortes === undefined ? (prev.cortes || []) : cortes,
+      ...(diasHabiles ? { diasHabiles } : {}),
+      ...(feriados ? { feriados } : {}),
+      ...(clientes ? { clientes } : {}),
     };
     const updated: Operation = { ...op, deadlineConfig: limpia };
     await this.operations.save(updated);

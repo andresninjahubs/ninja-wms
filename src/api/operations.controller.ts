@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { WmsFacade } from '../app/wms.facade';
 import { CreateOperationDto, DeadlineConfigDto, UpdateBrandingDto, UpdateOperationDto } from './dto';
 import { RequirePermission } from './auth/permissions.decorator';
@@ -95,6 +95,34 @@ export class OperationsController {
       riesgoHoras: dto.riesgoHoras,
       cortes: (dto.cortes || []).map((c) => ({ courier: c.courier, hora: c.hora, dias: c.dias })),
     });
+  }
+
+  /** Reglas de deadline automático de un cliente. */
+  @Get(':operationId/deadline-rules/:sellerId')
+  @RequirePermission('stock:read')
+  getClientDeadlineRules(@Param('operationId') operationId: string, @Param('sellerId') sellerId: string) {
+    return this.wms.getClientDeadlineRules(operationId, sellerId);
+  }
+
+  /** Guarda las reglas de un cliente: { activo, reglas:[{corteIngreso, diasHabiles, diasHabilesDespues?, horaDeadline?, courier?}], horasCourier:[{courier,hora}] }. */
+  @Put(':operationId/deadline-rules/:sellerId')
+  @RequirePermission('master:manage')
+  setClientDeadlineRules(@Param('operationId') operationId: string, @Param('sellerId') sellerId: string, @Body() body: any) {
+    return this.wms.setClientDeadlineRules(operationId, sellerId, body || {});
+  }
+
+  /** Calendario hábil: { diasHabiles:[1..5], feriados:["2026-12-25"] }. */
+  @Put(':operationId/deadline-calendar')
+  @RequirePermission('master:manage')
+  setDeadlineCalendar(@Param('operationId') operationId: string, @Body() body: { diasHabiles?: number[]; feriados?: string[] }) {
+    return this.wms.setDeadlineCalendar(operationId, body || {});
+  }
+
+  /** Simula el deadline que recibiría una orden: { sellerId, courier?, ingreso?, reglas? }. */
+  @Post(':operationId/deadline-simulate')
+  @RequirePermission('stock:read')
+  simulateDeadline(@Param('operationId') operationId: string, @Body() body: { sellerId: string; courier?: string; ingreso?: string; reglas?: any }) {
+    return this.wms.simulateDeadline(operationId, body?.sellerId, { courier: body?.courier, ingreso: body?.ingreso, reglas: body?.reglas });
   }
 
   /** Órdenes de toda la operación con el deadline vencido o por vencer. */

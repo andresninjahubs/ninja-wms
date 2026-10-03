@@ -24,12 +24,12 @@ import { CreateWebhookInput, UpdateWebhookInput, WebhookService } from '../domai
 import { WebhookEventType ,
   StoredTaskTimeModel,
   StoredOperatorFactor} from '../domain/types';
-import { DeadlineConfig, DeadlineState, deadlineBoost, deadlineState, enRiesgo, resolveDueAt } from '../domain/deadline';
+import { ClientDeadlineRules, DeadlineConfig, DeadlineState, deadlineBoost, deadlinePorReglas, deadlineState, enRiesgo, normalizarReglasCliente, resolveDueAt } from '../domain/deadline';
 import { AiDashboardService, capacidades as aiDashCapacidades } from './ai-dashboard.service';
 import { ChatSender, ChatService } from '../domain/chat.service';
 import { PutawayAdvisor } from '../domain/putaway.advisor';
 import { CycleCountService } from '../domain/cyclecount.service';
-import { CreateUserInput, UpdateUserInput, UserService } from '../domain/user.service';
+import { CreateUserInput, UpdateUserInput, UserService, OPERATOR_TASK_TYPES, OPERATOR_TASK_LABEL, normalizarHabilidades, puedeHacer } from '../domain/user.service';
 import { OperationService } from '../domain/operation.service';
 import { BarcodeService, RegisterPackInput } from '../domain/barcode.service';
 import { ForbiddenError, NotFoundError, PlanLimitError, ValidationError } from '../domain/errors';
@@ -1065,6 +1065,18 @@ export class WmsFacade {
       return { requiresConfirmation: true, resumen: `Propuesta registrada (${pol.reason}): ${resumen}. Un humano la confirmará; NO la des por ejecutada.` };
     }
     const mode: 'confirm' | 'direct' = pol.decision === 'execute' ? 'direct' : 'confirm';
+    if (name === 'fijar_habilidades_operario') {
+      // Igual que en el panel: las habilidades las define un administrador.
+      const rol = String(actor?.role || '');
+      if (rol && rol !== 'ADMIN' && rol !== 'PLATFORM_ADMIN') return { error: 'Solo un administrador puede cambiar las habilidades de un operario.' };
+      const quien = await this.copilotResolveOperator(operationId, args?.operario);
+      if (!quien) return { error: `No encontré al operario "${String(args?.operario ?? '')}". Usa habilidades_operarios u operarios para ver los nombres.` };
+      try {
+        const r = await this.setOperatorSkills(operationId, quien.id, args?.todas ? 'todas' : (Array.isArray(args?.actividades) ? args.actividades : 'todas'), actor?.id || 'copiloto');
+        await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `habilidades ${r.nombre} → ${r.todas ? 'todas' : r.habilidades.join(',') || 'ninguna'}`, actor: actor?.id || 'copiloto', orderRef: null, result: 'ok', recommendationId: null });
+        return { ok: true, operario: r.nombre, habilidades: r.todas ? 'todas' : r.habilidades, tareasFueraDeHabilidad: r.tareasFueraDeHabilidad };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudieron cambiar las habilidades' }; }
+    }
     if (name === 'guardar_instruccion') {
       const texto = String(args?.texto ?? args?.instruccion ?? '').trim();
       if (!texto) return { error: 'Falta el texto de la instrucción.' };
@@ -1485,6 +1497,7 @@ export class WmsFacade {
       case 'avanzar_estado_orden': return `${a.accion || '?'} orden ${a.orden || '?'}`;
       case 'fijar_deadline_orden': return `orden ${a.orden || '?'} → ${a.dueAt || 'sin deadline'}`;
       case 'guardar_instruccion': return String(a.texto || a.instruccion || '').slice(0, 80);
+      case 'fijar_habilidades_operario': return `${a.operario || '?'} → ${a.todas ? 'todas' : (Array.isArray(a.actividades) ? a.actividades.join(', ') || 'ninguna' : 'todas')}`;
       default: return JSON.stringify(a).slice(0, 120);
     }
   }
@@ -1589,6 +1602,19 @@ export class WmsFacade {
         }
         case 'operarios': {
           return await this.operatorsDirectory(operationId);
+        }
+        case 'reglas_deadline': {
+          const cfg = await this.getDeadlineConfig(operationId);
+          const clientes = cfg.clientes || {};
+          const ids = pickSeller(a.sellerId) ? [pickSeller(a.sellerId)!] : scopeSellers;
+          return {
+            diasHabiles: cfg.diasHabiles && cfg.diasHabiles.length ? cfg.diasHabiles : [1, 2, 3, 4, 5],
+            feriados: cfg.feriados || [], cortesGenerales: cfg.cortes || [], riesgoHoras: cfg.riesgoHoras ?? 4,
+            clientes: ids.map((sid) => ({ sellerId: sid, ...(clientes[sid] || { activo: false, reglas: [], horasCourier: [] }) })),
+          };
+        }
+        case 'habilidades_operarios': {
+          try { return await this.operatorSkills(operationId, a.operario || null); } catch (e: any) { return { error: (e && e.message) || 'sin datos' }; }
         }
         case 'alertas_activas': {
           const r = await this.agentAlerts(operationId, { sweep: true });
@@ -3345,7 +3371,47 @@ export class WmsFacade {
       slaHoras: seller?.slaHoras ?? null,
       explicito: input.dueAt ?? null,
       fuenteExplicita: (input.dueSource as any) || 'manual',
+      sellerId,
     });
+  }
+
+  // ---- Deadlines automáticos por cliente (Workflows → Deadlines) -------------
+  /** Reglas de deadline de un cliente (o vacías si no tiene). */
+  async getClientDeadlineRules(operationId: string, sellerId: string): Promise<ClientDeadlineRules & { sellerId: string }> {
+    const cfg = await this.getDeadlineConfig(operationId);
+    const r = (cfg.clientes || {})[sellerId];
+    return { sellerId, activo: r ? r.activo !== false : false, reglas: r?.reglas || [], horasCourier: r?.horasCourier || [] };
+  }
+  /** Guarda (reemplaza) las reglas de un cliente. */
+  async setClientDeadlineRules(operationId: string, sellerId: string, raw: any): Promise<ClientDeadlineRules & { sellerId: string }> {
+    const seller = await this.sellers.findById(sellerId).catch(() => null);
+    if (!seller || seller.operationId !== operationId) throw new NotFoundError(`Cliente no encontrado en la operación: ${sellerId}`);
+    let limpias: ClientDeadlineRules;
+    try { limpias = normalizarReglasCliente(raw, () => 'dr-' + this.ids.next()); } catch (e: any) { throw new ValidationError(e.message); }
+    const cfg = await this.getDeadlineConfig(operationId);
+    const clientes = { ...(cfg.clientes || {}), [sellerId]: limpias };
+    await this.setDeadlineConfig(operationId, { ...cfg, clientes });
+    return { sellerId, ...limpias };
+  }
+  /** Calendario hábil de la operación: días de la semana y feriados. */
+  async setDeadlineCalendar(operationId: string, cal: { diasHabiles?: number[]; feriados?: string[] }): Promise<DeadlineConfig> {
+    const cfg = await this.getDeadlineConfig(operationId);
+    return this.setDeadlineConfig(operationId, { ...cfg, diasHabiles: cal.diasHabiles ?? cfg.diasHabiles, feriados: cal.feriados ?? cfg.feriados });
+  }
+  /**
+   * Simulador: qué deadline recibiría una orden de ese cliente y courier si entrara
+   * en `ingreso` (por defecto ahora). Sirve para revisar las reglas antes de usarlas.
+   */
+  async simulateDeadline(operationId: string, sellerId: string, opts: { courier?: string | null; ingreso?: string | null; reglas?: any }): Promise<{ dueAt: string | null; fuente: string | null; detalle: string }> {
+    const cfg = await this.getDeadlineConfig(operationId);
+    let cli: ClientDeadlineRules | undefined = (cfg.clientes || {})[sellerId];
+    if (opts.reglas) { try { cli = normalizarReglasCliente(opts.reglas, () => 'sim'); } catch (e: any) { throw new ValidationError(e.message); } }
+    const now = opts.ingreso && !Number.isNaN(Date.parse(opts.ingreso)) ? new Date(opts.ingreso).toISOString() : this.clockNow();
+    const r = deadlinePorReglas(now, opts.courier || null, cli, cfg);
+    if (r) return { dueAt: r.dueAt, fuente: 'regla', detalle: r.detalle };
+    const seller = await this.sellers.findById(sellerId).catch(() => null);
+    const alt = resolveDueAt({ nowIso: now, carrier: opts.courier || null, config: { ...cfg, clientes: undefined }, slaHoras: seller?.slaHoras ?? null });
+    return { dueAt: alt.dueAt, fuente: alt.dueSource, detalle: alt.dueSource === 'corte' ? 'Ninguna regla del cliente aplica: se usa el corte general del courier.' : alt.dueSource === 'sla' ? 'Ninguna regla aplica: se usa el SLA del cliente.' : 'Ninguna regla aplica y no hay corte ni SLA: la orden queda sin deadline.' };
   }
 
   /** Corre hacia atrás las fechas de una orden — SOLO para datos de demostración. */
@@ -4307,7 +4373,7 @@ export class WmsFacade {
    * devolviendo es solo compatibilidad para los paneles que muestran u/h: es la
    * velocidad EQUIVALENTE en una tarea típica, no una propiedad de la persona.
    */
-  private async operatorRoster(operationId: string): Promise<Array<{ id: string; name: string; speed: number; factor: number; horasDe: (stage: string, t: { units?: number | null; lines?: number | null }) => number }>> {
+  private async operatorRoster(operationId: string): Promise<Array<{ id: string; name: string; speed: number; factor: number; horasDe: (stage: string, t: { units?: number | null; lines?: number | null }) => number; puede: (tipo: string) => boolean }>> {
     const users = (await this.listUsers(operationId)).filter((u) => String(u.role) === 'OPERATOR' && u.active !== false);
     // Los coeficientes vienen de lo APRENDIDO cuando hay suficientes tareas medidas;
     // si no, del modelo de la plataforma y, en última instancia, de los declarados.
@@ -4337,7 +4403,7 @@ export class WmsFacade {
       const horasDe = (stage: string, t: { units?: number | null; lines?: number | null }): number =>
         estimarHoras(conFactor(coefEtapa(stage), factor), t);
       const equivalente = unidadesPorHoraEquivalente(conFactor(coefEtapa('PICK'), factor), tipica) ?? 50;
-      return { id: u.id, name: u.name, speed: equivalente, factor, horasDe };
+      return { id: u.id, name: u.name, speed: equivalente, factor, horasDe, puede: (tipo: string) => puedeHacer(u, tipo) };
     });
   }
 
@@ -4507,11 +4573,17 @@ export class WmsFacade {
     await this.assertFeature(operationId, 'task_assignment', 'La asignación de tareas');
     // Solo se asigna a un operario ACTIVO de la operación. El auto-balanceo ya parte del
     // roster activo, así que puede omitir esta verificación (skipOperatorCheck).
+    const uOp = (await this.listUsers(operationId)).find((x) => x.id === input.operator);
     if (!input.skipOperatorCheck) {
-      const u = (await this.listUsers(operationId)).find((x) => x.id === input.operator);
+      const u = uOp;
       if (!u) throw new ValidationError(`Operario no encontrado en la operación: ${input.operator}`);
       if (String(u.role) === 'CLIENT') throw new ValidationError(`${u.name} es un usuario cliente; no puede recibir tareas de bodega.`);
       if (u.active === false) throw new ValidationError(`El operario ${u.name} está inactivo; no se le pueden asignar tareas.`);
+    }
+    // Habilidades: la restricción vale para TODOS los caminos (panel, balanceo, agente,
+    // copiloto, MCP y la app), por eso se revisa aunque se omita la verificación de arriba.
+    if (uOp && !puedeHacer(uOp, input.type)) {
+      throw new ValidationError(`${uOp.name} no tiene habilitada la actividad ${OPERATOR_TASK_LABEL[input.type] || input.type}. Cambia sus habilidades en Usuarios o asígnala a otro operario.`);
     }
     const id = `${input.type}:${input.entityId}`;
     // Quién la tenía antes, para saber si esto es una primera entrega o un rebote.
@@ -4629,11 +4701,13 @@ export class WmsFacade {
     let liberadas = 0, reasignadas = 0;
     // Las más pesadas primero: repartir así deja los tiempos más parejos.
     for (const a of abiertas.slice().sort((x, y) => y.unitsEstimate - x.unitsEstimate)) {
+      const aptos = destinos.filter((d) => d.puede(a.type));
+      if (!aptos.length) continue; // nadie más tiene esa habilidad: la tarea se queda donde está
       const r = await this.releaseAssignment(operationId, a.entityId, a.type, by);
       if (!r.ok) continue;
       liberadas++;
-      let mejor = destinos[0], proj = Infinity;
-      for (const d of destinos) {
+      let mejor = aptos[0], proj = Infinity;
+      for (const d of aptos) {
         const p = horas.get(d.id)! + d.horasDe(a.type, { units: a.unitsEstimate, lines: a.linesEstimate });
         if (p < proj) { proj = p; mejor = d; }
       }
@@ -4665,6 +4739,11 @@ export class WmsFacade {
   /** Asignación masiva. */
   async bulkAssign(operationId: string, items: Array<{ type: WorkTaskType; entityId: string; entityRef?: string | null; sellerId?: string | null; unitsEstimate?: number; linesEstimate?: number; operator: string }>, by: string): Promise<{ asignadas: number }> {
     let n = 0;
+    // Habilidades: se valida TODO antes de asignar nada, para no dejar el lote a medias.
+    const us = await this.listUsers(operationId);
+    const malos = (items || []).filter((it) => { const u = us.find((x) => x.id === it.operator); return u && !puedeHacer(u, it.type); })
+      .map((it) => `${(us.find((x) => x.id === it.operator) || { name: it.operator }).name} no tiene ${OPERATOR_TASK_LABEL[it.type] || it.type} (${it.entityRef || it.entityId})`);
+    if (malos.length) throw new ValidationError(`No se asignó nada: ${malos.slice(0, 5).join('; ')}${malos.length > 5 ? ` y ${malos.length - 5} más` : ''}.`);
     for (const it of items) { await this.assignTask(operationId, { ...it, by }); n++; }
     return { asignadas: n };
   }
@@ -4694,10 +4773,13 @@ export class WmsFacade {
     }
     const plan: Array<{ entityId: string; entityRef: string; operario: string; unidades: number; type: WorkTaskType; sellerId: string }> = [];
     for (const task of pool) {
-      // Operario con menor tiempo proyectado tras tomar esta tarea.
-      let best = roster[0];
+      // Operario con menor tiempo proyectado tras tomar esta tarea, entre los que
+      // tienen la habilidad. Si nadie la tiene, la tarea queda sin asignar.
+      const aptos = roster.filter((op) => op.puede(task.type));
+      if (!aptos.length) continue;
+      let best = aptos[0];
       let bestProj = Infinity;
-      for (const op of roster) {
+      for (const op of aptos) {
         const proj = load.get(op.id)!.hours + op.horasDe(task.type, { units: task.unidades, lines: task.paradas });
         if (proj < bestProj) { bestProj = proj; best = op; }
       }
@@ -4778,18 +4860,55 @@ export class WmsFacade {
   }
 
   /**
+   * Habilidades de los operarios: qué actividades tiene permitidas cada uno.
+   * `habilidades` = lista de tipos; `todas` = sin restricción (valor por defecto).
+   */
+  async operatorSkills(operationId: string, operator?: string | null): Promise<{ tipos: Array<{ tipo: string; nombre: string }>; operarios: Array<{ id: string; nombre: string; email: string; activo: boolean; todas: boolean; habilidades: string[]; etiquetas: string[] }> }> {
+    const users = (await this.listUsers(operationId)).filter((u) => String(u.role) === 'OPERATOR');
+    const q = String(operator || '').trim().toLowerCase();
+    const sel = q ? users.filter((u) => u.id.toLowerCase() === q || u.email.toLowerCase() === q || u.name.toLowerCase() === q || u.name.toLowerCase().includes(q)) : users;
+    if (q && !sel.length) throw new NotFoundError(`No encontré al operario "${operator}" en la operación.`);
+    return {
+      tipos: OPERATOR_TASK_TYPES.map((t) => ({ tipo: t, nombre: OPERATOR_TASK_LABEL[t] })),
+      operarios: sel.map((u) => {
+        const todas = !Array.isArray(u.allowedTasks);
+        const hab = todas ? [...OPERATOR_TASK_TYPES] : (u.allowedTasks as string[]);
+        return { id: u.id, nombre: u.name, email: u.email, activo: u.active !== false, todas, habilidades: hab, etiquetas: hab.map((t) => OPERATOR_TASK_LABEL[t] || t) };
+      }).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')),
+    };
+  }
+
+  /**
+   * Fija las habilidades de un operario. `actividades` = lista de tipos o null/"todas"
+   * para quitar la restricción. Las tareas que ya tiene asignadas y que dejan de estar
+   * permitidas NO se le quitan solas: se informan para que el admin decida.
+   */
+  async setOperatorSkills(operationId: string, operator: string, actividades: unknown, actor?: string): Promise<{ ok: true; operario: string; nombre: string; todas: boolean; habilidades: string[]; tareasFueraDeHabilidad: Array<{ tipo: string; ref: string }> }> {
+    const u = (await this.listUsers(operationId)).find((x) => x.id === operator || x.email.toLowerCase() === String(operator || '').toLowerCase());
+    if (!u) throw new NotFoundError(`Operario no encontrado en la operación: ${operator}`);
+    if (String(u.role) !== 'OPERATOR') throw new ValidationError(`${u.name} no es operario: las habilidades solo aplican a usuarios con rol Operario.`);
+    const lista = actividades === 'todas' || actividades === 'TODAS' ? null : normalizarHabilidades(actividades);
+    const upd = await this.usersService.updateUser(u.id, { allowedTasks: lista });
+    const abiertas = this.assignments ? (await this.assignments.listByOperator(operationId, u.id)).filter((a) => a.status === 'assigned' || a.status === 'in_progress') : [];
+    const fuera = abiertas.filter((a) => !puedeHacer(upd, a.type)).map((a) => ({ tipo: OPERATOR_TASK_LABEL[a.type] || a.type, ref: a.entityRef || a.entityId }));
+    await this.journal(operationId, 'note', actor || 'system', `Habilidades de ${u.name}: ${lista ? (lista.map((t) => OPERATOR_TASK_LABEL[t] || t).join(', ') || 'ninguna') : 'todas'}`, { operario: u.id, habilidades: lista }).catch(() => null);
+    const hab = Array.isArray(upd.allowedTasks) ? upd.allowedTasks : [...OPERATOR_TASK_TYPES];
+    return { ok: true, operario: u.id, nombre: u.name, todas: !Array.isArray(upd.allowedTasks), habilidades: hab, tareasFueraDeHabilidad: fuera };
+  }
+
+  /**
    * Directorio de operarios con su DISPONIBILIDAD: si están activos o inactivos, su
    * última conexión (presencia) y cuántas tareas abiertas tienen. Insumo para decidir a
    * quién asignar. Incluye a los INACTIVOS (marcados) para que la IA vea el panorama completo.
    */
-  async operatorsDirectory(operationId: string): Promise<{ operarios: Array<{ id: string; nombre: string; activo: boolean; ultimaConexion: string | null; tareasAbiertas: number }>; activos: number; inactivos: number }> {
+  async operatorsDirectory(operationId: string): Promise<{ operarios: Array<{ id: string; nombre: string; activo: boolean; ultimaConexion: string | null; tareasAbiertas: number; habilidades: string[] | 'todas' }>; activos: number; inactivos: number }> {
     const users = (await this.listUsers(operationId)).filter((u) => String(u.role) === 'OPERATOR');
     const lastLogin = await this.platformUsageService.lastLoginByOperation(operationId).catch(() => ({} as Record<string, string>));
     const open = this.assignments ? await this.assignments.listOpen(operationId) : [];
     const openByOp = new Map<string, number>();
     for (const a of open) openByOp.set(a.operator, (openByOp.get(a.operator) || 0) + 1);
     const operarios = users
-      .map((u) => ({ id: u.id, nombre: u.name, activo: u.active !== false, ultimaConexion: lastLogin[u.id] ?? null, tareasAbiertas: openByOp.get(u.id) || 0 }))
+      .map((u) => ({ id: u.id, nombre: u.name, activo: u.active !== false, ultimaConexion: lastLogin[u.id] ?? null, tareasAbiertas: openByOp.get(u.id) || 0, habilidades: Array.isArray(u.allowedTasks) ? u.allowedTasks : 'todas' as any }))
       .sort((a, b) => (a.activo === b.activo ? a.nombre.localeCompare(b.nombre) : (a.activo ? -1 : 1)));
     return { operarios, activos: operarios.filter((o) => o.activo).length, inactivos: operarios.filter((o) => !o.activo).length };
   }
@@ -4806,7 +4925,7 @@ export class WmsFacade {
     generadoEn: string;
     operarios: Array<{
       id: string; nombre: string; activo: boolean; ultimaConexion: string | null;
-      estado: 'ejecutando' | 'con_cola' | 'libre';
+      estado: 'ejecutando' | 'con_cola' | 'libre'; habilidades: string[] | null;
       enEjecucion: Array<{ id: string; tipo: string; ref: string; sellerId: string | null; unidades: number; paradas: number; asignadaEn: string; iniciadaEn: string | null; minutosEnCurso: number | null; minutosEstimados: number; prioridad: number | null; motivo: string | null }>;
       asignadas: Array<{ id: string; tipo: string; ref: string; sellerId: string | null; unidades: number; paradas: number; asignadaEn: string; iniciadaEn: string | null; minutosEsperando: number; minutosEstimados: number; prioridad: number | null; motivo: string | null }>;
       unidades: number; minutosEstimados: number;
@@ -4847,6 +4966,7 @@ export class WmsFacade {
         const estado: 'ejecutando' | 'con_cola' | 'libre' = enEjecucion.length ? 'ejecutando' : asignadas.length ? 'con_cola' : 'libre';
         return {
           id: u.id, nombre: u.name, activo: u.active !== false, ultimaConexion: lastLogin[u.id] ?? null, estado,
+          habilidades: Array.isArray(u.allowedTasks) ? u.allowedTasks : null,
           enEjecucion, asignadas,
           unidades: list.reduce((t, a) => t + a.unitsEstimate, 0),
           minutosEstimados: list.reduce((t, a) => t + estMin(a), 0),
@@ -4989,10 +5109,12 @@ export class WmsFacade {
         const tipo = etapa(it.estado);
         if (!tipo) { sinEtapa.push(it.orden); continue; }   // RECEIVED: falta reservar, no asignar
         if (yaAsignada.has(`${tipo}:${it.orderId}`)) continue;
-        const libres = roster.filter((r) => (carga.get(r.id) || 0) === 0);
+        const aptos = roster.filter((r) => r.puede(tipo));
+        if (!aptos.length) { sinEtapa.push(it.orden); continue; } // nadie con esa habilidad
+        const libres = aptos.filter((r) => (carga.get(r.id) || 0) === 0);
         const destino = libres.length
           ? libres[0]
-          : roster.slice().sort((a, b) => (carga.get(a.id) || 0) - (carga.get(b.id) || 0))[0];
+          : aptos.slice().sort((a, b) => (carga.get(a.id) || 0) - (carga.get(b.id) || 0))[0];
         try {
           await this.assignTask(operationId, {
             type: tipo, entityId: it.orderId, entityRef: it.orden, sellerId: it.sellerId,
@@ -5656,7 +5778,10 @@ export class WmsFacade {
     if (selfPickup) {
       const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, RESTOCK: 6, COUNT: 7, RESLOT: 8 };
       const LABEL: Record<string, string> = { SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: 'cola de picking', RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', RESTOCK: 'devolver a su ubicación', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' };
+      // Solo se le ofrece trabajo de las actividades que tiene habilitadas.
+      const yo = (await this.listUsers(operationId)).find((u) => u.id === operator);
       for (const t of ['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
+        if (yo && !puedeHacer(yo, t)) continue;
         const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: 30 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
         pool.forEach((p, i) => available.push({ type: t, entityId: p.entityId, entityRef: p.entityRef, sellerId: p.sellerId, cliente: sname.get(p.sellerId) || p.sellerId, unidades: p.unidades, prioridad: (TYPE_W[t] ?? 8) * 1000 + i + 1, motivo: `${LABEL[t]} #${i + 1}` }));
       }
@@ -6307,7 +6432,8 @@ export class WmsFacade {
     if (!this.assignments) return false;
     const existing = await this.assignments.get(`${type}:${task.entityId}`);
     if (existing && (existing.status === 'assigned' || existing.status === 'in_progress')) return false; // ya asignada
-    const { roster, load } = await this.currentLoad(operationId);
+    const { roster: todos, load } = await this.currentLoad(operationId);
+    const roster = todos.filter((op) => op.puede(type));
     if (!roster.length) return false;
     let best = roster[0]; let bestProj = Infinity;
     for (const op of roster) { const proj = load.get(op.id)!.hours + op.horasDe(type, { units: task.unidades, lines: task.paradas ?? 1 }); if (proj < bestProj) { bestProj = proj; best = op; } }
@@ -6367,7 +6493,7 @@ export class WmsFacade {
       const lo = sorted[0], hi = sorted[sorted.length - 1];
       if (hours.get(hi.id)! - hours.get(lo.id)! <= gapThreshold) break;
       // Tareas movibles del más cargado: todas menos la más antigua (en curso).
-      const movable = (openByOp.get(hi.id) || []).slice(1);
+      const movable = (openByOp.get(hi.id) || []).slice(1).filter((a) => lo.puede(a.type));
       if (!movable.length) break;
       // Elige la tarea que deja los tiempos más parejos tras moverla.
       let pick: WorkAssignment | null = null, bestScore = Infinity;

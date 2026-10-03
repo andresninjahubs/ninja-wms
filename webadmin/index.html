@@ -1295,6 +1295,44 @@
 #loc-body input[type=checkbox],#loc-selall,.locc input[data-lsel]{width:17px;height:17px;accent-color:var(--primary);cursor:pointer;margin:0}
 #loc-body input[disabled],.locc input[disabled]{cursor:not-allowed;opacity:.35}
 .locc{position:relative}.locc .lsel{position:absolute;top:10px;right:10px}
+/* Deadlines automáticos */
+.dlp-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media(max-width:1000px){.dlp-grid{grid-template-columns:1fr}}
+.dlp-lbl{font-size:13px;font-weight:700;color:var(--ink-2);margin-bottom:8px}
+.dlp-days{display:flex;flex-wrap:wrap;gap:6px}
+.dlp-days label{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid var(--line);border-radius:999px;font-weight:600;font-size:13px;cursor:pointer}
+.dlp-days label.on{background:var(--primary-wash);border-color:color-mix(in srgb,var(--primary) 45%,var(--line));color:var(--primary-ink)}
+.dlp-days input{width:15px;height:15px;margin:0;accent-color:var(--primary)}
+.dlp-fer{display:flex;flex-wrap:wrap;gap:6px}
+.dlp-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:999px;background:var(--surface-3);font-size:12.5px;font-weight:600}
+.dlp-chip button{border:0;background:transparent;cursor:pointer;color:var(--ink-3);font-size:15px;line-height:1;padding:0 4px}
+.dlp-switch{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px}
+.dlp-switch input{width:18px;height:18px;accent-color:var(--primary);margin:0}
+.dlp-tbl td{padding:6px 6px;vertical-align:middle}
+.dlp-tbl .dlp-in{margin:0;min-width:0;width:100%;height:36px}
+.dlp-tbl td:nth-child(3) .dlp-in,.dlp-tbl td:nth-child(6) .dlp-in{min-width:96px}
+.dlp-tbl td:nth-child(4) select,.dlp-tbl td:nth-child(5) select{min-width:150px}
+.dlp-tbl input[type=checkbox]{width:18px;height:18px;accent-color:var(--primary)}
+.dlp-hc{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
+.dlp-hc input{margin:0;width:auto;min-width:180px;height:36px}.dlp-hc input[type=time]{min-width:110px}
+.dlp-simf{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dlp-simr{margin-top:12px}
+.dlp-res{display:flex;flex-direction:column;padding:12px 14px;border-radius:12px;background:var(--primary-wash)}
+.dlp-res span{font-size:12px;font-weight:700;color:var(--primary-ink);text-transform:uppercase;letter-spacing:.06em}
+.dlp-res b{font-size:20px;font-weight:800;text-transform:capitalize;margin-top:2px}
+/* Habilidades de operarios */
+.crg-sk{display:flex;flex-wrap:wrap;gap:4px}.crg-sk span{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--surface-3);color:var(--ink-2)}
+.crg-sk span.all{background:var(--c-green-wash);color:var(--c-green)}.crg-sk span.none{background:var(--c-red-wash);color:var(--c-red)}
+.skl{display:inline-flex;flex-wrap:wrap;gap:4px;max-width:260px}
+.skl .s{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface-3);color:var(--ink-2);white-space:nowrap}
+.skl .s.all{background:var(--c-green-wash);color:var(--c-green)}
+.skl .s.none{background:var(--c-red-wash);color:var(--c-red)}
+.skg{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0}
+.skg label{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;cursor:pointer;font-weight:600;font-size:13.5px}
+.skg label small{display:block;font-weight:500;color:var(--ink-3);font-size:11.5px}
+.skg input{width:17px;height:17px;accent-color:var(--primary);margin:0}
+.skg label.on{border-color:color-mix(in srgb,var(--primary) 50%,var(--line));background:var(--primary-wash)}
+@media(max-width:640px){.skg{grid-template-columns:1fr}}
 /* Lotes y vencimiento */
 #lt-filter .segbtn b{margin-left:4px;font-weight:700;opacity:.7}
 #lt-body tr.lt-first td{border-top:1px solid var(--line-2)}
@@ -1418,6 +1456,7 @@
       <div class="navcat-body">
         <button class="nav sub" data-pg="orders"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8"/></svg></span> Órdenes</button>
         <button class="nav sub" data-pg="pickqueue"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l1.5 1.5L7 5 M3 12l1.5 1.5L7 11 M3 18l1.5 1.5L7 17 M11 6h10 M11 12h10 M11 18h10"/></svg></span> Cola de preparación</button>
+        <button class="nav sub" data-pg="deadlines"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6M12 2v3"/></svg></span> Deadlines</button>
         <button class="nav sub" data-pg="inbound"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2 M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span> Recepción</button>
         <button class="nav sub" data-pg="returns"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></span> Devoluciones</button>
         <button class="nav sub" data-pg="putaway"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12 M7 10l5 5 5-5 M5 21h14"/></svg></span> Almacenado</button>
@@ -2092,7 +2131,7 @@
       <section class="page" data-pg="users">
         <div class="toolbar"><span class="muted" id="usr-scope">Usuarios y roles.</span><div class="sp" style="flex:1"></div><select id="usr-role" aria-label="Filtrar por rol" style="width:auto;min-width:170px;margin:0 10px 0 0"><option value="">Todos los roles</option></select><div class="billtabs" id="usr-state" role="tablist" aria-label="Estado de los usuarios" style="margin:0 10px 0 0"><button class="segbtn on" data-ust="active" role="tab">Activos <b id="usr-n-act"></b></button><button class="segbtn" data-ust="inactive" role="tab">Inactivos <b id="usr-n-inact"></b></button></div><button class="btn pri hidden" id="usr-new">＋ Nuevo usuario</button></div>
         <div class="card"><div class="tablewrap"><table>
-          <thead id="usr-head"><tr><th data-usort="name">Usuario</th><th data-usort="email">Email</th><th data-usort="role">Rol</th><th data-usort="op">Operación</th><th data-usort="scope">Alcance</th><th data-usort="state">Estado</th><th data-action></th></tr></thead>
+          <thead id="usr-head"><tr><th data-usort="name">Usuario</th><th data-usort="email">Email</th><th data-usort="role">Rol</th><th data-usort="op">Operación</th><th data-usort="scope">Alcance</th><th>Habilidades</th><th data-usort="state">Estado</th><th data-action></th></tr></thead>
           <tbody id="usr-body"></tbody>
         </table></div></div>
       </section>
@@ -2157,6 +2196,21 @@
       </section>
 
       <!-- Asignaciones: balanceo de carga de tareas (Camino B) -->
+      <!-- Deadlines automáticos por cliente (Workflows → Deadlines) -->
+      <section class="page" data-pg="deadlines">
+        <div class="toolbar">
+          <span class="muted">Reglas para que cada orden reciba su deadline de preparación apenas entra al WMS.</span>
+          <div class="sp" style="flex:1"></div>
+          <button class="btn" id="dlp-cortes">Cortes generales por courier</button>
+        </div>
+        <div class="dlp-grid">
+          <div class="card" id="dlp-cal-card"><div class="h"><h3>Calendario hábil</h3></div><div class="b" id="dlp-cal"></div></div>
+          <div class="card" id="dlp-sim-card"><div class="h"><h3>Simulador</h3><span class="muted" style="font-size:12.5px;margin-left:8px">¿Qué deadline recibiría una orden?</span></div><div class="b" id="dlp-sim"></div></div>
+        </div>
+        <div class="card"><div class="h"><h3>Reglas por cliente</h3><div class="sp" style="flex:1"></div><select id="dlp-seller" style="width:auto;min-width:220px;margin:0"></select></div>
+          <div class="b" id="dlp-rules"></div></div>
+      </section>
+
       <!-- Lotes y vencimiento (Inventario y ubicaciones) -->
       <section class="page" data-pg="lotes">
         <div class="toolbar">

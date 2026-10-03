@@ -17,7 +17,7 @@
  */
 
 /** Origen del deadline de una orden. */
-export type DueSource = 'oms' | 'manual' | 'corte' | 'sla';
+export type DueSource = 'oms' | 'manual' | 'regla' | 'corte' | 'sla';
 
 /** Hora de corte de un courier en la operación (cuándo pasa a retirar). */
 export interface CourierCutoff {
@@ -37,6 +37,128 @@ export interface DeadlineConfig {
   riesgoHoras?: number;
   /** Cortes por courier. */
   cortes?: CourierCutoff[];
+  /** Días hábiles de la bodega (0 = domingo … 6 = sábado). Por defecto lunes a viernes. */
+  diasHabiles?: number[];
+  /** Feriados ("AAAA-MM-DD"): no cuentan como día hábil. */
+  feriados?: string[];
+  /** Reglas de deadline automático por cliente (sellerId → reglas). */
+  clientes?: Record<string, ClientDeadlineRules>;
+}
+
+/**
+ * Regla de deadline por horario de ingreso:
+ * "las órdenes que entran hasta las `corteIngreso` vencen `diasHabiles` días hábiles
+ * después (0 = el mismo día si es hábil) a la `horaDeadline`; las que entran después
+ * del corte, `diasHabilesDespues` días hábiles después".
+ */
+export interface DeadlineRule {
+  id: string;
+  nombre?: string | null;
+  /** Solo para órdenes de este courier (null = cualquier courier). */
+  courier?: string | null;
+  /** Hora local "HH:MM" hasta la que una orden cuenta como ingresada "a tiempo". */
+  corteIngreso: string;
+  /** Días hábiles hacia adelante si entra hasta el corte (0 = mismo día hábil). */
+  diasHabiles: number;
+  /** Días hábiles si entra DESPUÉS del corte (por defecto diasHabiles + 1). */
+  diasHabilesDespues?: number | null;
+  /** Hora local "HH:MM" del deadline. Si el courier tiene hora prefijada, manda la del courier. */
+  horaDeadline?: string | null;
+  activa?: boolean;
+}
+
+/** Reglas de deadline de un cliente. */
+export interface ClientDeadlineRules {
+  activo: boolean;
+  reglas: DeadlineRule[];
+  /** Hora de deadline prefijada por courier ("Blue Express" → "16:00"). */
+  horasCourier?: Array<{ courier: string; hora: string }>;
+}
+
+const HHMM = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+export function horaValida(h: unknown): boolean { return HHMM.test(String(h || '').trim()); }
+function minutosDe(h: string): number { const m = HHMM.exec(h.trim())!; return Number(m[1]) * 60 + Number(m[2]); }
+
+/** Normaliza y valida las reglas de un cliente (lanza Error con mensaje claro). */
+export function normalizarReglasCliente(raw: any, idGen: () => string): ClientDeadlineRules {
+  const reglas: DeadlineRule[] = [];
+  for (const [i, r] of (Array.isArray(raw?.reglas) ? raw.reglas : []).entries()) {
+    const n = i + 1;
+    if (!horaValida(r?.corteIngreso)) throw new Error(`Regla ${n}: la hora de corte de ingreso debe ser HH:MM (ej. 14:00).`);
+    const dias = Number(r?.diasHabiles);
+    if (!Number.isInteger(dias) || dias < 0 || dias > 30) throw new Error(`Regla ${n}: los días hábiles deben ser un entero entre 0 y 30.`);
+    let despues: number | null = r?.diasHabilesDespues == null || r?.diasHabilesDespues === '' ? null : Number(r.diasHabilesDespues);
+    if (despues != null && (!Number.isInteger(despues) || despues < 0 || despues > 30)) throw new Error(`Regla ${n}: los días hábiles después del corte deben ser un entero entre 0 y 30.`);
+    const hora = r?.horaDeadline ? String(r.horaDeadline).trim() : null;
+    if (hora && !horaValida(hora)) throw new Error(`Regla ${n}: la hora del deadline debe ser HH:MM (ej. 18:00).`);
+    reglas.push({
+      id: String(r?.id || '').slice(0, 40) || idGen(),
+      nombre: r?.nombre ? String(r.nombre).trim().slice(0, 80) : null,
+      courier: r?.courier ? String(r.courier).trim().slice(0, 60) : null,
+      corteIngreso: String(r.corteIngreso).trim(), diasHabiles: dias, diasHabilesDespues: despues, horaDeadline: hora,
+      activa: r?.activa !== false,
+    });
+  }
+  const horasCourier: Array<{ courier: string; hora: string }> = [];
+  for (const h of Array.isArray(raw?.horasCourier) ? raw.horasCourier : []) {
+    const c = String(h?.courier || '').trim();
+    if (!c) continue;
+    if (!horaValida(h?.hora)) throw new Error(`La hora del courier ${c} debe ser HH:MM.`);
+    horasCourier.push({ courier: c.slice(0, 60), hora: String(h.hora).trim() });
+  }
+  return { activo: raw?.activo !== false, reglas, horasCourier };
+}
+
+/** ¿Es hábil la fecha local "AAAA-MM-DD"? */
+export function esDiaHabil(ymd: string, cfg?: DeadlineConfig | null): boolean {
+  const dias = cfg?.diasHabiles && cfg.diasHabiles.length ? cfg.diasHabiles : [1, 2, 3, 4, 5];
+  const d = new Date(ymd + 'T12:00:00Z').getUTCDay();
+  return dias.includes(d) && !(cfg?.feriados || []).includes(ymd);
+}
+function sumarDia(ymd: string, n: number): string {
+  const t = new Date(ymd + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10);
+}
+function siguienteHabil(ymd: string, cfg?: DeadlineConfig | null): string {
+  let d = ymd; for (let i = 0; i < 400 && !esDiaHabil(d, cfg); i++) d = sumarDia(d, 1); return d;
+}
+/** Avanza `n` días hábiles desde un día hábil. */
+export function sumarHabiles(ymd: string, n: number, cfg?: DeadlineConfig | null): string {
+  let d = siguienteHabil(ymd, cfg);
+  for (let k = 0; k < n; k++) d = siguienteHabil(sumarDia(d, 1), cfg);
+  return d;
+}
+
+/**
+ * Deadline por las reglas del cliente. Devuelve null si el cliente no tiene reglas
+ * activas o ninguna aplica al courier de la orden. Una regla de ese courier gana
+ * sobre una regla general.
+ */
+export function deadlinePorReglas(nowIso: string, carrier: string | null | undefined, cliente: ClientDeadlineRules | null | undefined, cfg?: DeadlineConfig | null): { dueAt: string; regla: DeadlineRule; detalle: string } | null {
+  if (!cliente || cliente.activo === false || !cliente.reglas?.length) return null;
+  const c = normCourierName(carrier);
+  const match = (x?: string | null) => { const n = normCourierName(x); return !!n && !!c && (n === c || c.includes(n) || n.includes(c)); };
+  const activas = cliente.reglas.filter((r) => r.activa !== false);
+  const regla = activas.find((r) => r.courier && match(r.courier)) || activas.find((r) => !r.courier);
+  if (!regla) return null;
+  const off = (cfg?.offsetHoras ?? DEADLINE_DEFAULTS.offsetHoras) * 3600000;
+  const now = Date.parse(nowIso); if (Number.isNaN(now)) return null;
+  const local = new Date(now + off);
+  const hoy = local.toISOString().slice(0, 10);
+  const minHoy = local.getUTCHours() * 60 + local.getUTCMinutes();
+  const habilHoy = esDiaHabil(hoy, cfg);
+  // Si hoy no es hábil, la orden cuenta como ingresada al inicio del próximo hábil (antes del corte).
+  const aTiempo = habilHoy ? minHoy <= minutosDe(regla.corteIngreso) : true;
+  const n = aTiempo ? regla.diasHabiles : (regla.diasHabilesDespues ?? regla.diasHabiles + 1);
+  const base = habilHoy ? hoy : siguienteHabil(hoy, cfg);
+  let dia = sumarHabiles(base, n, cfg);
+  const hc = (cliente.horasCourier || []).find((h) => match(h.courier));
+  const hora = hc?.hora || regla.horaDeadline || '23:59';
+  const aUtc = (ymd: string) => Date.parse(`${ymd}T${hora.padStart(5, '0')}:00Z`) - off;
+  let due = aUtc(dia);
+  // Un deadline que ya pasó (ej. entra 15:00 con hora 13:00, mismo día) corre al siguiente hábil.
+  if (due <= now) { dia = sumarHabiles(sumarDia(dia, 1), 0, cfg); due = aUtc(dia); }
+  const detalle = `${regla.nombre || 'Regla'}: ingreso ${aTiempo ? 'hasta' : 'después de'} las ${regla.corteIngreso} → ${n === 0 ? 'mismo día hábil' : `${n} día(s) hábil(es)`} a las ${hora}${hc ? ` (hora de ${hc.courier})` : ''}`;
+  return { dueAt: new Date(due).toISOString(), regla, detalle };
 }
 
 export const DEADLINE_DEFAULTS = { offsetHoras: -3, riesgoHoras: 4 };
@@ -83,6 +205,8 @@ export function resolveDueAt(input: {
   slaHoras?: number | null;
   explicito?: string | null;
   fuenteExplicita?: DueSource;
+  /** Id del cliente (seller) para aplicar sus reglas de deadline. */
+  sellerId?: string | null;
 }): { dueAt: string | null; dueSource: DueSource | null } {
   if (input.explicito) {
     const t = Date.parse(input.explicito);
@@ -90,6 +214,11 @@ export function resolveDueAt(input: {
     return { dueAt: new Date(t).toISOString(), dueSource: input.fuenteExplicita || 'manual' };
   }
   const cfg = input.config || {};
+  // Reglas del cliente: ganan sobre el corte general del courier y el SLA.
+  if (input.sellerId && cfg.clientes && cfg.clientes[input.sellerId]) {
+    const r = deadlinePorReglas(input.nowIso, input.carrier, cfg.clientes[input.sellerId], cfg);
+    if (r) return { dueAt: r.dueAt, dueSource: 'regla' };
+  }
   const off = cfg.offsetHoras ?? DEADLINE_DEFAULTS.offsetHoras;
   const carrier = normCourierName(input.carrier);
   if (carrier && cfg.cortes && cfg.cortes.length) {

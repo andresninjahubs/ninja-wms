@@ -511,13 +511,14 @@
   // ===== Centro de aprendizaje ================================================
   var GROUPS=[
     ['Inicio',['dashboard','copilot','aidash','voz','torre','multicliente']],
-    ['Workflows de bodega',['orders','pickqueue','inbound','returns','putaway','assembly','movements','counts']],
-    ['Inventario y ubicaciones',['inventory','products','consignees','packaging','locations']],
+    ['Workflows de bodega',['orders','pickqueue','deadlines','inbound','returns','putaway','assembly','movements','counts']],
+    ['Inventario y ubicaciones',['inventory','products','lotes','consignees','packaging','locations']],
+    ['Equipo',['cargas','activity','asignaciones']],
     ['Finanzas',['billing','costos']],
     ['Ninja IA',['agente','agdiario','agalertas','aiaudit']],
     ['Comercial Ninja',['plan','pkgmatrix','usage']],
     ['Comunicación e integraciones',['chat','voicechannel','webhooks','mcp']],
-    ['Administración',['activity','asignaciones','branding','clients','users']],
+    ['Administración',['branding','clients','users']],
     ['Plataforma',['operations','announcements']]
   ];
   function openCenter(){

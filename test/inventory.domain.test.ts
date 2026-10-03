@@ -6907,6 +6907,54 @@ async function run() {
     assert.ok(revisar(conBloque).length > 0, 'la revisión debe rechazar un comentario de bloque');
   });
 
+  await test('habilidades de operarios: normalizar y respetar al asignar', async () => {
+    const { normalizarHabilidades, puedeHacer } = require('../src/domain/user.service');
+    assert.equal(normalizarHabilidades(null), null, 'null = todas');
+    assert.deepEqual(normalizarHabilidades(['pick', 'PACK', 'pick']), ['PICK', 'PACK'], 'mayúsculas y sin repetir');
+    assert.equal(normalizarHabilidades(['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'COUNT', 'RESLOT']), null, 'las 8 = sin restricción');
+    assert.deepEqual(normalizarHabilidades([]), [], 'lista vacía = ninguna');
+    assert.throws(() => normalizarHabilidades(['VOLAR']), /desconocido/);
+    assert.ok(puedeHacer({ allowedTasks: null }, 'PICK'));
+    assert.ok(puedeHacer({ allowedTasks: ['PACK'] }, 'pack'));
+    assert.ok(!puedeHacer({ allowedTasks: ['PACK'] }, 'PICK'));
+    assert.ok(!puedeHacer({ allowedTasks: [] }, 'COUNT'));
+  });
+
+  await test('deadlines por cliente: corte de ingreso, días hábiles y hora por courier', () => {
+    const { deadlinePorReglas, resolveDueAt } = require('../src/domain/deadline');
+    const cfg: any = { offsetHoras: -3, feriados: ['2026-10-13'] };
+    const cli: any = { activo: true, reglas: [{ id: 'r1', corteIngreso: '14:00', diasHabiles: 0, horaDeadline: '18:00' }], horasCourier: [{ courier: 'Blue Express', hora: '16:00' }] };
+    const L = (iso: string) => new Date(Date.parse(iso) - 3 * 3600000).toISOString().slice(0, 16); // a hora local
+    // Lunes 10:00 local → mismo día 18:00
+    assert.equal(L(deadlinePorReglas('2026-10-05T13:00:00Z', 'Starken', cli, cfg).dueAt), '2026-10-05T18:00');
+    // Lunes 15:00 local (después del corte) → martes 18:00
+    assert.equal(L(deadlinePorReglas('2026-10-05T18:00:00Z', 'Starken', cli, cfg).dueAt), '2026-10-06T18:00');
+    // Viernes 15:00 → lunes
+    assert.equal(L(deadlinePorReglas('2026-10-09T18:00:00Z', null, cli, cfg).dueAt), '2026-10-12T18:00');
+    // Sábado → cuenta como ingreso del lunes antes del corte
+    assert.equal(L(deadlinePorReglas('2026-10-10T13:00:00Z', null, cli, cfg).dueAt), '2026-10-12T18:00');
+    // Courier con hora prefijada
+    assert.equal(L(deadlinePorReglas('2026-10-05T13:00:00Z', 'blue express', cli, cfg).dueAt), '2026-10-05T16:00');
+    // Lunes después del corte con feriado el martes 13 → miércoles... (12 es lunes; 13 feriado)
+    assert.equal(L(deadlinePorReglas('2026-10-12T18:00:00Z', null, cli, cfg).dueAt), '2026-10-14T18:00');
+    // Hora del deadline ya pasada el mismo día → siguiente hábil
+    const cli2: any = { activo: true, reglas: [{ id: 'r', corteIngreso: '14:00', diasHabiles: 0, horaDeadline: '13:00' }] };
+    assert.equal(L(deadlinePorReglas('2026-10-05T16:30:00Z', null, cli2, cfg).dueAt), '2026-10-06T13:00');
+    // X días hábiles hacia adelante
+    const cli3: any = { activo: true, reglas: [{ id: 'r', corteIngreso: '12:00', diasHabiles: 2, diasHabilesDespues: 3, horaDeadline: '17:00' }] };
+    assert.equal(L(deadlinePorReglas('2026-10-08T13:00:00Z', null, cli3, cfg).dueAt), '2026-10-12T17:00', 'jueves antes del corte + 2 hábiles = lunes');
+    // Regla por courier gana sobre la general; inactiva no aplica
+    const cli4: any = { activo: true, reglas: [{ id: 'g', corteIngreso: '14:00', diasHabiles: 1 }, { id: 'c', courier: 'Chilexpress', corteIngreso: '14:00', diasHabiles: 0, horaDeadline: '19:00' }] };
+    assert.equal(deadlinePorReglas('2026-10-05T13:00:00Z', 'Chilexpress', cli4, cfg).regla.id, 'c');
+    assert.equal(deadlinePorReglas('2026-10-05T13:00:00Z', 'Starken', cli4, cfg).regla.id, 'g');
+    assert.equal(deadlinePorReglas('2026-10-05T13:00:00Z', null, { ...cli, activo: false }, cfg), null);
+    // resolveDueAt: regla del cliente gana al corte del courier; lo explícito gana a todo
+    const full = { ...cfg, cortes: [{ courier: 'Starken', hora: '20:00' }], clientes: { acme: cli } };
+    assert.equal(resolveDueAt({ nowIso: '2026-10-05T13:00:00Z', carrier: 'Starken', config: full, sellerId: 'acme' }).dueSource, 'regla');
+    assert.equal(resolveDueAt({ nowIso: '2026-10-05T13:00:00Z', carrier: 'Starken', config: full, sellerId: 'otro' }).dueSource, 'corte');
+    assert.equal(resolveDueAt({ nowIso: '2026-10-05T13:00:00Z', carrier: 'Starken', config: full, sellerId: 'acme', explicito: '2026-10-09T12:00:00Z' }).dueSource, 'manual');
+  });
+
   // ---- Resumen --------------------------------------------------------------
   console.log(`\n${passed} pasaron, ${failures.length} fallaron\n`);
   if (failures.length > 0) process.exit(1);
