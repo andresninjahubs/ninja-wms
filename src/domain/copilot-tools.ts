@@ -380,7 +380,7 @@ export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
         lineas: {
           type: 'array',
           description: 'líneas esperadas de la recepción',
-          items: { type: 'object', properties: { sku: str('código del SKU'), qty: int('cantidad esperada'), lot: str('lote (opcional)'), expiry: str('vencimiento ISO YYYY-MM-DD (opcional)') }, required: ['sku', 'qty'] },
+          items: { type: 'object', properties: { sku: str('código del SKU'), qty: int('cantidad esperada'), lot: str('lote: SOLO si el SKU tiene control de lote (si no, se rechaza)'), expiry: str('vencimiento ISO YYYY-MM-DD: SOLO si el SKU tiene control de vencimiento (si no, se rechaza)') }, required: ['sku', 'qty'] },
         },
         proveedor: str('nombre del proveedor (opcional)'),
         referencia: str('referencia / n° de documento del proveedor (opcional)'),
@@ -455,7 +455,7 @@ export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
         conteos: {
           type: 'array',
           description: 'lo recibido por línea',
-          items: { type: 'object', properties: { linea: { type: 'number', description: 'n° de línea' }, cantidad: { type: 'number', description: 'unidades recibidas ahora' }, lote: str('lote (opcional)'), vencimiento: str('vencimiento ISO (opcional)') }, required: ['linea', 'cantidad'] },
+          items: { type: 'object', properties: { linea: { type: 'number', description: 'n° de línea' }, cantidad: { type: 'number', description: 'unidades recibidas ahora' }, lote: str('lote: obligatorio si el SKU tiene control de lote; prohibido si no'), vencimiento: str('vencimiento ISO: obligatorio si el SKU tiene control de vencimiento; prohibido si no') }, required: ['linea', 'cantidad'] },
         },
       },
       required: ['recepcion', 'conteos'],

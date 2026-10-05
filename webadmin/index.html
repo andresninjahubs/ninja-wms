@@ -1295,6 +1295,33 @@
 #loc-body input[type=checkbox],#loc-selall,.locc input[data-lsel]{width:17px;height:17px;accent-color:var(--primary);cursor:pointer;margin:0}
 #loc-body input[disabled],.locc input[disabled]{cursor:not-allowed;opacity:.35}
 .locc{position:relative}.locc .lsel{position:absolute;top:10px;right:10px}
+/* Órdenes: barra de filtros y acciones ordenada en dos filas.
+   Fila 1: estados (izquierda) y bandejas de deadline (derecha).
+   Fila 2: filtro de cliente (izquierda) y acciones (derecha), todo a la misma altura. */
+.ord-tb{display:flex;flex-direction:column;gap:12px;margin:0 0 14px}
+.ord-tb-chips{display:flex;align-items:center;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;width:100%}
+.ord-tb-chips .fgroup{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ord-tb-chips .fgroup.fdl{padding-left:14px;border-left:1px solid var(--line-2)}
+.ord-tb-chips .fglabel{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-right:2px}
+.ord-tb-chips .fchip.dlsep{margin-left:0;padding-left:14px;border-left:1px solid var(--line-2);border-radius:var(--r-pill,999px)}
+.ord-tb-acts{display:flex;align-items:center;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--line)}
+.ord-tb-fl,.ord-tb-btns{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ord-tb-btns{margin-left:auto;justify-content:flex-end}
+.ord-tb-fl .ordcli-f select{min-width:0;width:auto;max-width:230px;text-overflow:ellipsis}
+.ord-tb-acts .btn{height:40px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.ord-tb-acts .ordcli-f select{height:40px;margin:0}
+.ordday-f.on select{border-color:var(--accent,#12F093);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent,#12F093) 25%,transparent);font-weight:600}
+@media(max-width:860px){
+  .ord-tb-chips .fgroup.fdl{padding-left:0;border-left:0}
+  .ord-tb-acts .btn{flex:1 1 auto;justify-content:center}
+  .ord-tb-chips .fglabel{flex-basis:100%}
+  .ord-tb-fl,.ord-tb-btns{width:100%;margin-left:0}
+  .ord-tb-acts .ordcli-f{width:100%;display:grid;grid-template-columns:78px 1fr}.ord-tb-acts .ordcli-f select{max-width:none;width:100%}
+}
+.rimp-ctl{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:10px 12px;font-size:13px;color:var(--ink-2)}
+.rimp-skus{display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow:auto}
+.rimp-sku{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2);white-space:nowrap}
+.rimp-sku b{color:var(--ink);font-weight:700}
 /* Deadlines automáticos */
 .dlp-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
 @media(max-width:1000px){.dlp-grid{grid-template-columns:1fr}}
@@ -1781,15 +1808,21 @@
           <button class="btn" id="bulk-all">Todas las visibles</button>
           <button class="btn" id="bulk-clear">Limpiar selección</button>
         </div>
-        <div class="toolbar">
-          <div class="filters" id="ord-filters"></div>
-          <div class="sp" style="flex:1"></div>
-          <label class="ordcli-f hidden" id="ord-seller-wrap">Cliente <select id="ord-seller"></select></label>
-          <button class="btn hidden m-only" id="ord-selall-m">☑ Seleccionar todas</button>
-          <button class="btn hidden" id="ord-reserve-all">⚡ Reserva masiva</button>
-          <button class="btn hidden" id="ord-import">⇪ Carga masiva</button>
-          <button class="btn pri hidden" id="ord-new">＋ Nueva orden</button>
-          <button class="btn" id="ord-export">Exportar</button>
+        <div class="ord-tb">
+          <div class="filters ord-tb-chips" id="ord-filters"></div>
+          <div class="ord-tb-acts">
+            <div class="ord-tb-fl">
+              <label class="ordcli-f hidden" id="ord-seller-wrap">Cliente <select id="ord-seller"></select></label>
+              <label class="ordcli-f ordday-f" id="ord-day-wrap" title="Filtra por el día en que vence el deadline (hora de la bodega)">📅 Vence <select id="ord-day" aria-label="Filtrar por día de deadline"><option value="">Todos los días</option></select></label>
+            </div>
+            <div class="ord-tb-btns">
+              <button class="btn hidden m-only" id="ord-selall-m">☑ Seleccionar todas</button>
+              <button class="btn hidden" id="ord-reserve-all">⚡ Reserva masiva</button>
+              <button class="btn hidden" id="ord-import">⇪ Carga masiva</button>
+              <button class="btn" id="ord-export">Exportar</button>
+              <button class="btn pri hidden" id="ord-new">＋ Nueva orden</button>
+            </div>
+          </div>
         </div>
         <div class="card"><div class="tablewrap"><table>
           <thead><tr><th class="selcol" data-action><input type="checkbox" id="ord-selall" aria-label="Seleccionar todas las órdenes visibles" title="Seleccionar todas"></th><th data-tk="orders" data-sk="orden">Orden</th><th class="ordcli hidden" data-tk="orders" data-sk="cliente">Cliente</th><th data-tk="orders" data-sk="fecha">Fecha</th><th data-tk="orders" data-sk="deadline">Deadline</th><th data-tk="orders" data-sk="canal">Canal</th><th data-tk="orders" data-sk="tipo">Tipo</th><th data-tk="orders" data-sk="lineas">Líneas</th><th data-tk="orders" data-sk="estado">Estado</th><th data-action></th></tr></thead>

@@ -1859,15 +1859,17 @@ async function run() {
   await test('recepción: SKU serializado registra las series con su lote y vencimiento', async () => {
     const { facade, serials } = buildFacade();
     await seedSerialSeller(facade);
-    const rec = await facade.createReceipt('acme', { supplier: 'Prov', lines: [{ sku: 'SER-1', qty: 3 }] });
+    // Lote y vencimiento solo se aceptan si el producto los controla.
+    await facade.createSku('acme', { sku: 'SER-LE', description: 'Serie + lote + venc.', serialControlled: true, lotControlled: true, expiryControlled: true });
+    const rec = await facade.createReceipt('acme', { supplier: 'Prov', lines: [{ sku: 'SER-LE', qty: 3 }] });
     await facade.receiveReceipt('acme', rec.id, [
       { lineNo: 1, qty: 3, lot: 'L-2026', expiry: '2027-01-31', serials: ['SN-A', 'SN-B', 'SN-C'] },
     ]);
-    const all = await serials.list('acme', 'SER-1');
+    const all = await serials.list('acme', 'SER-LE');
     assert.equal(all.length, 3);
     assert.ok(all.every((s) => s.lot === 'L-2026'), 'todas con el lote');
     assert.ok(all.every((s) => s.status === 'IN_STOCK'), 'todas en stock');
-    const one = await facade.getSerial('acme', 'SER-1', 'SN-B');
+    const one = await facade.getSerial('acme', 'SER-LE', 'SN-B');
     assert.ok(one && one.expiry && one.expiry.slice(0, 10) === '2027-01-31', 'serie trae su vencimiento');
   });
 
@@ -1895,6 +1897,53 @@ async function run() {
     await expectThrows(() => facade.receiveReceipt('acme', rec.id, [{ lineNo: 1, qty: 3 }]), ValidationError);
     const done = await facade.receiveReceipt('acme', rec.id, [{ lineNo: 1, qty: 3, expiry: '2027-12-31' }]);
     assert.equal(done.status, 'RECEIVED');
+  });
+
+  await test('recepción: lote y vencimiento se admiten si y solo si el producto los controla', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    await facade.createSku('acme', { sku: 'PLANO', description: 'Sin controles' });
+    await facade.createSku('acme', { sku: 'SOLO-LOTE', description: 'Solo lote', lotControlled: true });
+    await facade.createSku('acme', { sku: 'SOLO-VENC', description: 'Solo vencimiento', expiryControlled: true });
+    // Al crear: lote en un producto sin control de lote -> rechazado; ídem vencimiento.
+    await expectThrows(() => facade.createReceipt('acme', { lines: [{ sku: 'PLANO', qty: 2, lot: 'L1' }] }), ValidationError);
+    await expectThrows(() => facade.createReceipt('acme', { lines: [{ sku: 'PLANO', qty: 2, expiry: '2027-01-01' }] }), ValidationError);
+    await expectThrows(() => facade.createReceipt('acme', { lines: [{ sku: 'SOLO-LOTE', qty: 2, expiry: '2027-01-01' }] }), ValidationError);
+    await expectThrows(() => facade.createReceipt('acme', { lines: [{ sku: 'SOLO-VENC', qty: 2, lot: 'L1' }] }), ValidationError);
+    // Fecha inválida en un producto que sí controla vencimiento.
+    await expectThrows(() => facade.createReceipt('acme', { lines: [{ sku: 'SOLO-VENC', qty: 2, expiry: 'mañana' }] }), ValidationError);
+    // Vacíos no cuentan como dato.
+    const rec = await facade.createReceipt('acme', { lines: [
+      { sku: 'PLANO', qty: 2, lot: '  ', expiry: '' },
+      { sku: 'SOLO-LOTE', qty: 2, lot: 'L-7' },
+      { sku: 'SOLO-VENC', qty: 2, expiry: '2027-03-31' },
+    ] });
+    assert.equal(rec.lines[0].lot, null);
+    // Al recepcionar: mismo criterio.
+    await expectThrows(() => facade.receiveReceipt('acme', rec.id, [{ lineNo: 1, qty: 2, lot: 'X' }]), ValidationError);
+    await expectThrows(() => facade.receiveReceipt('acme', rec.id, [{ lineNo: 2, qty: 2, expiry: '2027-01-01' }]), ValidationError);
+    await expectThrows(() => facade.receiveReceipt('acme', rec.id, [{ lineNo: 3, qty: 2, lot: 'X' }]), ValidationError);
+    // Lo declarado al crear sirve como dato de recepción para el producto que lo controla.
+    const done = await facade.receiveReceipt('acme', rec.id, [{ lineNo: 1, qty: 2 }, { lineNo: 2, qty: 2 }, { lineNo: 3, qty: 2 }]);
+    assert.equal(done.status, 'RECEIVED');
+    assert.equal(done.lines[1].lot, 'L-7');
+    assert.equal(String(done.lines[2].expiry).slice(0, 10), '2027-03-31');
+  });
+
+  await test('carga masiva de recepciones: reporta lote/vencimiento donde el SKU no los controla', async () => {
+    const { problemasLoteVencimiento, fechaValida } = await import('../src/domain/lot-control');
+    const plano = { sku: 'P', lotControlled: false, expiryControlled: false };
+    const lote = { sku: 'L', lotControlled: true, expiryControlled: false };
+    const ambos = { sku: 'A', lotControlled: true, expiryControlled: true };
+    assert.equal(problemasLoteVencimiento(plano, 'L1', '2027-01-01', 'Fila 2').length, 2, 'ambos problemas, no solo el primero');
+    assert.equal(problemasLoteVencimiento(plano, '', '', 'Fila 2').length, 0);
+    assert.equal(problemasLoteVencimiento(lote, 'L1', '', 'Fila 3').length, 0);
+    assert.equal(problemasLoteVencimiento(lote, 'L1', '2027-01-01', 'Fila 3').length, 1);
+    assert.equal(problemasLoteVencimiento(ambos, '', '', 'Fila 4').length, 0, 'vacío se completa en el cotejo');
+    assert.equal(problemasLoteVencimiento(ambos, 'L', '2027-02-31', 'Fila 4').length, 1, 'fecha inexistente');
+    assert.ok(fechaValida('2028-02-29') && !fechaValida('2027-02-29') && !fechaValida('mañana'));
   });
 
   await test('recepción: series distintas a la cantidad recibida es rechazada', async () => {

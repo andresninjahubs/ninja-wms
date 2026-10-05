@@ -151,8 +151,9 @@
 
   // ---- Navegación -----------------------------------------------------------
   function show(id) {
-    ['login', 'home', 'scan', 'quick', 'msgs'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
+    ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
     if (id !== 'scan') stopCamera();
+    if (typeof camClose === 'function' && $('camsheet') && $('camsheet').style.display !== 'none') camClose();
     if (id === 'home') { loadBoard(); if (!boardTimer) boardTimer = setInterval(function () { if ($('home').classList.contains('on') && !document.hidden) loadBoard(); }, 30000); }
   }
 
@@ -228,7 +229,15 @@
   };
 
   Array.prototype.forEach.call(document.querySelectorAll('.op'), function (b) {
-    b.addEventListener('click', function () { task = null; if (!cfg.seller) { toast('Para operar libre indica el cliente en la pantalla de ingreso', false); return; } startOp(b.getAttribute('data-op')); });
+    b.addEventListener('click', function () {
+      task = null;
+      var which = b.getAttribute('data-op');
+      // Empaque y despacho trabajan con todas las órdenes de la operación: no piden cliente.
+      if (which === 'packst') { openPackStation(null); return; }
+      if (which === 'shipst') { openShipStation(null); return; }
+      if (!cfg.seller) { toast('Para operar libre indica el cliente en la pantalla de ingreso', false); return; }
+      startOp(which);
+    });
   });
 
   function setLocs(rows) {
@@ -378,7 +387,9 @@
       loadTaskReceipt();
       return;
     }
-    if (t.type === 'PACK' || t.type === 'SHIP') { openQuick(t); return; }
+    // Empaque y despacho de una tarea abren su estación con la orden ya elegida.
+    if (t.type === 'PACK') { openPackStation(t); return; }
+    if (t.type === 'SHIP') { openShipStation(t); return; }
     if (t.type === 'COUNT') { toast('Los conteos se registran desde el panel de conteo cíclico (o pide al supervisor que lo cierre).', false); return; }
     startOp('pick');
   }
@@ -675,9 +686,54 @@
     stopCamera();
     $('picklist').style.display = 'none';
     $('qty-lbl').textContent = 'Cantidad de packs (' + captured.resolved.code + ')';
-    $('q-count').value = 1; updatePreview();
+    $('q-count').value = 1;
+    captured.ctl = { lot: false, exp: false };
+    $('q-lot').value = ''; $('q-exp').value = '';
+    $('lotwrap').style.display = 'none'; $('lot-f').style.display = 'none'; $('exp-f').style.display = 'none';
+    updatePreview();
     $('qtywrap').style.display = ''; $('btn-confirm').style.display = '';
+    if (op === 'receive') setupLotFields();
   }
+
+  // ---- Lote / vencimiento en la recepción -----------------------------------
+  // Se piden SI Y SOLO SI el producto los controla (y entonces son obligatorios): el
+  // maestro de SKUs dice qué controla cada uno. Se trae una vez por cliente.
+  var SKU_CTL = {};
+  function skuCtlMap(sellerId) {
+    if (SKU_CTL[sellerId]) return Promise.resolve(SKU_CTL[sellerId]);
+    return api('/sellers/' + encodeURIComponent(sellerId) + '/skus').then(function (list) {
+      var m = {};
+      (list || []).forEach(function (k) { m[k.sku] = { lot: !!k.lotControlled, exp: !!k.expiryControlled }; });
+      SKU_CTL[sellerId] = m; return m;
+    });
+  }
+  function setupLotFields() {
+    var sku = captured.resolved && captured.resolved.sku;
+    if (!sku) return;
+    $('btn-confirm').disabled = true; // hasta saber qué pide el producto
+    skuCtlMap(cfg.seller).then(function (m) {
+      var c = m[sku] || { lot: false, exp: false };
+      captured.ctl = c;
+      // En una tarea, lo declarado en la orden de recepción viene prellenado.
+      var rc = task && task.receipt, line = rc && (rc.lines || []).filter(function (l) { return l.sku === sku; })[0];
+      if (c.lot && line && line.lot) $('q-lot').value = line.lot;
+      if (c.exp && line && line.expiry) $('q-exp').value = String(line.expiry).slice(0, 10);
+      $('lot-f').style.display = c.lot ? '' : 'none';
+      $('exp-f').style.display = c.exp ? '' : 'none';
+      $('lotwrap').style.display = (c.lot || c.exp) ? '' : 'none';
+      updatePreview();
+    }).catch(function () { captured.ctl = { lot: false, exp: false }; updatePreview(); });
+  }
+  function lotFaltante() {
+    var c = captured.ctl || {};
+    if (op !== 'receive') return '';
+    if (c.lot && !$('q-lot').value.trim()) return 'Ingresa el lote: este producto es controlado por lote.';
+    if (c.exp && !$('q-exp').value) return 'Ingresa el vencimiento: este producto es controlado por vencimiento.';
+    return '';
+  }
+  $('q-lot').addEventListener('input', function () { updatePreview(); });
+  $('q-exp').addEventListener('input', function () { updatePreview(); });
+  $('q-exp').addEventListener('change', function () { updatePreview(); });
 
   function updatePreview() {
     var n = parseInt($('q-count').value, 10) || 0;
@@ -692,7 +748,7 @@
     pv.textContent = txt;
     pv.className = 'muted' + (over ? ' warnrow' : '');
     // No permitir confirmar por encima de lo disponible (guardado/picking).
-    $('btn-confirm').disabled = over || !(n > 0);
+    $('btn-confirm').disabled = over || !(n > 0) || !!lotFaltante();
   }
   $('q-plus').addEventListener('click', function () { $('q-count').value = (parseInt($('q-count').value, 10) || 0) + 1; updatePreview(); });
   $('q-minus').addEventListener('click', function () { $('q-count').value = Math.max(1, (parseInt($('q-count').value, 10) || 1) - 1); updatePreview(); });
@@ -702,18 +758,21 @@
   $('btn-confirm').addEventListener('click', function () {
     var packCount = parseInt($('q-count').value, 10);
     if (!(packCount > 0)) { toast('Cantidad inválida', false); return; }
+    var falta = lotFaltante(); if (falta) { toast(falta, false); return; }
     var seller = encodeURIComponent(cfg.seller), base = '/sellers/' + seller;
     var call;
+    // Lote / vencimiento: solo viajan si el producto los controla.
+    var ctl = captured.ctl || {}, lotV = ctl.lot ? $('q-lot').value.trim() : '', expV = ctl.exp ? $('q-exp').value : '';
     if (task && task.type === 'RECEIVE') {
       // Cotejo de una TAREA de recepción: se registra contra la línea de la orden de recepción.
       var rc = task.receipt, sku = captured.resolved ? captured.resolved.sku : null;
       var line = rc && (rc.lines || []).filter(function (l) { return l.sku === sku; })[0];
       if (!line) { toast('El producto ' + (sku || captured.product) + ' no está en esta recepción', false); return; }
       var rq = packCount * (captured.resolved ? captured.resolved.factor : 1);
-      call = api(base + '/receipts/' + encodeURIComponent(task.entityId) + '/receive', { method: 'POST', body: { counts: [{ lineNo: line.lineNo, qty: rq }] } })
+      call = api(base + '/receipts/' + encodeURIComponent(task.entityId) + '/receive', { method: 'POST', body: { counts: [Object.assign({ lineNo: line.lineNo, qty: rq }, lotV ? { lot: lotV } : {}, expV ? { expiry: expV } : {})] } })
         .then(function (o) { return { scan: { baseQty: rq, code: captured.resolved.code, sku: sku }, receipt: o }; });
     } else if (op === 'receive') {
-      call = api(base + '/scan/inbound', { method: 'POST', body: { barcode: captured.product, packCount: packCount, locationCode: captured.bin } });
+      call = api(base + '/scan/inbound', { method: 'POST', body: Object.assign({ barcode: captured.product, packCount: packCount, locationCode: captured.bin }, lotV ? { lot: lotV } : {}, expV ? { expiry: expV } : {}) });
     } else if (op === 'putaway') {
       call = api(base + '/scan/putaway', { method: 'POST', body: { productBarcode: captured.product, packCount: packCount, fromLocationCode: captured.from, toLocationCode: captured.to } });
     } else if (task && task.type === 'PICK') {
@@ -1088,7 +1147,411 @@
     });
   }
 
-  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+  // =====================================================================
+  // ESTACIONES DE EMPAQUE Y DESPACHO
+  // ---------------------------------------------------------------------
+  // Trabajan con las órdenes de TODA la operación (un empacador no empaca "de un
+  // cliente": empaca lo que salió de picking). Se entra desde "Operar libre" o desde
+  // una tarea PACK / SHIP de la bandeja, que llega con su orden ya elegida.
+  // =====================================================================
+  var ST_LBL = { RECEIVED: 'Ingresada', ALLOCATED: 'Reservada', PICKING: 'En picking', PICKED: 'Pickeada', PACKED: 'Empacada', SHIPPED: 'Despachada', CANCELLED: 'Cancelada' };
+  var PK = { orders: [], order: null, counts: {}, mats: {}, bultos: 1, materials: [], startAt: null, task: null, armado: false, codeCache: {} };
+  var SH = { orders: [], courier: '', sel: {}, task: null, startAt: null, busy: false };
+
+  function oRef(o) { return (o && (o.externalOrderId || String(o.id).slice(0, 8))) || '—'; }
+  function oUnits(o) { return (o.lines || []).reduce(function (a, l) { return a + (l.qty || 0); }, 0); }
+  function oCarrier(o) { return (o.packing && o.packing.carrier) || o.carrier || ''; }
+  function norm(s) { return String(s || '').trim().toLowerCase(); }
+  function dlChipHtml(o) {
+    if (!o || !o.dueAt) return '';
+    var min = Math.round((Date.parse(o.dueAt) - Date.now()) / 60000);
+    if (isNaN(min)) return '';
+    var abs = Math.abs(min), h = Math.floor(abs / 60), m = abs % 60;
+    var dur = h > 0 ? h + ' h' + (m ? ' ' + m + ' min' : '') : m + ' min';
+    var cls = min < 0 ? 'v' : (min <= 240 ? 'r' : '');
+    return '<span class="dlc ' + cls + '">' + (min < 0 ? 'Vencida hace ' : 'Vence en ') + dur + '</span>';
+  }
+  /** Urgencia primero: deadline más cercano, luego las sin deadline por antigüedad. */
+  function porUrgencia(a, b) {
+    var da = a.dueAt ? Date.parse(a.dueAt) : Infinity, db = b.dueAt ? Date.parse(b.dueAt) : Infinity;
+    if (da !== db) return da - db;
+    return Date.parse(a.createdAt) - Date.parse(b.createdAt);
+  }
+  function bip(ok) { if (navigator.vibrate) navigator.vibrate(ok ? 40 : [80, 60, 80]); }
+  function enfoca(id) { var el = $(id); if (!el) return; try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } }
+  function opOrders() {
+    var oid = opIdOrNull(); if (!oid) return Promise.reject(new Error('Sin operación'));
+    return api('/operations/' + encodeURIComponent(oid) + '/orders');
+  }
+  /** Busca una orden por lo que trae su etiqueta: N° externo, id, tracking o tracking de un bulto. */
+  function matchOrder(list, code) {
+    var c = norm(code); if (!c) return null;
+    return list.filter(function (o) {
+      if (norm(o.externalOrderId) === c || norm(o.id) === c || norm(String(o.id).slice(0, 8)) === c) return true;
+      var p = o.packing || {};
+      if (p.trackingNumber && norm(p.trackingNumber) === c) return true;
+      return (p.labels || []).some(function (l) { return l.trackingNumber && norm(l.trackingNumber) === c; });
+    })[0] || null;
+  }
+
+  // ---- Lector con cámara compartido -------------------------------------
+  var CS = { stream: null, on: false, det: null, cb: null, cont: false, last: '', lastAt: 0 };
+  function camOpen(cb, opts) {
+    opts = opts || {};
+    if (!('BarcodeDetector' in window)) { toast('Este equipo no lee con cámara: usa la pistola o escribe el código', false); return; }
+    try { CS.det = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'] }); }
+    catch (e) { toast('Este equipo no lee con cámara', false); return; }
+    CS.cb = cb; CS.cont = !!opts.continuous; $('cs-hint').textContent = opts.hint || 'Apunta al código';
+    $('camsheet').style.display = '';
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(function (s) { CS.stream = s; $('cs-video').srcObject = s; return $('cs-video').play(); })
+      .then(function () { CS.on = true; requestAnimationFrame(camLoop); })
+      .catch(function () { camClose(); toast('Sin acceso a la cámara. Usa la pistola o escribe el código.', false); });
+  }
+  function camLoop() {
+    if (!CS.on) return;
+    CS.det.detect($('cs-video')).then(function (codes) {
+      var raw = codes && codes[0] && codes[0].rawValue;
+      var now = Date.now();
+      if (raw && !(raw === CS.last && now - CS.lastAt < 1500)) {
+        CS.last = raw; CS.lastAt = now;
+        var cb = CS.cb; if (!CS.cont) camClose();
+        if (cb) cb(raw);
+      }
+    }).catch(function () {}).then(function () { if (CS.on) requestAnimationFrame(camLoop); });
+  }
+  function camClose() {
+    CS.on = false;
+    if (CS.stream) { CS.stream.getTracks().forEach(function (t) { t.stop(); }); CS.stream = null; }
+    $('camsheet').style.display = 'none';
+  }
+  $('cs-close').addEventListener('click', camClose);
+
+  // =====================================================================
+  // EMPAQUE
+  // =====================================================================
+  function openPackStation(t) {
+    task = null;
+    PK.task = t || null; PK.order = null;
+    show('pack');
+    $('pk-order').style.display = 'none'; $('pk-list').style.display = '';
+    $('pk-title').textContent = 'Empaque';
+    $('pk-sub').textContent = 'Órdenes pickeadas listas para empacar';
+    $('pk-label').textContent = 'Escanea o escribe el N° de orden';
+    $('pk-code').placeholder = 'N° de orden';
+    $('pk-scan').style.display = '';
+    $('pk-list').innerHTML = '<div class="pk-empty">Cargando órdenes…</div>';
+    // Insumos de embalaje de la bodega (cajas, bolsas…): se cargan una vez por entrada.
+    var oid = opIdOrNull();
+    api('/packaging?operationId=' + encodeURIComponent(oid)).then(function (m) { PK.materials = (m || []).filter(function (x) { return x.active !== false; }); }).catch(function () { PK.materials = []; });
+    opOrders().then(function (list) {
+      PK.orders = (list || []).filter(function (o) { return o.status === 'PICKED'; }).sort(porUrgencia);
+      if (PK.task) {
+        var o = PK.orders.filter(function (x) { return x.id === PK.task.entityId; })[0];
+        if (o) { selectPack(o); return; }
+        toast('La orden de la tarea ya no está pickeada', false);
+      }
+      renderPackList();
+    }).catch(function (e) { $('pk-list').innerHTML = '<div class="pk-empty">No pude cargar las órdenes: ' + esc(e.message) + '</div>'; });
+    enfoca('pk-code');
+  }
+  function renderPackList() {
+    $('pk-sub').textContent = PK.orders.length + ' orden(es) pickeada(s) para empacar';
+    if (!PK.orders.length) { $('pk-list').innerHTML = '<div class="pk-empty">No hay órdenes pickeadas esperando empaque. 🎉</div>'; return; }
+    $('pk-list').innerHTML = '<div class="sec" style="margin-bottom:8px">Más urgentes primero</div>' + PK.orders.map(function (o) {
+      return '<button class="ordc" data-pko="' + esc(o.id) + '"><div class="oc-main"><div class="oc-ref">' + esc(oRef(o)) + ' ' + dlChipHtml(o) + '</div>'
+        + '<div class="oc-meta">' + esc(o.sellerName || o.sellerId) + ' · ' + (o.lines || []).length + ' línea(s) · ' + oUnits(o) + ' un' + (oCarrier(o) ? ' · ' + esc(oCarrier(o)) : '') + '</div></div>'
+        + '<span class="oc-go">Empacar ›</span></button>';
+    }).join('');
+  }
+  $('pk-list').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-pko]'); if (!b) return;
+    var o = PK.orders.filter(function (x) { return x.id === b.getAttribute('data-pko'); })[0];
+    if (o) selectPack(o);
+  });
+  function selectPack(o) {
+    PK.order = o; PK.counts = {}; PK.mats = {}; PK.bultos = 1; PK.armado = false; PK.startAt = new Date().toISOString();
+    $('pk-list').style.display = 'none'; $('pk-order').style.display = '';
+    $('pk-title').textContent = 'Empacar ' + oRef(o);
+    $('pk-sub').textContent = (o.sellerName || o.sellerId) + ' · ' + oUnits(o) + ' un';
+    $('pk-label').textContent = 'Escanea cada PRODUCTO para verificarlo (o el embalaje)';
+    $('pk-code').placeholder = 'EAN del producto o del embalaje';
+    renderPackOrder();
+    enfoca('pk-code');
+  }
+  function pkContado() { return (PK.order.lines || []).reduce(function (a, l) { return a + (PK.counts[l.lineNo] || 0); }, 0); }
+  function renderPackOrder() {
+    var o = PK.order; if (!o) return;
+    var total = oUnits(o), cont = pkContado(), pct = total ? Math.min(100, Math.round(cont * 100 / total)) : 0;
+    var lines = (o.lines || []).map(function (l) {
+      var c = PK.counts[l.lineNo] || 0;
+      var cls = c === l.qty ? ' done' : (c > l.qty ? ' over' : '');
+      return '<div class="pkl' + cls + '"><div><div class="pl-sku">' + esc(l.sku) + (c === l.qty ? ' ✓' : '') + '</div>'
+        + '<div class="pl-sub">' + (l.lot ? 'Lote ' + esc(l.lot) + ' · ' : '') + 'pide ' + l.qty + '</div></div>'
+        + '<div class="pl-q"><button class="mini" data-pkm="' + l.lineNo + '">−</button><b>' + c + '/' + l.qty + '</b><button class="mini" data-pkp="' + l.lineNo + '">+</button></div></div>';
+    }).join('');
+    var mats = PK.materials.length
+      ? PK.materials.map(function (m) {
+          var q = PK.mats[m.sku] || 0;
+          return '<div class="matrow"><div class="mn">' + esc(m.name) + '<small>Saldo ' + (m.onHand || 0) + (m.barcode ? ' · EAN ' + esc(m.barcode) : '') + '</small></div>'
+            + '<div class="pl-q"><button class="mini" data-mtm="' + esc(m.sku) + '">−</button><b style="min-width:28px;text-align:center">' + q + '</b><button class="mini" data-mtp="' + esc(m.sku) + '">+</button></div></div>';
+        }).join('')
+      : '<div class="muted" style="font-size:13px">Esta bodega no tiene insumos de embalaje cargados.</div>';
+    var faltan = total - cont;
+    var btnTxt = cont === 0 ? 'Empacar sin verificar' : (faltan !== 0 || (o.lines || []).some(function (l) { return (PK.counts[l.lineNo] || 0) !== l.qty; }) ? 'Empacar con diferencias' : 'Empacar y traer etiquetas');
+    var ok = cont > 0 && (o.lines || []).every(function (l) { return (PK.counts[l.lineNo] || 0) === l.qty; });
+    $('pk-order').innerHTML =
+      '<div class="card"><div class="kv"><span>Orden</span><b class="code">' + esc(oRef(o)) + '</b></div>'
+      + '<div class="kv"><span>Cliente</span><b>' + esc(o.sellerName || o.sellerId) + '</b></div>'
+      + (oCarrier(o) ? '<div class="kv"><span>Courier</span><b>' + esc(oCarrier(o)) + '</b></div>' : '')
+      + (o.dueAt ? '<div class="kv"><span>Deadline</span><b>' + dlChipHtml(o) + '</b></div>' : '') + '</div>'
+      + '<div class="sec">Verificación · ' + cont + ' de ' + total + ' un</div><div class="bar"><i style="width:' + pct + '%"></i></div>'
+      + lines
+      + '<div class="sec" style="margin-top:6px">Bultos</div>'
+      + '<div class="qtybar"><button id="pk-bm">−</button><input id="pk-bultos" type="number" inputmode="numeric" min="1" value="' + PK.bultos + '"><button id="pk-bp">+</button></div>'
+      + '<div class="sec" style="margin-top:6px">Embalaje usado (opcional)</div><div class="card" style="padding:4px 14px">' + mats + '</div>'
+      + '<button class="btn ' + (ok ? 'good' : (PK.armado ? 'warn' : 'good')) + '" id="pk-go">' + (PK.armado && !ok ? 'Confirmar: ' + btnTxt.toLowerCase() : btnTxt) + '</button>'
+      + (PK.armado && !ok ? '<div class="banner" style="margin:0">' + (cont === 0 ? 'No escaneaste ningún producto: la orden se empaca sin verificación.' : 'Lo contado no calza con lo pedido. Se empaca igual y la diferencia queda registrada en la orden (cuenta en la precisión de preparación).') + '</div>' : '')
+      + '<button class="btn alt" id="pk-other">Elegir otra orden</button>';
+    $('pk-bultos').addEventListener('input', function () { PK.bultos = Math.max(1, parseInt(this.value, 10) || 1); });
+    $('pk-bm').addEventListener('click', function () { PK.bultos = Math.max(1, PK.bultos - 1); $('pk-bultos').value = PK.bultos; });
+    $('pk-bp').addEventListener('click', function () { PK.bultos += 1; $('pk-bultos').value = PK.bultos; });
+    $('pk-go').addEventListener('click', confirmPack);
+    $('pk-other').addEventListener('click', function () { if (PK.task) { PK.task = null; } openPackStation(null); });
+  }
+  $('pk-order').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-pkp],[data-pkm],[data-mtp],[data-mtm]'); if (!b) return;
+    if (b.hasAttribute('data-pkp')) { var n = +b.getAttribute('data-pkp'); PK.counts[n] = (PK.counts[n] || 0) + 1; }
+    else if (b.hasAttribute('data-pkm')) { var m = +b.getAttribute('data-pkm'); PK.counts[m] = Math.max(0, (PK.counts[m] || 0) - 1); }
+    else if (b.hasAttribute('data-mtp')) { var s = b.getAttribute('data-mtp'); PK.mats[s] = (PK.mats[s] || 0) + 1; }
+    else { var s2 = b.getAttribute('data-mtm'); PK.mats[s2] = Math.max(0, (PK.mats[s2] || 0) - 1); }
+    PK.armado = false; renderPackOrder();
+  });
+  /** Un código en el paso de verificación: embalaje (local) o producto (vía API del cliente). */
+  function packScan(code) {
+    var o = PK.order; if (!o) return;
+    var mat = PK.materials.filter(function (m) { return m.barcode && String(m.barcode) === code; })[0];
+    if (mat) { PK.mats[mat.sku] = (PK.mats[mat.sku] || 0) + 1; bip(true); toast(mat.name + ' +1', true); PK.armado = false; renderPackOrder(); return; }
+    var key = o.sellerId + '|' + code;
+    var p = PK.codeCache[key] ? Promise.resolve(PK.codeCache[key])
+      : api('/sellers/' + encodeURIComponent(o.sellerId) + '/barcodes/' + encodeURIComponent(code)).then(function (r) { PK.codeCache[key] = r; return r; });
+    p.then(function (r) {
+      var sku = r && r.sku, f = (r && r.factor) || 1;
+      var ls = (o.lines || []).filter(function (l) { return l.sku === sku; });
+      if (!ls.length) { bip(false); toast('El producto ' + (sku || code) + ' NO es de esta orden', false); return; }
+      var l = ls.filter(function (x) { return (PK.counts[x.lineNo] || 0) < x.qty; })[0];
+      if (!l) { bip(false); toast('Ya están todas las unidades de ' + sku + '. Revisa si sobra una.', false); return; }
+      PK.counts[l.lineNo] = (PK.counts[l.lineNo] || 0) + f;
+      bip(true);
+      toast(sku + ' +' + f + (f > 1 ? ' (' + (r.label || 'pack') + ')' : ''), true);
+      PK.armado = false; renderPackOrder();
+    }).catch(function () { bip(false); toast('Código no reconocido: ' + code, false); });
+  }
+  function confirmPack() {
+    var o = PK.order; if (!o) return;
+    var cont = pkContado();
+    var ok = cont > 0 && (o.lines || []).every(function (l) { return (PK.counts[l.lineNo] || 0) === l.qty; });
+    if (!ok && !PK.armado) { PK.armado = true; renderPackOrder(); return; }   // segundo toque confirma
+    var materials = Object.keys(PK.mats).filter(function (k) { return PK.mats[k] > 0; }).map(function (k) { return { sku: k, qty: PK.mats[k] }; });
+    var body = { bultos: PK.bultos, materials: materials };
+    if (cont > 0) body.verify = (o.lines || []).map(function (l) { return { sku: l.sku, lot: l.lot || null, qty: PK.counts[l.lineNo] || 0 }; });
+    var btn = $('pk-go'); btn.disabled = true; btn.textContent = 'Empacando…';
+    api('/sellers/' + encodeURIComponent(o.sellerId) + '/orders/' + encodeURIComponent(o.id) + '/pack', { method: 'POST', body: body })
+      .then(function (r) {
+        if (opIdOrNull() && PK.startAt) laborCapture({ operationId: opIdOrNull(), sellerId: o.sellerId, operator: (user && user.id) || cfg.email, type: 'PACK', startAt: PK.startAt, endAt: new Date().toISOString(), units: oUnits(o), orderRef: oRef(o), locationId: null });
+        PK.orders = PK.orders.filter(function (x) { return x.id !== o.id; });
+        renderPackDone(r || o, ok);
+      })
+      .catch(function (e) { toast(e.message, false); btn.disabled = false; PK.armado = false; renderPackOrder(); });
+  }
+  function renderPackDone(r, verificada) {
+    var p = r.packing || {};
+    var labels = p.labels || [];
+    var deTarea = !!PK.task; PK.task = null; PK.order = null;
+    $('pk-scan').style.display = 'none';
+    $('pk-title').textContent = 'Empacada ✓';
+    $('pk-order').innerHTML = '<div class="resbox"><div class="rb-t">✓ ' + esc(oRef(r)) + ' empacada</div>'
+      + '<div class="muted">' + (p.bultos || PK.bultos) + ' bulto(s)' + (verificada ? ' · verificada sin diferencias' : '') + '</div>'
+      + (p.trackingNumber ? '<div class="kv"><span>Tracking</span><b class="code">' + esc(p.trackingNumber) + '</b></div>' : '')
+      + (p.carrier ? '<div class="kv"><span>Courier</span><b>' + esc(p.carrier) + '</b></div>' : '')
+      + (labels.length ? '<div class="lbls">' + labels.map(function (l) { return '<img alt="Etiqueta bulto ' + l.bultoNo + '" src="' + esc(l.dataUri) + '">'; }).join('') + '</div>'
+        : '<div class="banner" style="margin:0">' + (p.labelStatus === 'ERROR' ? 'El OMS no entregó etiquetas: ' + esc(p.labelError || '') + '. Se pueden reintentar desde el panel.' : 'Las etiquetas llegarán desde el OMS.') + '</div>')
+      + '</div>'
+      + (labels.length ? '<button class="btn alt" id="pk-print">🖨 Imprimir etiquetas</button>' : '')
+      + (deTarea ? '<button class="btn" id="pk-home">Volver a mis tareas</button>' : '<button class="btn" id="pk-next">Siguiente orden (' + PK.orders.length + ')</button><button class="btn alt" id="pk-home">Volver al inicio</button>');
+    if ($('pk-print')) $('pk-print').addEventListener('click', function () { printLbls(labels, p.trackingNumber); });
+    if ($('pk-next')) $('pk-next').addEventListener('click', function () { openPackStation(null); });
+    $('pk-home').addEventListener('click', function () { show('home'); });
+    toast('Orden empacada', true);
+  }
+  function printLbls(labels, trk) {
+    var w = window.open('', '_blank');
+    if (!w) { toast('Permite ventanas emergentes para imprimir', false); return; }
+    w.document.write('<!doctype html><html><head><title>Etiquetas ' + esc(trk || '') + '</title><style>@page{margin:6mm}body{margin:0}img{width:100mm;max-width:100%;display:block;margin:0 auto 8mm;page-break-after:always;border:1px solid #000}</style></head><body onload="window.print()">'
+      + labels.map(function (l) { return '<img src="' + l.dataUri + '">'; }).join('') + '</body></html>');
+    w.document.close();
+  }
+  $('pk-scan').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var el = $('pk-code'), code = (el.value || '').trim(); el.value = '';
+    if (!code) return;
+    onPackCode(code);
+    enfoca('pk-code');
+  });
+  function onPackCode(code) {
+    if (PK.order) { packScan(code); return; }
+    var o = matchOrder(PK.orders, code);
+    if (o) { bip(true); selectPack(o); return; }
+    // ¿Existe pero en otro estado? Decirlo ahorra ir a preguntar al supervisor.
+    opOrders().then(function (all) {
+      var x = matchOrder(all || [], code);
+      bip(false);
+      toast(x ? ('La orden ' + oRef(x) + ' está ' + (ST_LBL[x.status] || x.status) + ': solo se empacan órdenes pickeadas') : ('No encontré la orden ' + code), false);
+    }).catch(function () { bip(false); toast('No encontré la orden ' + code, false); });
+  }
+  $('btn-pkcam').addEventListener('click', function () {
+    camOpen(function (c) { onPackCode(c); }, { continuous: !!PK.order, hint: PK.order ? 'Escanea los productos' : 'Escanea el N° de orden' });
+  });
+  $('btn-pkback').addEventListener('click', function () {
+    if (PK.order && !PK.task) { PK.order = null; openPackStation(null); return; }
+    PK.task = null; PK.order = null; show('home');
+  });
+
+  // =====================================================================
+  // DESPACHO
+  // =====================================================================
+  function openShipStation(t) {
+    task = null;
+    SH.task = t || null; SH.sel = {}; SH.courier = ''; SH.startAt = new Date().toISOString();
+    show('ship');
+    $('sh-result').style.display = 'none'; $('sh-result').innerHTML = '';
+    $('sh-scan').style.display = ''; $('sh-couriers').style.display = '';
+    $('sh-list').innerHTML = '<div class="pk-empty">Cargando órdenes…</div>';
+    $('sh-carrier').value = '';
+    opOrders().then(function (list) {
+      SH.orders = (list || []).filter(function (o) { return o.status === 'PACKED'; }).sort(porUrgencia);
+      if (SH.task) {
+        var o = SH.orders.filter(function (x) { return x.id === SH.task.entityId; })[0];
+        if (o) { SH.sel[o.id] = true; SH.courier = oCarrier(o); }
+        else toast('La orden de la tarea ya no está empacada', false);
+      }
+      renderShip();
+    }).catch(function (e) { $('sh-list').innerHTML = '<div class="pk-empty">No pude cargar las órdenes: ' + esc(e.message) + '</div>'; });
+    enfoca('sh-code');
+  }
+  function shVisibles() {
+    return SH.orders.filter(function (o) { return !SH.courier || (oCarrier(o) || 'Sin courier') === SH.courier; });
+  }
+  function renderShip() {
+    var couriers = {};
+    SH.orders.forEach(function (o) { var c = oCarrier(o) || 'Sin courier'; couriers[c] = (couriers[c] || 0) + 1; });
+    var names = Object.keys(couriers).sort();
+    $('sh-couriers').innerHTML = names.length > 1 || SH.courier
+      ? '<button class="chip' + (SH.courier ? '' : ' on') + '" data-shc="">Todos · ' + SH.orders.length + '</button>' + names.map(function (n) { return '<button class="chip' + (SH.courier === n ? ' on' : '') + '" data-shc="' + esc(n) + '">' + esc(n) + ' · ' + couriers[n] + '</button>'; }).join('')
+      : '';
+    var vis = shVisibles();
+    $('sh-sub').textContent = SH.orders.length + ' orden(es) empacada(s) lista(s) para salir';
+    var card = function (o) {
+      var p = o.packing || {};
+      return '<button class="ordc' + (SH.sel[o.id] ? ' sel' : '') + '" data-sho="' + esc(o.id) + '"><span class="ck">' + (SH.sel[o.id] ? '✓' : '') + '</span><div class="oc-main"><div class="oc-ref">' + esc(oRef(o)) + ' ' + dlChipHtml(o) + '</div>'
+        + '<div class="oc-meta">' + esc(o.sellerName || o.sellerId) + ' · ' + (p.bultos || 1) + ' bulto(s)' + (oCarrier(o) ? ' · <b>' + esc(oCarrier(o)) + '</b>' : ' · sin courier') + (p.trackingNumber ? ' · ' + esc(p.trackingNumber) : '') + '</div></div></button>';
+    };
+    // Lo que ya está en la carga va arriba (aunque sea de otro courier que el filtro),
+    // para que el operario vea de un vistazo qué sube al camión.
+    var enCarga = SH.orders.filter(function (o) { return SH.sel[o.id]; });
+    var resto = vis.filter(function (o) { return !SH.sel[o.id]; });
+    var html = '';
+    if (enCarga.length) html += '<div class="sec" style="margin-bottom:8px">En la carga · ' + enCarga.length + '</div>' + enCarga.map(card).join('') + '<div style="height:14px"></div>';
+    html += resto.length
+      ? '<div class="sec" style="margin-bottom:8px">' + (enCarga.length ? 'Pendientes' : 'Toca o escanea para sumar a la carga') + ' · ' + resto.length + '</div>' + resto.map(card).join('')
+      : (enCarga.length ? '' : '<div class="pk-empty">No hay órdenes empacadas' + (SH.courier ? ' para ' + esc(SH.courier) : '') + ' esperando despacho.</div>');
+    $('sh-list').innerHTML = html;
+    var n = enCarga.length;
+    $('sh-dock').style.display = n ? '' : 'none';
+    var bultos = enCarga.reduce(function (a, o) { return a + ((o.packing && o.packing.bultos) || 1); }, 0);
+    $('sh-go').textContent = 'Despachar ' + n + (n === 1 ? ' orden' : ' órdenes') + ' · ' + bultos + (bultos === 1 ? ' bulto' : ' bultos');
+    // Cada orden sale con SU courier. El campo solo reemplaza (o completa si falta).
+    var cs = {}; enCarga.forEach(function (o) { var c = oCarrier(o) || 'Sin courier'; cs[c] = (cs[c] || 0) + 1; });
+    var ks = Object.keys(cs);
+    $('sh-mix').innerHTML = ks.length > 1
+      ? '<div class="banner" style="margin:0">La carga mezcla couriers: ' + ks.map(function (k) { return esc(k) + ' (' + cs[k] + ')'; }).join(' · ') + '. Cada orden se despacha con el suyo, salvo que escribas uno abajo.</div>'
+      : (ks.length ? '<div class="muted" style="font-size:13px">Courier de la carga: <b>' + esc(ks[0]) + '</b></div>' : '');
+    $('sh-carrier').placeholder = cs['Sin courier'] ? 'Obligatorio: hay órdenes sin courier' : 'Vacío = el de cada orden';
+  }
+  $('sh-couriers').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-shc]'); if (!b) return;
+    SH.courier = b.getAttribute('data-shc'); renderShip();
+  });
+  $('sh-list').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-sho]'); if (!b) return;
+    var id = b.getAttribute('data-sho'); SH.sel[id] = !SH.sel[id]; renderShip();
+  });
+  function onShipCode(code) {
+    var o = matchOrder(SH.orders, code);
+    if (o) {
+      if (SH.sel[o.id]) { bip(false); toast(oRef(o) + ' ya está en la carga', false); return; }
+      SH.sel[o.id] = true; bip(true); toast(oRef(o) + ' sumada a la carga', true);
+      if (SH.courier && (oCarrier(o) || 'Sin courier') !== SH.courier) SH.courier = '';
+      renderShip(); return;
+    }
+    opOrders().then(function (all) {
+      var x = matchOrder(all || [], code);
+      bip(false);
+      toast(x ? ('La orden ' + oRef(x) + ' está ' + (ST_LBL[x.status] || x.status) + ': solo se despachan órdenes empacadas') : ('No encontré la orden ' + code), false);
+    }).catch(function () { bip(false); toast('No encontré la orden ' + code, false); });
+  }
+  $('sh-scan').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var el = $('sh-code'), code = (el.value || '').trim(); el.value = '';
+    if (code) onShipCode(code);
+    enfoca('sh-code');
+  });
+  $('btn-shcam').addEventListener('click', function () { camOpen(onShipCode, { continuous: true, hint: 'Escanea las órdenes de la carga' }); });
+  $('sh-go').addEventListener('click', function () {
+    if (SH.busy) return;
+    var lista = SH.orders.filter(function (o) { return SH.sel[o.id]; });
+    if (!lista.length) return;
+    var carrier = $('sh-carrier').value.trim();
+    var sinCourier = lista.filter(function (o) { return !carrier && !oCarrier(o); });
+    if (sinCourier.length) { toast('Indica el courier: ' + sinCourier.map(oRef).join(', ') + ' no tiene', false); enfoca('sh-carrier'); return; }
+    SH.busy = true; $('sh-go').disabled = true; $('sh-go').textContent = 'Despachando…';
+    var ok = [], fail = [];
+    // De a una: así cada orden queda con su propio resultado y un error no tumba al resto.
+    lista.reduce(function (pr, o) {
+      return pr.then(function () {
+        var p = o.packing || {};
+        var body = { carrier: carrier || oCarrier(o) };
+        if (p.trackingNumber) body.trackingNumber = p.trackingNumber;
+        return api('/sellers/' + encodeURIComponent(o.sellerId) + '/orders/' + encodeURIComponent(o.id) + '/ship', { method: 'POST', body: body })
+          .then(function () {
+            ok.push(o);
+            if (opIdOrNull()) laborCapture({ operationId: opIdOrNull(), sellerId: o.sellerId, operator: (user && user.id) || cfg.email, type: 'OTHER', startAt: SH.startAt, endAt: new Date().toISOString(), units: oUnits(o), orderRef: oRef(o), locationId: null });
+          })
+          .catch(function (e) { fail.push({ o: o, msg: e.message }); });
+      });
+    }, Promise.resolve()).then(function () {
+      SH.busy = false; $('sh-go').disabled = false;
+      var deTarea = !!SH.task; SH.task = null;
+      SH.orders = SH.orders.filter(function (o) { return ok.indexOf(o) < 0; });
+      ok.forEach(function (o) { delete SH.sel[o.id]; });
+      bip(!fail.length);
+      $('sh-scan').style.display = 'none'; $('sh-couriers').style.display = 'none'; $('sh-list').innerHTML = ''; $('sh-dock').style.display = 'none';
+      $('sh-result').style.display = '';
+      $('sh-result').innerHTML = '<div class="resbox"><div class="rb-t">' + (fail.length ? '⚠️ ' : '✓ ') + ok.length + ' orden(es) despachada(s)</div>'
+        + (ok.length ? '<div class="muted">' + ok.map(function (o) { return esc(oRef(o)); }).join(' · ') + (carrier ? ' — ' + esc(carrier) : '') + '</div>' : '')
+        + (fail.length ? '<div class="banner" style="margin:0"><b>No se despacharon:</b><br>' + fail.map(function (f) { return esc(oRef(f.o)) + ': ' + esc(f.msg); }).join('<br>') + '</div>' : '')
+        + '</div>'
+        + (deTarea ? '<button class="btn" id="sh-home">Volver a mis tareas</button>'
+          : '<button class="btn" id="sh-more">Armar otra carga (' + SH.orders.length + ' pendiente(s))</button><button class="btn alt" id="sh-home">Volver al inicio</button>');
+      if ($('sh-more')) $('sh-more').addEventListener('click', function () { openShipStation(null); });
+      $('sh-home').addEventListener('click', function () { show('home'); });
+      if (ok.length) toast(ok.length + ' orden(es) despachada(s)', true);
+    });
+  });
+  $('btn-shback').addEventListener('click', function () { SH.task = null; show('home'); });
+
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
   // ---- Service worker -------------------------------------------------------
   if ('serviceWorker' in navigator) {

@@ -228,6 +228,61 @@
     .pwa-brand-home{display:flex;align-items:center;margin-right:4px}
     .pwa-brand-home:empty{display:none}
     .pwa-brand-home img{border-radius:6px}
+  
+    /* ---- Empaque / Despacho ---- */
+    .op.wide{grid-column:1/-1;flex-direction:row;justify-content:center;padding:14px}
+    .op[data-op="packst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 16l2 2 4-4 M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14 M3.29 7 12 12l8.71-5 M12 22V12 M7.5 4.27l9 5.15'/%3E%3C/svg%3E")}
+    .op[data-op="shipst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2 M15 18H9 M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14 M17 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z'/%3E%3C/svg%3E")}
+    #btn-pkback,#btn-shback{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E")}
+    #btn-pkcam,#btn-shcam{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7V5a2 2 0 0 1 2-2h2 M17 3h2a2 2 0 0 1 2 2v2 M21 17v2a2 2 0 0 1-2 2h-2 M7 21H5a2 2 0 0 1-2-2v-2 M7 8v8 M11 8v8 M15 8v8 M18 8v8'/%3E%3C/svg%3E")}
+    .scanbar{display:flex;flex-direction:column;gap:6px}
+    .scanrow{display:flex;gap:8px}
+    .scanrow input{flex:1;min-width:0}
+    .scanrow .btn{width:auto;min-height:48px;flex:none;padding:0 18px}
+    .ordc{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;gap:12px;align-items:center;width:100%;text-align:left;color:var(--ink)}
+    .ordc+.ordc{margin-top:10px}
+    .ordc:active{border-color:var(--primary)}
+    .ordc .oc-main{flex:1;min-width:0}
+    .ordc .oc-ref{font-weight:800;font-size:15px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .ordc .oc-meta{font-size:12.5px;color:var(--ink-3);margin-top:4px}
+    .ordc .oc-go{flex:none;font-weight:700;font-size:13px;color:var(--primary-ink)}
+    .ordc.sel{border:2px solid var(--primary);background:var(--primary-wash)}
+    .ordc .ck{flex:none;width:26px;height:26px;border-radius:8px;border:2px solid var(--line-2);display:grid;place-items:center;font-weight:900;font-size:15px;color:var(--on-primary)}
+    .ordc.sel .ck{background:var(--primary);border-color:var(--primary)}
+    .dlc{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:800;background:var(--surface-3);color:var(--ink-2)}
+    .dlc.v{background:#FDECEC;color:#B4232A}.dlc.r{background:#FFF4E0;color:#A35A00}
+    .pk-empty{text-align:center;color:var(--ink-3);padding:26px 10px;background:var(--surface);border:1px dashed var(--line-2);border-radius:16px}
+    .pkl{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;align-items:center;gap:10px}
+    .pkl+.pkl{margin-top:8px}
+    .pkl.done{border-color:var(--primary);background:var(--primary-wash)}
+    .pkl.over{border-color:var(--crit)}
+    .pkl .pl-sku{font-weight:800;font-size:14px}
+    .pkl .pl-sub{font-size:12px;color:var(--ink-3);margin-top:2px}
+    .pkl .pl-q{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
+    .pkl .pl-q b{min-width:52px;text-align:center;font-size:16px}
+    .mini{width:36px;height:36px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:18px;font-weight:800;color:var(--ink)}
+    .bar{height:8px;border-radius:999px;background:var(--surface-3);overflow:hidden;margin:6px 0 2px}
+    .bar>i{display:block;height:100%;background:var(--primary);border-radius:999px;transition:width .2s}
+    .sec{font-size:11.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin:6px 0 -2px}
+    .matrow{display:flex;align-items:center;gap:10px;padding:8px 0}
+    .matrow+.matrow{border-top:1px solid var(--line)}
+    .matrow .mn{flex:1;min-width:0;font-size:14px}
+    .matrow .mn small{display:block;color:var(--ink-3);font-size:11.5px}
+    .matrow .pl-q b{min-width:34px;text-align:center}
+    .btn.warn{background:var(--crit);color:#fff;box-shadow:none}
+    .chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+    .chips::-webkit-scrollbar{display:none}
+    .chip{flex:none;height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface);font-weight:700;font-size:13px;color:var(--ink-2)}
+    .chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+    .dock{position:sticky;bottom:0;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 -10px 24px -18px rgba(11,18,32,.35)}
+    .dock .banner{font-size:12.5px;padding:8px 10px;line-height:1.35}
+    .dock input{height:44px}
+    .camsheet{position:fixed;inset:0;z-index:40;background:rgba(11,18,32,.92);display:flex;flex-direction:column;justify-content:center;gap:14px;padding:16px}
+    .resbox{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px}
+    .resbox .rb-t{font-size:18px;font-weight:800}
+    .lbls{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .lbls img{width:100%;border:1px solid var(--line-2);border-radius:8px;background:#fff}
+
   </style>
 </head>
 <body>
@@ -269,7 +324,7 @@
           <div id="board-next"></div>
           <div id="board-list"></div>
           <div id="board-empty" class="card" style="display:none;text-align:center;padding:26px 16px">
-            <div style="font-size:34px">✅</div>
+            <div aria-hidden="true"></div>
             <div style="font-weight:700;margin-top:6px">Sin tareas asignadas</div>
             <div class="muted" style="margin-top:4px">Cuando el supervisor o el agente te asignen trabajo aparecerá aquí, en orden de ejecución.</div>
           </div>
@@ -281,11 +336,13 @@
         </div>
 
         <div id="pane-free" class="pane">
-          <p class="muted" style="margin:0">Operación libre (sin tarea asignada). El supervisor verá el movimiento igual.</p>
+          <p class="muted" style="margin:0">Operación libre (sin tarea asignada). El supervisor verá el movimiento igual. Empaque y Despacho trabajan con las órdenes de todos los clientes.</p>
           <div class="ops">
             <button class="op" data-op="receive"><span class="em">📦</span><span class="t">Recepción</span></button>
             <button class="op" data-op="putaway"><span class="em">⇄</span><span class="t">Guardado</span></button>
             <button class="op" data-op="pick"><span class="em">🛒</span><span class="t">Picking</span></button>
+            <button class="op" data-op="packst"><span class="em">📦</span><span class="t">Empaque</span></button>
+            <button class="op" data-op="shipst"><span class="em">🚚</span><span class="t">Despacho</span></button>
             <button class="op" data-op="stock"><span class="em">🔎</span><span class="t">Consultar stock</span></button>
           </div>
         </div>
@@ -363,6 +420,11 @@
             <button id="q-plus">+</button>
           </div>
           <div class="muted" style="margin-top:8px" id="q-preview">—</div>
+          <!-- Solo para recepción, y solo si el producto controla lote / vencimiento. -->
+          <div id="lotwrap" style="display:none;margin-top:14px">
+            <div id="lot-f" style="display:none;margin-bottom:10px"><label for="q-lot">Lote <span style="color:var(--bad,#E5484D)">*</span></label><input id="q-lot" placeholder="Lote impreso en el producto" autocomplete="off" autocapitalize="characters"></div>
+            <div id="exp-f" style="display:none"><label for="q-exp">Vencimiento <span style="color:var(--bad,#E5484D)">*</span></label><input id="q-exp" type="date"></div>
+          </div>
         </div>
 
         <button class="btn good" id="btn-confirm" style="display:none">Confirmar</button>
@@ -379,6 +441,54 @@
       </div>
     </section>
 
+    <!-- Estación de EMPAQUE: elegir/escanear una orden pickeada, verificar escaneando, embalar. -->
+    <section id="pack" class="screen">
+      <header>
+        <button class="iconbtn" id="btn-pkback" title="Volver">‹</button>
+        <div><div class="title" id="pk-title">Empaque</div><div class="sub" id="pk-sub">Órdenes pickeadas listas para empacar</div></div>
+        <div class="spacer"></div>
+        <button class="iconbtn" id="btn-pkcam" title="Leer con la cámara"></button>
+      </header>
+      <div class="body">
+        <form class="scanbar" id="pk-scan" autocomplete="off">
+          <label for="pk-code" id="pk-label">Escanea o escribe el N° de orden</label>
+          <div class="scanrow"><input id="pk-code" class="code" placeholder="N° de orden" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
+        </form>
+        <div id="pk-list"></div>
+        <div id="pk-order" style="display:none"></div>
+      </div>
+    </section>
+
+    <!-- Estación de DESPACHO: armar la carga del courier escaneando órdenes empacadas. -->
+    <section id="ship" class="screen">
+      <header>
+        <button class="iconbtn" id="btn-shback" title="Volver">‹</button>
+        <div><div class="title">Despacho</div><div class="sub" id="sh-sub">Órdenes empacadas listas para salir</div></div>
+        <div class="spacer"></div>
+        <button class="iconbtn" id="btn-shcam" title="Leer con la cámara"></button>
+      </header>
+      <div class="body">
+        <form class="scanbar" id="sh-scan" autocomplete="off">
+          <label for="sh-code">Escanea la orden o la etiqueta del bulto para sumarla a la carga</label>
+          <div class="scanrow"><input id="sh-code" class="code" placeholder="N° de orden o tracking" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
+        </form>
+        <div class="chips" id="sh-couriers"></div>
+        <div id="sh-list"></div>
+        <div class="dock" id="sh-dock" style="display:none">
+          <div id="sh-mix"></div>
+          <label for="sh-carrier" style="margin:0">Reemplazar courier (opcional)</label>
+          <input id="sh-carrier" placeholder="Ej: Chilexpress" autocomplete="off">
+          <button class="btn good" id="sh-go">Despachar</button>
+        </div>
+        <div id="sh-result" style="display:none"></div>
+      </div>
+    </section>
+
+    <!-- Lector con cámara compartido por Empaque y Despacho. -->
+    <div class="camsheet" id="camsheet" style="display:none">
+      <div class="cam"><video id="cs-video" playsinline muted></video><div class="frame"></div><div class="laser"></div><div class="hint" id="cs-hint">Apunta al código</div></div>
+      <button class="btn alt" id="cs-close">Cerrar cámara</button>
+    </div>
   </div>
 
   <div class="toast" id="toast"><div class="i ok" id="toast-i"></div></div>

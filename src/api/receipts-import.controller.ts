@@ -15,6 +15,7 @@ import { RequirePermission } from './auth/permissions.decorator';
 import { ImportOrdersDto } from './dto';
 import { Uom, User } from '../domain/types';
 import { WMS_FACADE } from './tokens';
+import { limpio, problemasLoteVencimiento } from '../domain/lot-control';
 
 /**
  * Carga masiva de ÓRDENES DE RECEPCIÓN por Excel. Espejo de la carga de órdenes,
@@ -40,8 +41,8 @@ const TEMPLATE_HEADERS = [
   'Notas (opcional)',
   'SKU',
   'Cantidad esperada',
-  'Lote (opcional)',
-  'Vencimiento (AAAA-MM-DD, opcional)',
+  'Lote (solo SKUs con control de lote)',
+  'Vencimiento AAAA-MM-DD (solo SKUs con control de vencimiento)',
 ];
 
 const EXAMPLE_ROWS = [
@@ -59,7 +60,11 @@ const INSTRUCTIONS = [
   ['3) Campos obligatorios: Recepción (grupo), SKU y Cantidad esperada.'],
   ['4) "Ubicación de recepción": escribe el CÓDIGO de una ubicación de recepción. Si lo dejas vacío,'],
   ['   se usa la primera ubicación de recepción de la operación.'],
-  ['5) "Vencimiento": formato AAAA-MM-DD (por ejemplo 2027-01-31). Opcional.'],
+  ['5) LOTE y VENCIMIENTO se completan SOLO en los SKUs que tienen ese control activo en el maestro de productos.'],
+  ['   Revisa la hoja "Productos": la columna "Controla lote" / "Controla vencimiento" dice dónde corresponde.'],
+  ['   Si escribes lote o vencimiento en un SKU sin ese control, esa recepción NO se crea y el resultado te indica la fila.'],
+  ['   En los SKUs con control puedes dejarlo vacío ahora: será obligatorio al recepcionar (cotejo).'],
+  ['   "Vencimiento": formato AAAA-MM-DD (por ejemplo 2027-01-31); también se acepta DD/MM/AAAA.'],
   ['6) La recepción se crea con cantidades ESPERADAS. El stock ingresa al recepcionar (cotejo).'],
   ['7) No cambies los nombres de las columnas de la hoja "Recepciones". Borra las filas de ejemplo.'],
 ];
@@ -82,11 +87,11 @@ function headerToField(header: unknown): string | null {
   if (n.includes('proveedor')) return 'supplier';
   if (n.includes('referencia') || n.includes('guia') || n.includes('factura')) return 'reference';
   if (n.includes('nota') || n.includes('observacion')) return 'notes';
+  // Lote / vencimiento ANTES que SKU: sus encabezados dicen "solo SKUs con control…".
+  if (n.includes('vencimiento') || n.includes('vence') || n.includes('expiry') || n.includes('caducidad')) return 'expiry';
+  if (n.includes('lote') || n.startsWith('lot')) return 'lot';
   if (n === 'sku' || n.includes('sku')) return 'sku';
   if (n.includes('cantidad') || n === 'qty') return 'qty';
-  // "vencimiento" antes que "lote" no es necesario (palabras distintas), pero mantenemos claridad.
-  if (n.includes('vencimiento') || n.includes('vence') || n.includes('expiry') || n.includes('caducidad')) return 'expiry';
-  if (n.includes('lote') || n.includes('lot')) return 'lot';
   return null;
 }
 
@@ -95,6 +100,9 @@ function normExpiry(v: unknown): string | null {
   if (v == null || v === '') return null;
   if (v instanceof Date && !isNaN(v.getTime())) return v.toISOString().slice(0, 10);
   const s = String(v).trim();
+  // Formato chileno DD/MM/AAAA o DD-MM-AAAA -> AAAA-MM-DD.
+  const m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
   return s || null;
 }
 
@@ -105,14 +113,36 @@ export class ReceiptsImportController {
   /** Descarga la plantilla Excel con las columnas de la recepción y ejemplos. */
   @Get('template')
   @RequirePermission('inventory:receive')
-  template(@Res() res: Response) {
+  async template(@Param('sellerId') sellerId: string, @Res() res: Response) {
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...EXAMPLE_ROWS]);
+    // Ejemplos con SKUs reales del cliente cuando se puede: uno con control de lote y/o
+    // vencimiento (con esos datos llenos) y uno sin control (con esas celdas vacías), para
+    // que la plantilla muestre la regla en vez de contradecirla.
+    const skus = await this.wms.listSkus(sellerId).catch(() => [] as any[]);
+    const activos = (skus || []).filter((k: any) => k.active !== false);
+    const conCtl = activos.find((k: any) => k.lotControlled || k.expiryControlled);
+    const sinCtl = activos.find((k: any) => !k.lotControlled && !k.expiryControlled);
+    let examples: unknown[][] = EXAMPLE_ROWS;
+    if (conCtl || sinCtl) {
+      examples = [];
+      if (conCtl) examples.push(['REC-1', 'Importadora Andes', 'Guía 10442', '', 'Sin daños', conCtl.sku, 120, conCtl.lotControlled ? 'L-2026-01' : '', conCtl.expiryControlled ? '2027-01-31' : '']);
+      if (sinCtl) examples.push(['REC-1', 'Importadora Andes', 'Guía 10442', '', 'Sin daños', sinCtl.sku, 60, '', '']);
+    }
+    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...examples]);
     ws['!cols'] = TEMPLATE_HEADERS.map((h) => ({ wch: Math.max(14, h.length + 2) }));
     XLSX.utils.book_append_sheet(wb, ws, 'Recepciones');
     const wsi = XLSX.utils.aoa_to_sheet(INSTRUCTIONS);
     wsi['!cols'] = [{ wch: 92 }];
     XLSX.utils.book_append_sheet(wb, wsi, 'Instrucciones');
+    // Hoja de referencia: qué controla cada SKU del cliente.
+    const prod: unknown[][] = [['SKU', 'Descripción', 'Controla lote', 'Controla vencimiento']];
+    activos
+      .slice()
+      .sort((a: any, b: any) => Number(!!(b.lotControlled || b.expiryControlled)) - Number(!!(a.lotControlled || a.expiryControlled)) || String(a.sku).localeCompare(String(b.sku)))
+      .forEach((k: any) => prod.push([k.sku, k.description || '', k.lotControlled ? 'Sí' : 'No', k.expiryControlled ? 'Sí' : 'No']));
+    const wsp = XLSX.utils.aoa_to_sheet(prod);
+    wsp['!cols'] = [{ wch: 22 }, { wch: 40 }, { wch: 15 }, { wch: 22 }];
+    XLSX.utils.book_append_sheet(wb, wsp, 'Productos');
     const buf: Buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="plantilla-recepciones-ninjawms.xlsx"');
@@ -169,6 +199,13 @@ export class ReceiptsImportController {
       for (const l of locs) locByCode.set(norm(l.code), l.id);
     }
 
+    // Maestro de SKUs del cliente: qué controla cada uno (lote / vencimiento).
+    const skuMap = new Map<string, any>();
+    for (const k of (await this.wms.listSkus(sellerId).catch(() => [] as any[])) || []) skuMap.set(String(k.sku), k);
+    // Filas con lote/vencimiento donde no corresponde: invalidan SU recepción completa
+    // (crearla sin esa línea, o sin el dato, escondería el problema).
+    const rowErrorsByGroup = new Map<string, string[]>();
+
     // Agrupar filas por "Recepción (grupo)", preservando el orden de aparición.
     const groups = new Map<string, { header: unknown[]; lines: { sku: string; qty: number; lot: string; expiry: string | null; rowNo: number }[] }>();
     const lineErrors: { fila: number; motivo: string }[] = [];
@@ -188,13 +225,27 @@ export class ReceiptsImportController {
         continue;
       }
       if (!groups.has(grupo)) groups.set(grupo, { header: row, lines: [] });
-      groups.get(grupo)!.lines.push({ sku, qty, lot: cell(row, 'lot'), expiry: normExpiry(rawCell(row, 'expiry')), rowNo });
+      const lot = cell(row, 'lot');
+      const expiry = normExpiry(rawCell(row, 'expiry'));
+      const def = skuMap.get(sku);
+      if (!def) {
+        (rowErrorsByGroup.get(grupo) || rowErrorsByGroup.set(grupo, []).get(grupo)!).push(`Fila ${rowNo}: el SKU ${sku} no existe en el maestro de productos del cliente.`);
+      } else {
+        const probs = problemasLoteVencimiento(def, lot, expiry, `Fila ${rowNo}`);
+        if (probs.length) (rowErrorsByGroup.get(grupo) || rowErrorsByGroup.set(grupo, []).get(grupo)!).push(...probs);
+      }
+      groups.get(grupo)!.lines.push({ sku, qty, lot, expiry, rowNo });
     }
 
     const created: { grupo: string; id: string; lineas: number }[] = [];
     const failed: { grupo: string; motivo: string }[] = [];
 
     for (const [grupo, g] of groups) {
+      const errs = rowErrorsByGroup.get(grupo);
+      if (errs && errs.length) {
+        failed.push({ grupo, motivo: errs.join(' ') });
+        continue;
+      }
       const locCode = cell(g.header, 'location');
       let locationId: string | null = null;
       if (locCode) {
@@ -216,8 +267,8 @@ export class ReceiptsImportController {
               sku: l.sku,
               qty: l.qty,
               uom: Uom.EACH,
-              lot: l.lot || null,
-              expiry: l.expiry,
+              lot: limpio(l.lot),
+              expiry: limpio(l.expiry),
             })),
           },
           actor,

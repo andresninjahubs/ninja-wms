@@ -4,6 +4,7 @@
  * Es lo que consumen los controllers HTTP. Aquí crecerán, en fases siguientes,
  * la reserva (allocation), el picking y el despacho.
  */
+import { limpio as limpioLote, validarLoteVencimientoRecepcion } from '../domain/lot-control';
 import { InventoryService, PutawayCommand, ReceiveCommand } from '../domain/inventory.service';
 import { AttachLabelsInput, CreateOrderInput, OrderService } from '../domain/order.service';
 import { CreateReceiptInput, ReceiptCountInput, ReceiptOrderService } from '../domain/receipt.service';
@@ -3238,14 +3239,17 @@ export class WmsFacade {
     },
   ): Promise<{ scan: ScanResult; movement: StockMovement }> {
     const scan = await this.barcodes.toBaseUnits(sellerId, input.barcode, input.packCount);
+    // Lote / vencimiento: obligatorios si el producto los controla, prohibidos si no.
+    const skuDef = await this.skus.find(sellerId, scan.sku);
+    validarLoteVencimientoRecepcion(skuDef ?? { sku: scan.sku }, input.lot, input.expiry, 'La recepción');
     const opId = await this.operationOfSeller(sellerId);
     const locationId = input.locationId ?? (await this.mustLocationByCode(opId, input.locationCode ?? '')).id;
     const movement = await this.inventory.receive(sellerId, {
       sku: scan.sku,
       qty: scan.baseQty,
       locationId,
-      lot: input.lot ?? null,
-      expiry: input.expiry ?? null,
+      lot: limpioLote(input.lot),
+      expiry: limpioLote(input.expiry),
       reference: input.reference ?? `SCAN ${scan.packCount}x${scan.code} (${input.barcode})`,
       actor: input.actor,
     });

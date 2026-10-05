@@ -26,6 +26,7 @@ import {
   SerialRepository,
   SkuRepository,
 } from './ports';
+import { limpio, validarLoteVencimientoPermitidos, validarLoteVencimientoRecepcion } from './lot-control';
 import { OrderEvent, ReceiptLine, ReceiptOrder, ReceiptOrderStatus, Seller, SerialStatus, Uom, ZoneType } from './types';
 
 export interface ReceiptLineInput {
@@ -108,14 +109,16 @@ export class ReceiptOrderService {
       if (!(l.qty > 0)) throw new ValidationError(`Cantidad esperada inválida en línea ${n}: ${l.qty}`);
       const sku = await this.skus.find(sellerId, l.sku);
       if (!sku) throw new NotFoundError(`SKU no encontrado para el seller ${sellerId}: ${l.sku}`);
+      // Lote / vencimiento declarados: solo si el producto los controla.
+      validarLoteVencimientoPermitidos(sku, l.lot, l.expiry, `Línea ${n}`);
       out.push({
         lineNo: n,
         sku: l.sku,
         expectedQty: l.qty,
         receivedQty: 0,
         uom: l.uom ?? Uom.EACH,
-        lot: l.lot ?? null,
-        expiry: l.expiry ?? null,
+        lot: limpio(l.lot),
+        expiry: limpio(l.expiry),
       });
     }
     return out;
@@ -222,18 +225,14 @@ export class ReceiptOrderService {
       const line = order.lines.find((l) => l.lineNo === c.lineNo);
       if (!line) throw new NotFoundError(`Línea ${c.lineNo} no existe en la orden ${orderId}`);
 
-      // Lote/vencimiento efectivos: lo capturado en la recepción pisa lo declarado.
-      const lot = (c.lot != null && c.lot !== '' ? c.lot : line.lot) || null;
-      const expiry = (c.expiry != null && c.expiry !== '' ? c.expiry : line.expiry) || null;
-
-      // Controles obligatorios según el maestro de productos.
+      // Controles según el maestro de productos: lote / vencimiento se capturan SI Y SOLO
+      // SI el producto los controla. Lo capturado en la recepción pisa lo declarado; lo
+      // declarado de un producto que (ya) no controla lote/vencimiento se descarta.
       const sku = await this.skus.find(sellerId, line.sku);
-      if (sku?.lotControlled && !lot) {
-        throw new ValidationError(`La línea ${c.lineNo} (${line.sku}) es controlada por lote: debes indicar el lote al recepcionar.`);
-      }
-      if (sku?.expiryControlled && !expiry) {
-        throw new ValidationError(`La línea ${c.lineNo} (${line.sku}) es controlada por vencimiento: debes indicar el vencimiento al recepcionar.`);
-      }
+      validarLoteVencimientoPermitidos(sku ?? { sku: line.sku }, c.lot, c.expiry, `La línea ${c.lineNo}`);
+      const lot = sku?.lotControlled ? limpio(c.lot) ?? limpio(line.lot) : null;
+      const expiry = sku?.expiryControlled ? limpio(c.expiry) ?? limpio(line.expiry) : null;
+      validarLoteVencimientoRecepcion(sku ?? { sku: line.sku }, lot, expiry, `La línea ${c.lineNo}`);
       const rawSerials = (c.serials || []).map((s) => String(s).trim()).filter(Boolean);
       const requiresSerial = !!sku?.serialControlled;
       let serials: string[] = [];
@@ -281,8 +280,8 @@ export class ReceiptOrderService {
         actor,
       });
       // Refleja en la línea el lote/vencimiento realmente recibido (si se capturaron).
-      if (c.lot != null && c.lot !== '') line.lot = lot;
-      if (c.expiry != null && c.expiry !== '') line.expiry = expiry;
+      if (lot) line.lot = lot;
+      if (expiry) line.expiry = expiry;
       // Registra cada número de serie (trazabilidad unidad-a-unidad).
       if (this.serials && serials.length) {
         for (const s of serials) {

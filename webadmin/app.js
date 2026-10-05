@@ -3850,9 +3850,10 @@
   }
   function exportMovements(){ downloadXlsx('/movements/export','kardex-movimientos-ninjawms.xlsx',"Kardex exportado"); }
   function exportOrders(){
-    // El export del servidor es por cliente. En consolidado eso mentiría: se exporta
+    // El export del servidor es por cliente y no conoce el filtro de día. En consolidado
+    // (o con un día elegido) eso mentiría: se exporta
     // la tabla tal como está en pantalla, con su filtro y su columna de cliente.
-    if(ordMulti()&&!ordSellerFilter){ tableToXlsx($("#ord-body")&&$("#ord-body").closest('table'),'ordenes-ninjawms.xlsx','Órdenes'); return; }
+    if((ordMulti()&&!ordSellerFilter)||ordDayFilter){ tableToXlsx($("#ord-body")&&$("#ord-body").closest('table'),'ordenes-ninjawms.xlsx','Órdenes'); return; }
     var previo=seller;
     if(ordSellerFilter)seller=ordSellerFilter;
     try{ downloadXlsx('/orders/export','ordenes-ninjawms.xlsx',"Órdenes exportadas"); } finally { seller=previo; }
@@ -4068,6 +4069,70 @@
   }
   /** ¿Esta orden entra en la pestaña activa? Estados del ciclo + las dos de deadline. */
   function ordEnFiltro(o){
+    return ordEnEstado(o)&&ordEnDia(o);
+  }
+  // ===== Filtro por día de deadline =====
+  // Para planificar la preparación por oleadas ("primero todo lo que sale hoy, después
+  // lo de mañana") el administrador elige un día de compromiso. Los días se cuentan en
+  // la hora local de la BODEGA (offsetHoras), no la del navegador: una orden que vence
+  // a las 23:00 en Santiago es "hoy" aunque quien mira esté en otra zona horaria.
+  var ordDayFilter='';   // '' todos · 'PAST' días anteriores · 'YYYY-MM-DD' · 'LATER' · 'SIN'
+  var ORD_DIA_MAX=10;    // días futuros listados uno a uno; el resto cae en "Más adelante"
+  function ordDiaKeyMs(ms){
+    var off=(DL.offsetHoras==null?-3:DL.offsetHoras);
+    return new Date(ms+off*3600000).toISOString().slice(0,10);
+  }
+  function ordDiaHoy(){ return ordDiaKeyMs(Date.now()); }
+  function ordDiaSuma(key,n){ var d=new Date(key+'T12:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+  /** Día de deadline de la orden (hora de la bodega), o 'SIN' si no tiene. */
+  function ordDiaDe(o){
+    var ms=o&&o.dueAt?Date.parse(o.dueAt):NaN;
+    return isNaN(ms)?'SIN':ordDiaKeyMs(ms);
+  }
+  /** Los días que se listan uno a uno: de hoy a hoy+ORD_DIA_MAX-1. */
+  function ordDiasVisibles(){ var h=ordDiaHoy(),r=[]; for(var i=0;i<ORD_DIA_MAX;i++)r.push(ordDiaSuma(h,i)); return r; }
+  function ordEnDia(o){
+    if(!ordDayFilter)return true;
+    var k=ordDiaDe(o), hoy=ordDiaHoy();
+    if(ordDayFilter==='SIN')return k==='SIN';
+    if(k==='SIN')return false;
+    if(ordDayFilter==='PAST')return k<hoy;
+    if(ordDayFilter==='LATER')return k>ordDiaSuma(hoy,ORD_DIA_MAX-1);
+    return k===ordDayFilter;
+  }
+  var DIAS_C=['dom','lun','mar','mié','jue','vie','sáb'], MESES_C=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  function ordDiaLabel(key){
+    var d=new Date(key+'T12:00:00Z'), hoy=ordDiaHoy();
+    var txt=DIAS_C[d.getUTCDay()]+' '+('0'+d.getUTCDate()).slice(-2)+' '+MESES_C[d.getUTCMonth()];
+    if(key===hoy)return 'Hoy · '+txt;
+    if(key===ordDiaSuma(hoy,1))return 'Mañana · '+txt;
+    return txt.charAt(0).toUpperCase()+txt.slice(1);
+  }
+  /** Pinta el selector de día con conteos (respetando el chip de estado activo). */
+  function renderOrdDay(){
+    var sel=$("#ord-day"); if(!sel)return;
+    var base=ordRows().filter(ordEnEstado), hoy=ordDiaHoy(), ult=ordDiaSuma(hoy,ORD_DIA_MAX-1);
+    var c={PAST:0,LATER:0,SIN:0};
+    base.forEach(function(o){
+      var k=ordDiaDe(o);
+      if(k==='SIN')c.SIN++; else if(k<hoy)c.PAST++; else if(k>ult)c.LATER++; else c[k]=(c[k]||0)+1;
+    });
+    var opts=[{v:'',t:'Todos los días ('+base.length+')'}];
+    if(c.PAST||ordDayFilter==='PAST')opts.push({v:'PAST',t:'Días anteriores ('+c.PAST+')'});
+    ordDiasVisibles().forEach(function(k,i){
+      // Hoy y mañana siempre aparecen (son la planificación de todos los días);
+      // el resto solo si tiene órdenes, para no llenar el selector de ceros.
+      if(i<2||c[k]||ordDayFilter===k)opts.push({v:k,t:ordDiaLabel(k)+' ('+(c[k]||0)+')'});
+    });
+    if(c.LATER||ordDayFilter==='LATER')opts.push({v:'LATER',t:'Más adelante ('+c.LATER+')'});
+    opts.push({v:'SIN',t:'Sin deadline ('+c.SIN+')'});
+    // Un día que ya pasó (p. ej. quedó elegido "mañana" y cambió la fecha) vuelve a "todos".
+    if(!opts.some(function(o){return o.v===ordDayFilter;}))ordDayFilter='';
+    sel.innerHTML=opts.map(function(o){return '<option value="'+o.v+'">'+esc(o.t)+'</option>';}).join('');
+    sel.value=ordDayFilter;
+    var w=$("#ord-day-wrap"); if(w)w.classList.toggle('on',!!ordDayFilter);
+  }
+  function ordEnEstado(o){
     if(ordFilter==='DL_VENCIDO')return dlNivelOrden(o)==='vencido';
     if(ordFilter==='DL_RIESGO'){var l=dlNivelOrden(o);return l==='critico'||l==='riesgo';}
     return ordFilter==='ALL'||o.status===ordFilter;
@@ -4148,7 +4213,10 @@
 
   function renderOrdFilters(){
     renderOrdSeller();
-    var base=ordRows();
+    renderOrdDay();
+    // Los contadores de estado respetan el día elegido: "¿cuántas de las que vencen hoy
+    // siguen sin reservar?" se lee directo en los chips.
+    var base=ordRows().filter(ordEnDia);
     var states=["ALL","RECEIVED","ALLOCATED","PICKING","PICKED","PACKED","SHIPPED","CANCELLED"];
     // Contador por estado: cuántas órdenes hay en cada etapa del ciclo de vida, para ver
     // la carga de trabajo sin tener que abrir cada filtro. Se recalcula en cada refresco.
@@ -4162,9 +4230,9 @@
     var chip=function(k,label,n,extra){
       return '<button class="fchip '+(extra||"")+' '+(ordFilter===k?"on":"")+(n?"":" zero")+'" data-f="'+k+'">'+label+'<span class="fcount">'+n+'</span></button>';
     };
-    var html=states.map(function(s){return chip(s,(s==="ALL"?"Todas":STN[s]),counts[s]||0);}).join("");
-    // Las dos bandejas por compromiso de salida, al final y separadas de los estados.
-    html+=chip('DL_VENCIDO','⏰ Vencidas',venc,'dl-v dlsep')+chip('DL_RIESGO','⚠️ En riesgo',riesgo,'dl-r');
+    var html='<div class="fgroup">'+states.map(function(s){return chip(s,(s==="ALL"?"Todas":STN[s]),counts[s]||0);}).join("")+'</div>';
+    // Las dos bandejas por compromiso de salida, en su propio grupo a la derecha.
+    html+='<div class="fgroup fdl"><span class="fglabel">Deadline</span>'+chip('DL_VENCIDO','⏰ Vencidas',venc,'dl-v')+chip('DL_RIESGO','⚠️ En riesgo',riesgo,'dl-r')+'</div>';
     $("#ord-filters").innerHTML=html;
     $$("#ord-filters .fchip").forEach(function(b){b.addEventListener("click",function(){
       ordFilter=b.getAttribute("data-f");
@@ -4208,7 +4276,7 @@
       var selCell=bulkEnabled()?'<td class="selcol"><input type="checkbox" class="bulk-ck" data-bk="'+o.id+'" '+(bulkSel[o.id]?'checked':'')+' aria-label="Seleccionar orden"></td>':'';
       var cliCell=ordMulti()?'<td class="ordcli"><span class="ordcli-n">'+esc(ordSellerName(o))+'</span></td>':'';
       return '<tr class="click'+(bulkSel[o.id]?' selected':'')+'" data-o="'+o.id+'">'+selCell+'<td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td>'+cliCell+'<td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td style="white-space:nowrap">'+dlChip(o)+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span></td><td style="text-align:right">'+acts+'</td></tr>';
-    }).join(""):'<tr><td colspan="'+((bulkEnabled()?9:8)+(ordMulti()?1:0))+'" class="empty">'+(ordFilter==='DL_VENCIDO'?'Ninguna orden pendiente pasó su deadline. 🎉':ordFilter==='DL_RIESGO'?'Ninguna orden pendiente está cerca de su deadline.':'Sin órdenes en este estado.')+'</td></tr>';
+    }).join(""):'<tr><td colspan="'+((bulkEnabled()?9:8)+(ordMulti()?1:0))+'" class="empty">'+(ordDayFilter?'No hay órdenes con deadline '+(ordDayFilter==='SIN'?'sin definir':ordDayFilter==='PAST'?'en días anteriores':ordDayFilter==='LATER'?'más adelante':'el '+ordDiaLabel(ordDayFilter).toLowerCase())+' en este estado.':ordFilter==='DL_VENCIDO'?'Ninguna orden pendiente pasó su deadline. 🎉':ordFilter==='DL_RIESGO'?'Ninguna orden pendiente está cerca de su deadline.':'Sin órdenes en este estado.')+'</td></tr>';
     var selTh=$("#ord-selall"); if(selTh)selTh.closest('th').classList.toggle('hidden',!bulkEnabled());
     var selM=$("#ord-selall-m"); if(selM)selM.classList.toggle('hidden',!bulkEnabled()||!os.length);
     syncBulkHeader(os); paintBulkBar();
@@ -5338,12 +5406,26 @@
     html+=list('Líneas ignoradas',j.lineErrors,function(x){return 'Fila '+esc(x.fila)+': '+esc(x.motivo);});
     box.innerHTML=html;
   }
+  /** Qué SKUs del cliente admiten lote / vencimiento en el archivo. */
+  function rimpCtlBox(){
+    var ks=(D.skus||[]).filter(function(k){return k.active!==false;});
+    var ctl=ks.filter(function(k){return k.lotControlled||k.expiryControlled;});
+    if(!ks.length)return '';
+    if(!ctl.length)return '<div class="rimp-ctl"><b>Ningún SKU de este cliente controla lote ni vencimiento</b>: deja esas columnas vacías. Si necesitas trazarlos, actívalo antes en Productos.</div>';
+    var chips=ctl.slice(0,40).map(function(k){
+      var t=[]; if(k.lotControlled)t.push('lote'); if(k.expiryControlled)t.push('venc.');
+      return '<span class="rimp-sku" title="'+esc(k.description||'')+'"><b>'+esc(k.sku)+'</b> '+t.join(' + ')+'</span>';
+    }).join('');
+    return '<div class="rimp-ctl"><div style="margin-bottom:6px"><b>Lote y vencimiento solo en estos SKUs</b> ('+ctl.length+' de '+ks.length+'). En el resto, deja esas celdas vacías o la recepción no se crea.</div>'
+      +'<div class="rimp-skus">'+chips+(ctl.length>40?'<span class="hint">… y '+(ctl.length-40)+' más (ver hoja «Productos»)</span>':'')+'</div></div>';
+  }
   function openReceiptImport(){
     if(!seller){toast("Selecciona un cliente primero");return;}
     var sname=esc((byId(D.sellers,seller)||{}).name||seller);
     var html='<div class="form" style="gap:14px">'
-      +'<p class="muted" style="margin:0">Sube varias órdenes de recepción de una vez con un archivo Excel. Descarga el formato, complétalo (una <b>fila por producto</b>; repite el mismo <b>Recepción (grupo)</b> para agregar varias líneas a una recepción) y súbelo aquí. Es la misma información del formulario: proveedor, referencia, ubicación, notas, y por línea SKU, cantidad, lote y vencimiento.</p>'
-      +'<div><button class="btn" id="rimp-tpl">⬇ Descargar formato Excel</button></div>'
+      +'<p class="muted" style="margin:0">Sube varias órdenes de recepción de una vez con un archivo Excel. Descarga el formato, complétalo (una <b>fila por producto</b>; repite el mismo <b>Recepción (grupo)</b> para agregar varias líneas a una recepción) y súbelo aquí. Es la misma información del formulario: proveedor, referencia, ubicación, notas, y por línea SKU, cantidad, lote y vencimiento. El lote y el vencimiento se completan <b>solo</b> en los productos que tienen ese control activo; en los demás, deja la celda vacía.</p>'
+      +rimpCtlBox()
+      +'<div><button class="btn" id="rimp-tpl">⬇ Descargar formato Excel</button> <span class="hint">Incluye la hoja «Productos» con lo que controla cada SKU.</span></div>'
       +'<div class="fld"><label>Archivo de recepciones (.xlsx o .csv)</label><input type="file" id="rimp-file" accept=".xlsx,.xls,.csv"></div>'
       +'<div class="ferr" id="rimp-err"></div>'
       +'<div id="rimp-result"></div>'
@@ -5823,16 +5905,19 @@
           +(expc?' <span class="chip st-RESERVED" style="font-size:10px">VENC.</span>':'')+'</div>'
           +'<div class="muted" style="font-size:12px">Esperado '+(l.expectedQty||0)+' · Ya recib. '+(l.receivedQty||0)+' · Pend. '+pend+'</div>'
         +'</div>'
-        +'<div class="row3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px">'
+        // Lote y vencimiento aparecen SOLO si el producto los controla (y entonces son
+        // obligatorios). Un producto sin controles se recibe solo con la cantidad.
+        +'<div class="row3 ct-grid" style="display:grid;grid-template-columns:repeat('+(1+(lotc?1:0)+(expc?1:0))+',minmax(0,1fr));gap:10px;margin-top:8px">'
           +'<div class="fld"><label>Recibido ahora</label><input class="cotejo-in" data-line="'+l.lineNo+'" type="number" min="0" value="0" placeholder="0" style="width:100%" title="Ingresa lo que cuentas físicamente (pendiente: '+pend+')"></div>'
-          +'<div class="fld"><label>Lote'+(lotc?' <b style="color:var(--crit)">*</b>':'')+'</label><input class="ct-lot" data-line="'+l.lineNo+'" data-req="'+(lotc?1:0)+'" value="'+esc(l.lot||"")+'" placeholder="'+(lotc?'Obligatorio':'Lote (opc.)')+'"></div>'
-          +'<div class="fld"><label>Vencimiento'+(expc?' <b style="color:var(--crit)">*</b>':'')+'</label><input class="ct-exp" data-line="'+l.lineNo+'" data-req="'+(expc?1:0)+'" type="date" value="'+esc(l.expiry?String(l.expiry).slice(0,10):"")+'"></div>'
+          +(lotc?'<div class="fld"><label>Lote <b style="color:var(--crit)">*</b></label><input class="ct-lot" data-line="'+l.lineNo+'" data-req="1" value="'+esc(l.lot||"")+'" placeholder="Obligatorio"></div>':'')
+          +(expc?'<div class="fld"><label>Vencimiento <b style="color:var(--crit)">*</b></label><input class="ct-exp" data-line="'+l.lineNo+'" data-req="1" type="date" value="'+esc(l.expiry?String(l.expiry).slice(0,10):"")+'"></div>':'')
         +'</div>'
+        +(!lotc&&!expc?'<div class="hint" style="margin-top:4px">Sin control de lote ni vencimiento: solo se registra la cantidad.</div>':'')
         +serBlock
         +'</div>';
     }).join("");
     var html='<div class="form">'
-      +'<p class="hint" style="margin:0 0 10px">Cuenta el físico recibido en esta entrega. Captura el lote y vencimiento reales; para SKUs serializados, ingresa los N° de serie. Al confirmar, ingresa al stock exactamente lo contado.</p>'
+      +'<p class="hint" style="margin:0 0 10px">Cuenta el físico recibido en esta entrega. Los productos con control de lote y/o vencimiento piden ese dato (obligatorio); los demás, solo la cantidad. Para SKUs serializados, ingresa los N° de serie. Al confirmar, ingresa al stock exactamente lo contado.</p>'
       +cards
       +'<div class="ferr" id="ct-err"></div>'
       +'<div class="acts"><span class="hint">'+esc(o.id)+' · '+esc(o.supplier||"proveedor")+'</span><div style="display:flex;gap:10px"><button class="btn" id="ct-cancel">Cancelar</button><button class="btn pri" id="ct-save">Confirmar recepción</button></div></div>'
@@ -7133,6 +7218,12 @@
   // ----- Orden de recepción: crear / editar (multi-SKU) -----
   var recDraft=[]; // líneas en edición: [{sku,qty,lot,expiry}]
   function skuOptionsHtml(sel){return (D.skus||[]).map(function(s){return '<option value="'+esc(s.sku)+'"'+(s.sku===sel?' selected':'')+'>'+esc(s.sku)+' — '+esc(s.description||'')+'</option>';}).join("");}
+  /** ¿Qué controla este SKU? Sin catálogo (o SKU desconocido) se asume que puede todo. */
+  function recLotCtl(sku){
+    if(!(D.skus||[]).length)return {lot:true,exp:true};
+    var k=skuObj(sku); if(!k)return {lot:false,exp:false};
+    return {lot:!!k.lotControlled,exp:!!k.expiryControlled};
+  }
   function renderRecLines(){
     var host=$("#rf-lines"); if(!host)return;
     var hasSkus=(D.skus||[]).length>0;
@@ -7140,15 +7231,21 @@
       var skuCtl=hasSkus
         ? '<select data-rl="sku" data-i="'+i+'">'+skuOptionsHtml(l.sku)+'</select>'
         : '<input data-rl="sku" data-i="'+i+'" value="'+esc(l.sku||"")+'" placeholder="Código SKU">';
+      // Lote / vencimiento se capturan SI Y SOLO SI el producto los controla (el backend
+      // rechaza lo contrario). Sin catálogo cargado no hay cómo saberlo: se deja abierto.
+      var ctl=recLotCtl(l.sku);
+      if(!ctl.lot)l.lot=""; if(!ctl.exp)l.expiry="";
       return '<div class="recline">'
         +'<div class="rc rc-sku">'+skuCtl+'</div>'
         +'<div class="rc rc-qty"><input data-rl="qty" data-i="'+i+'" type="number" min="1" value="'+(l.qty||1)+'" placeholder="Cant."></div>'
-        +'<div class="rc rc-lot"><input data-rl="lot" data-i="'+i+'" value="'+esc(l.lot||"")+'" placeholder="Lote (opc.)"></div>'
-        +'<div class="rc rc-exp"><input data-rl="expiry" data-i="'+i+'" type="date" value="'+esc(l.expiry||"")+'"></div>'
+        +'<div class="rc rc-lot"><input data-rl="lot" data-i="'+i+'" value="'+esc(l.lot||"")+'"'+(ctl.lot?' placeholder="Lote"':' disabled placeholder="No controla lote" title="Este producto no tiene control de lote. Actívalo en Productos si necesitas trazarlo."')+'></div>'
+        +'<div class="rc rc-exp">'+(ctl.exp?'<input data-rl="expiry" data-i="'+i+'" type="date" value="'+esc(l.expiry||"")+'">':'<input data-rl="expiry" data-i="'+i+'" type="text" disabled placeholder="No controla venc." title="Este producto no tiene control de vencimiento. Actívalo en Productos si es perecible.">')+'</div>'
         +'<button type="button" class="mini danger rc-del" data-rdelline="'+i+'"'+(recDraft.length<=1?' disabled':'')+'>✕</button>'
         +'</div>';
     }).join("");
     $$("#rf-lines [data-rl]").forEach(function(el){el.addEventListener("input",function(){var i=+el.getAttribute("data-i"),k=el.getAttribute("data-rl");recDraft[i][k]=el.value;});});
+    // Cambiar el producto cambia qué campos aplican: se repinta la línea.
+    $$("#rf-lines select[data-rl=sku]").forEach(function(el){el.addEventListener("change",function(){recDraft[+el.getAttribute("data-i")].sku=el.value;renderRecLines();});});
     $$("#rf-lines [data-rdelline]").forEach(function(b){b.addEventListener("click",function(){recDraft.splice(+b.getAttribute("data-rdelline"),1);renderRecLines();});});
   }
   function openReceiveForm(existing){
@@ -7188,14 +7285,17 @@
         var parts=[];
         if(r.sku)parts.push("✓ SKU "+r.sku);
         else parts.push(r.isGs1?("Código GS1 leído; el GTIN "+(r.gtin||"?")+" no está vinculado a un SKU"):"Código no reconocido");
-        if(r.lot)parts.push("lote "+r.lot); if(r.serial)parts.push("serie "+r.serial); if(r.expiry)parts.push("vence "+r.expiry);
+        var ctlS=recLotCtl(r.sku);
+        if(r.lot)parts.push("lote "+r.lot+(r.sku&&!ctlS.lot?" (ignorado: el producto no controla lote)":""));
+        if(r.serial)parts.push("serie "+r.serial);
+        if(r.expiry)parts.push("vence "+r.expiry+(r.sku&&!ctlS.exp?" (ignorado: el producto no controla vencimiento)":""));
         $("#rf-scan-msg").textContent=parts.join(" · ");
         if(r.sku){
           var idx=-1; for(var k=0;k<recDraft.length;k++){if(recDraft[k].sku===r.sku){idx=k;break;}}
           if(idx<0){var e=-1;for(var j=0;j<recDraft.length;j++){if(!recDraft[j].sku){e=j;break;}} if(e>=0)idx=e; else {recDraft.push({sku:r.sku,qty:1,lot:"",expiry:""});idx=recDraft.length-1;}}
           recDraft[idx].sku=r.sku;
-          if(lot)recDraft[idx].lot=lot;
-          if(r.expiry)recDraft[idx].expiry=r.expiry;
+          if(lot&&ctlS.lot)recDraft[idx].lot=lot;
+          if(r.expiry&&ctlS.exp)recDraft[idx].expiry=r.expiry;
           if(!recDraft[idx].qty||recDraft[idx].qty<1)recDraft[idx].qty=1;
           renderRecLines();
         }
@@ -7215,7 +7315,8 @@
         var l=recDraft[i]; var sku=(l.sku||"").trim(); var qty=num(l.qty);
         if(!sku){$("#rf-err").textContent="Falta el SKU en la línea "+(i+1)+".";return;}
         if(!qty||qty<1){$("#rf-err").textContent="Cantidad inválida en la línea "+(i+1)+".";return;}
-        var row={sku:sku,qty:qty}; if((l.lot||"").trim())row.lot=l.lot.trim(); if(l.expiry)row.expiry=l.expiry;
+        var ctlR=recLotCtl(sku);
+        var row={sku:sku,qty:qty}; if(ctlR.lot&&(l.lot||"").trim())row.lot=l.lot.trim(); if(ctlR.exp&&l.expiry)row.expiry=l.expiry;
         lines.push(row);
       }
       if(!lines.length){$("#rf-err").textContent="Agrega al menos una línea.";return;}
@@ -8804,6 +8905,13 @@
       loadSeller();
       return;
     }
+    renderOrdFilters(); renderOrders(); paintBulkBar();
+  });
+  if($("#ord-day"))$("#ord-day").addEventListener("change",function(){
+    ordDayFilter=this.value||'';
+    bulkSel={};
+    // Elegir un día es planificar por urgencia: la tabla se ordena por deadline.
+    if(ordDayFilter&&ordDayFilter!=='SIN')setSort('orders','deadline',1);
     renderOrdFilters(); renderOrders(); paintBulkBar();
   });
   $("#ord-new").addEventListener("click",function(){openOrderForm(null);});
