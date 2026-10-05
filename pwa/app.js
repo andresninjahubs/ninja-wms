@@ -151,7 +151,7 @@
 
   // ---- Navegación -----------------------------------------------------------
   function show(id) {
-    ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship', 'pickst'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
+    ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship', 'pickst', 'recvst', 'taskst', 'count', 'ret', 'kit'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
     if (id !== 'scan') stopCamera();
     if (typeof camClose === 'function' && $('camsheet') && $('camsheet').style.display !== 'none') camClose();
     if (id === 'home') { loadBoard(); if (!boardTimer) boardTimer = setInterval(function () { if ($('home').classList.contains('on') && !document.hidden) loadBoard(); }, 30000); }
@@ -212,6 +212,7 @@
     var sel = $('free-seller'); if (!sel || !user || !user.operationId) return;
     api('/operations/' + encodeURIComponent(user.operationId) + '/sellers').then(function (list) {
       var act = (list || []).filter(function (x) { return x.active !== false; });
+      SELLERS = act;
       if (cfg.seller && !act.some(function (x) { return x.id === cfg.seller; })) { cfg.seller = ''; save(); }
       if (!cfg.seller && act.length === 1) { cfg.seller = act[0].id; save(); loadLocations(); }
       sel.innerHTML = (act.length > 1 ? '<option value="">— Elige el cliente —</option>' : '')
@@ -265,6 +266,12 @@
       if (which === 'shipst') { openShipStation(null); return; }
       // Picking: pedidos asignados y libres de toda la operación (no pide cliente).
       if (which === 'pick') { openPickStation(); return; }
+      // Recepción: recepciones asignadas y libres de toda la operación (no pide cliente).
+      if (which === 'receive') { openRecvStation(); return; }
+      if (which === 'putaway') { openTaskStation('putaway'); return; }
+      if (which === 'countst') { openTaskStation('count'); return; }
+      if (which === 'retst') { openReturns(); return; }
+      if (which === 'kitst') { openKits(); return; }
       if (!cfg.seller) { toast('Elige primero el cliente en «Operar libre»', false); var fs = $('free-seller'); if (fs) fs.focus(); return; }
       startOp(which);
     });
@@ -420,7 +427,7 @@
     // Empaque y despacho de una tarea abren su estación con la orden ya elegida.
     if (t.type === 'PACK') { openPackStation(t); return; }
     if (t.type === 'SHIP') { openShipStation(t); return; }
-    if (t.type === 'COUNT') { toast('Los conteos se registran desde el panel de conteo cíclico (o pide al supervisor que lo cierre).', false); return; }
+    if (t.type === 'COUNT') { openCount(t, null); return; }
     startOp('pick');
   }
   function setTaskCtx(html) { var c = $('taskctx'); c.innerHTML = html; c.style.display = html ? '' : 'none'; }
@@ -468,7 +475,7 @@
     if (msg) $('res-sub').textContent += ' ' + msg;
     $('btn-again').style.display = 'none';
     $('btn-closercpt').style.display = 'none';
-    $('btn-finish').textContent = PI.back ? 'Volver a la lista de picking' : 'Volver a mis tareas';
+    $('btn-finish').textContent = PI.back === 'recv' ? 'Volver a la lista de recepciones' : PI.back === 'ts:putaway' ? 'Volver a la lista de guardado' : PI.back ? 'Volver a la lista de picking' : 'Volver a mis tareas';
     task = null;
     loadBoard();
   }
@@ -829,7 +836,7 @@
       $('qtywrap').style.display = 'none'; $('btn-confirm').style.display = 'none';
       $('after').style.display = 'flex';
       $('btn-closercpt').style.display = 'none';
-      $('btn-finish').textContent = PI.back ? 'Terminar y volver a la lista de picking' : 'Terminar y volver a mis tareas';
+      $('btn-finish').textContent = PI.back === 'recv' ? 'Terminar y volver a la lista de recepciones' : PI.back === 'ts:putaway' ? 'Terminar y volver a la lista de guardado' : PI.back ? 'Terminar y volver a la lista de picking' : 'Terminar y volver a mis tareas';
       if (task && task.type === 'PICK') {
         if (r.order && r.order.status === 'PICKED') finishTask('Orden completamente pickeada: la tarea salió de tu bandeja.');
         else { loadTaskPicklist(); $('btn-again').style.display = ''; }
@@ -965,7 +972,11 @@
   });
 
   // Si el flujo se abrió desde la estación de picking, volver lleva a esa lista.
-  function volverDeFlujo() { task = null; if (PI.back) { PI.back = false; openPickStation(); } else show('home'); }
+  function volverDeFlujo() {
+    task = null;
+    var a = PI.back; PI.back = false;
+    if (a === 'recv') openRecvStation(); else if (a === 'ts:putaway') openTaskStation('putaway'); else if (a) openPickStation(); else show('home');
+  }
   $('btn-back').addEventListener('click', volverDeFlujo);
   $('btn-again').addEventListener('click', function () {
     var t = task; startOp(op);
@@ -975,7 +986,15 @@
   });
   $('btn-closercpt').addEventListener('click', function () {
     if (!task || task.type !== 'RECEIVE') return;
-    var b = $('btn-closercpt'); b.disabled = true;
+    var b = $('btn-closercpt');
+    // Cerrar con faltante no tiene vuelta atrás: pide un segundo toque.
+    if (!b.getAttribute('data-arm')) {
+      b.setAttribute('data-arm', '1'); b.textContent = 'Toca de nuevo para cerrar con faltante';
+      setTimeout(function () { b.removeAttribute('data-arm'); b.textContent = 'Cerrar recepción con faltante'; }, 4000);
+      return;
+    }
+    b.removeAttribute('data-arm'); b.textContent = 'Cerrar recepción con faltante';
+    b.disabled = true;
     api('/sellers/' + encodeURIComponent(task.sellerId) + '/receipts/' + encodeURIComponent(task.entityId) + '/close', { method: 'POST', body: {} })
       .then(function () { toast('Recepción cerrada con faltante', true); finishTask('Recepción cerrada: la tarea salió de tu bandeja.'); })
       .catch(function (e) { toast(e.message, false); })
@@ -1792,10 +1811,9 @@
     var seller = cfg.seller;
     basePack(seller, it.sku).then(function (pack) {
       // Los flujos libres (y el guardado) registran por código de barras: sin EAN no se puede.
-      var porCodigo = !task || task.type === 'PUTAWAY' || task.type === 'RESLOT' || task.type === 'RESTOCK';
-      if (porCodigo && op !== 'stock' && !pack.barcode) { toast('El producto ' + it.sku + ' no tiene EAN registrado. Pídele al administrador que lo cargue en Productos.', false); return; }
+      // Sin EAN registrado se manda «SKU:<código>»: el servidor lo entiende como la unidad base.
       if (navigator.vibrate) navigator.vibrate(40);
-      captured.product = pack.barcode || it.sku; captured.resolved = pack; captured.manual = true;
+      captured.product = pack.barcode || ('SKU:' + it.sku); captured.resolved = pack; captured.manual = true;
       $('r-sku').textContent = pack.sku;
       $('r-level').textContent = 'Elegido a mano · ' + pack.label;
       $('r-factor').textContent = '× 1 (unidad base)';
@@ -1813,6 +1831,720 @@
       if ($('qtywrap').style.display !== 'none' && it.pend > 0) { $('q-count').value = it.pend; updatePreview(); }
     });
   }
+
+  // =====================================================================
+  // ESTACIÓN DE RECEPCIÓN
+  // ---------------------------------------------------------------------
+  // Recepciones abiertas (Creada / En bodega / Parcial) de toda la operación: las que
+  // tiene asignadas el operario y, si el administrador lo permite, las libres para
+  // tomar. Desde aquí se marca la llegada al andén y se abre el cotejo guiado.
+  // =====================================================================
+  var RC = { tab: 'mine', board: null, rec: {}, arr: null, busy: false };
+  var RST = { PENDING: 'Creada', ARRIVED: 'En bodega', PARTIAL: 'Parcial' };
+  function openRecvStation() {
+    task = null;
+    show('recvst');
+    $('rc-list').innerHTML = '<div class="pk-empty">Cargando recepciones…</div>';
+    loadRecvStation();
+    enfoca('rc-code');
+  }
+  function loadRecvStation() {
+    var oid = opIdOrNull(); if (!oid || !user) return;
+    Promise.all([
+      api('/assignments/board?operationId=' + encodeURIComponent(oid) + '&operator=' + encodeURIComponent(user.id) + '&type=RECEIVE'),
+      api('/operations/' + encodeURIComponent(oid) + '/receipts?open=true').catch(function () { return []; }),
+    ]).then(function (r) {
+      RC.board = r[0] || { mine: [], available: [] };
+      RC.rec = {}; (r[1] || []).forEach(function (x) { RC.rec[x.id] = x; });
+      // Libres: primero lo que ya llegó (está ocupando el andén), luego lo parcial, luego lo creado.
+      var peso = { ARRIVED: 0, PARTIAL: 1, PENDING: 2 };
+      (RC.board.available || []).sort(function (a, b) {
+        var ra = RC.rec[a.entityId] || {}, rb = RC.rec[b.entityId] || {};
+        var pa = peso[ra.status] != null ? peso[ra.status] : 3, pb = peso[rb.status] != null ? peso[rb.status] : 3;
+        return pa !== pb ? pa - pb : Date.parse(ra.createdAt || 0) - Date.parse(rb.createdAt || 0);
+      });
+      if (RC.tab === 'mine' && !(RC.board.mine || []).length && (RC.board.available || []).length) RC.tab = 'free';
+      renderRecvStation();
+    }).catch(function (e) { $('rc-list').innerHTML = '<div class="pk-empty">No pude cargar las recepciones: ' + esc(e.message) + '</div>'; });
+  }
+  function rcCard(t, libre, first) {
+    var r = RC.rec[t.entityId] || {};
+    var lines = r.lines || [];
+    var esp = lines.reduce(function (a, l) { return a + (l.expectedQty || 0); }, 0);
+    var rec = lines.reduce(function (a, l) { return a + (l.receivedQty || 0); }, 0);
+    var st = r.status || 'PENDING';
+    var run = t.estado === 'in_progress';
+    var ref = t.entityRef || r.reference || r.id;
+    var acts = '';
+    if (st === 'PENDING') acts += '<button class="oc-act alt" data-rcarr="' + esc(t.entityId) + '">🚚 Llegó al andén</button>';
+    acts += libre
+      ? '<button class="oc-act" data-rctake="' + esc(t.entityId) + '">Tomar</button>'
+      : '<button class="oc-act' + (first ? '' : ' alt') + '" data-rcstart="' + esc(t.entityId) + '">' + (run || rec > 0 ? 'Continuar' : 'Recibir') + '</button>';
+    var arr = RC.arr === t.entityId
+      ? '<div class="rc-arr"><input id="rc-nota" placeholder="Nota (opcional): patente, pallets, daños…" autocomplete="off"><div class="rc-acts"><button class="oc-act alt" data-rcarrno="1">Cancelar</button><button class="oc-act" data-rcarrok="' + esc(t.entityId) + '">Confirmar llegada</button></div></div>'
+      : '';
+    return '<div class="ordc rc' + (run ? ' run' : '') + '"><div class="oc-main"><div class="oc-ref">' + esc(ref) + ' <span class="rst ' + esc(st) + '">' + esc(RST[st] || st) + '</span>' + (run ? ' <span class="tagrun">En curso</span>' : '') + '</div>'
+      + '<div class="oc-meta">' + esc(t.cliente || r.sellerName || '') + (r.supplier ? ' · ' + esc(r.supplier) : '') + '</div>'
+      + '<div class="oc-meta">' + lines.length + ' línea(s) · ' + rec + ' de ' + esp + ' un recibidas' + (r.reference && r.id !== ref ? ' · ' + esc(r.id) : '') + (st === 'ARRIVED' && r.arrivedAt ? ' · llegó ' + fechaCorta(r.arrivedAt) : '') + '</div>'
+      + (esp ? '<div class="bar" style="margin-top:8px"><i style="width:' + Math.min(100, Math.round(rec * 100 / esp)) + '%"></i></div>' : '')
+      + '</div><div class="rc-acts">' + acts + '</div>' + arr + '</div>';
+  }
+  function renderRecvStation() {
+    var b = RC.board || { mine: [], available: [] };
+    var mine = b.mine || [], free = b.available || [];
+    $('rc-cmine').textContent = mine.length; $('rc-cfree').textContent = b.selfPickup ? free.length : '—';
+    Array.prototype.forEach.call(document.querySelectorAll('#rc-tabs [data-rct]'), function (c) { c.classList.toggle('on', c.getAttribute('data-rct') === RC.tab); });
+    $('rc-sub').textContent = mine.length + ' asignada(s) a ti' + (b.selfPickup ? ' · ' + free.length + ' libre(s)' : '');
+    var html;
+    if (b.habilitado === false) {
+      html = '<div class="pk-empty">Tu usuario no tiene habilitada la <b>recepción</b>. Pídele al administrador que la active en tus habilidades.</div>';
+    } else if (RC.tab === 'mine') {
+      html = mine.length
+        ? '<div class="sec" style="margin-bottom:8px">En el orden en que debes hacerlas</div>' + mine.map(function (t, i) { return rcCard(t, false, i === 0); }).join('')
+        : '<div class="pk-empty">No tienes recepciones asignadas.' + (b.selfPickup && free.length ? ' Revisa <b>Libres</b> para tomar una.' : '') + '</div>';
+    } else {
+      html = !b.selfPickup
+        ? '<div class="pk-empty">El administrador no permite tomar recepciones desde la app. Espera a que te asignen, o pídele que active <b>«Tomar tareas»</b> en Asignaciones.</div>'
+        : (free.length
+          ? '<div class="sec" style="margin-bottom:8px">Primero lo que ya está en el andén</div>' + free.map(function (t) { return rcCard(t, true, false); }).join('')
+          : '<div class="pk-empty">No hay recepciones libres ahora. 🎉</div>');
+    }
+    $('rc-list').innerHTML = html;
+    if (RC.arr && $('rc-nota')) enfoca('rc-nota');
+  }
+  $('rc-tabs').addEventListener('click', function (e) {
+    var c = e.target.closest('[data-rct]'); if (!c) return;
+    RC.tab = c.getAttribute('data-rct'); RC.arr = null; renderRecvStation();
+  });
+  function rcStart(t) {
+    PI.back = 'recv';        // al terminar o volver, regresa a esta lista
+    startAssigned(t);
+  }
+  function rcFind(list, id) { return (list || []).filter(function (x) { return x.entityId === id; })[0]; }
+  function rcTake(entityId, thenStart) {
+    if (RC.busy) return;
+    var t = rcFind(RC.board && RC.board.available, entityId); if (!t) return;
+    RC.busy = true;
+    api('/assignments/take', { method: 'POST', body: { operationId: opIdOrNull(), type: 'RECEIVE', entityId: entityId } })
+      .then(function (a) {
+        RC.busy = false; bip(true);
+        toast((t.entityRef || 'Recepción') + ' es tuya', true);
+        var asg = { type: 'RECEIVE', entityId: entityId, entityRef: (a && a.entityRef) || t.entityRef, sellerId: (a && a.sellerId) || t.sellerId, cliente: t.cliente, unitsEstimate: (a && a.unitsEstimate) || t.unidades };
+        if (thenStart) { rcStart(asg); return; }
+        RC.tab = 'mine'; loadRecvStation();
+      })
+      .catch(function (e) { RC.busy = false; bip(false); toast(e.message, false); loadRecvStation(); });
+  }
+  function rcArrive(entityId) {
+    var r = RC.rec[entityId]; if (!r || RC.busy) return;
+    var nota = ($('rc-nota') && $('rc-nota').value || '').trim();
+    RC.busy = true;
+    api('/sellers/' + encodeURIComponent(r.sellerId) + '/receipts/' + encodeURIComponent(r.id) + '/arrive', { method: 'POST', body: nota ? { nota: nota } : {} })
+      .then(function () { RC.busy = false; RC.arr = null; bip(true); toast((r.reference || r.id) + ' marcada En bodega', true); loadRecvStation(); })
+      .catch(function (e) { RC.busy = false; bip(false); toast(e.message, false); });
+  }
+  $('rc-list').addEventListener('click', function (e) {
+    var b;
+    if ((b = e.target.closest('[data-rcstart]'))) { var t = rcFind(RC.board && RC.board.mine, b.getAttribute('data-rcstart')); if (t) rcStart(t); return; }
+    if ((b = e.target.closest('[data-rctake]'))) { b.disabled = true; rcTake(b.getAttribute('data-rctake'), false); return; }
+    if ((b = e.target.closest('[data-rcarr]'))) { RC.arr = b.getAttribute('data-rcarr'); renderRecvStation(); return; }
+    if ((b = e.target.closest('[data-rcarrno]'))) { RC.arr = null; renderRecvStation(); return; }
+    if ((b = e.target.closest('[data-rcarrok]'))) { b.disabled = true; rcArrive(b.getAttribute('data-rcarrok')); return; }
+  });
+  $('rc-scan').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var el = $('rc-code'), c = norm(el.value); el.value = '';
+    if (!c) return;
+    var b = RC.board || {};
+    var hit = function (t) { var r = RC.rec[t.entityId] || {}; return norm(t.entityRef) === c || norm(t.entityId) === c || norm(r.reference) === c || norm(r.id) === c; };
+    var m = (b.mine || []).filter(hit)[0];
+    if (m) { bip(true); rcStart(m); return; }
+    var f = (b.available || []).filter(hit)[0];
+    if (f) {
+      if (!b.selfPickup) { bip(false); toast('Esa recepción está libre, pero el administrador no permite tomarlas desde la app', false); return; }
+      rcTake(f.entityId, true); return;   // escanear una recepción libre = tomarla y empezar
+    }
+    var x = Object.keys(RC.rec).map(function (k) { return RC.rec[k]; }).filter(function (r) { return norm(r.reference) === c || norm(r.id) === c; })[0];
+    bip(false);
+    toast(x ? ('La recepción ' + (x.reference || x.id) + ' está asignada a otro operario') : ('No encontré una recepción abierta con «' + c + '»'), false);
+    enfoca('rc-code');
+  });
+  $('btn-rcrefresh').addEventListener('click', function () { loadRecvStation(); toast('Actualizado', true); });
+  $('btn-rcback').addEventListener('click', function () { PI.back = false; show('home'); });
+  $('rc-loose').addEventListener('click', function () {
+    // Ingreso sin orden de recepción: no hay esperado ni proveedor. Queda como opción
+    // secundaria para urgencias y pide el cliente, como antes.
+    PI.back = false;
+    if (!cfg.seller) { toast('Para la recepción suelta elige primero el cliente en «Operar libre»', false); show('home'); switchTab('free'); var fs = $('free-seller'); if (fs) fs.focus(); return; }
+    startOp('receive');
+  });
+
+
+  // =====================================================================
+  // FLUJOS COMPLETOS DE LA APP: Guardado y Conteo por tareas, Conteo cíclico,
+  // Devoluciones y Armado de kits. Todo se puede hacer pistoleando (pistola HID o
+  // teclado: el campo de código siempre tiene el foco) o tocando en pantalla.
+  // =====================================================================
+  var SELLERS = [];                       // clientes activos de la operación (los carga loadFreeSellers)
+  function sellerNom(id) { var s = SELLERS.filter(function (x) { return x.id === id; })[0]; return (s && s.name) || id; }
+  function skuList(sellerId) {
+    if (SKU_LIST[sellerId]) return Promise.resolve(SKU_LIST[sellerId]);
+    return api('/sellers/' + encodeURIComponent(sellerId) + '/skus').then(function (l) {
+      SKU_LIST[sellerId] = (l || []).filter(function (k) { return k.active !== false; }); return SKU_LIST[sellerId];
+    });
+  }
+  /** Código pistoleado → { sku, factor }. Acepta EAN/DUN, o el SKU escrito tal cual. */
+  function resolveCode(sellerId, code) {
+    return api('/sellers/' + encodeURIComponent(sellerId) + '/barcodes/' + encodeURIComponent(code))
+      .then(function (p) { return { sku: p.sku, factor: p.factor || 1, label: p.label }; })
+      .catch(function () {
+        return skuList(sellerId).then(function (l) {
+          var k = l.filter(function (x) { return norm(x.sku) === norm(code) || (x.barcode && String(x.barcode) === String(code)); })[0];
+          if (!k) throw new Error('Código no reconocido: ' + code);
+          return { sku: k.sku, factor: 1, label: 'Unidad' };
+        });
+      });
+  }
+  function skuDef(sellerId, sku) { return ((SKU_LIST[sellerId] || []).filter(function (k) { return k.sku === sku; })[0]) || null; }
+  function marcaInicio(t) {
+    api('/assignments/start', { method: 'POST', body: { operationId: opIdOrNull(), type: t.type, entityId: t.entityId, clientAt: new Date().toISOString() } }).catch(function () {});
+  }
+  /** Buscador de catálogo reutilizable: pinta una lista tocable de SKUs del cliente. */
+  function catalogPicker(hostId, sellerId, onPick, placeholder) {
+    var host = $(hostId); if (!host) return;
+    host.innerHTML = '<input class="cp-q" placeholder="' + esc(placeholder || 'Buscar producto por SKU o nombre') + '" autocomplete="off"><div class="cp-list" style="margin-top:8px"></div>';
+    var q = host.querySelector('.cp-q'), list = host.querySelector('.cp-list');
+    function pinta() {
+      skuList(sellerId).then(function (all) {
+        var t = norm(q.value);
+        // Los kits virtuales no tienen stock propio: no se cuentan ni se mueven.
+        var hits = all.filter(function (k) { return k.kitMode !== 'VIRTUAL' && (!t || norm(k.sku).indexOf(t) >= 0 || norm(k.description).indexOf(t) >= 0); }).slice(0, t ? 12 : 6);
+        list.innerHTML = hits.length ? hits.map(function (k, i) {
+          return '<button type="button" class="pp" data-cp="' + i + '"><div class="pp-main"><div class="pp-sku">' + esc(k.sku) + '</div><div class="pp-sub">' + esc(k.description || '') + '</div></div><span class="pp-q">＋</span></button>';
+        }).join('') : '<div class="muted" style="font-size:13px">Sin resultados.</div>';
+        list.onclick = function (e) { var b = e.target.closest('[data-cp]'); if (b) onPick(hits[+b.getAttribute('data-cp')]); };
+      });
+    }
+    q.addEventListener('input', pinta); pinta();
+  }
+  /** Selector de ubicaciones tocable con buscador (para destino, conteo libre, etc.). */
+  function locPicker(hostId, filtro, onPick, placeholder) {
+    var host = $(hostId); if (!host) return;
+    host.innerHTML = '<input class="lp-q" placeholder="' + esc(placeholder || 'Buscar ubicación') + '" autocomplete="off"><div class="locpick" style="margin-top:8px"></div>';
+    var q = host.querySelector('.lp-q'), box = host.querySelector('.locpick');
+    function pinta() {
+      var t = norm(q.value);
+      var hits = LOCS.filter(filtro || function () { return true; }).filter(function (l) { return !t || norm(l.code).indexOf(t) >= 0; }).slice(0, 40);
+      box.innerHTML = hits.length ? hits.map(function (l) { return '<button type="button" class="chip" data-lp="' + esc(l.id) + '">' + esc(l.code) + '</button>'; }).join('') : '<span class="muted" style="font-size:13px">Sin ubicaciones.</span>';
+      box.onclick = function (e) { var b = e.target.closest('[data-lp]'); if (b) onPick(LOC_BY_ID[b.getAttribute('data-lp')]); };
+    }
+    q.addEventListener('input', pinta); pinta();
+  }
+
+  // ---------------------------------------------------------------------
+  // ESTACIÓN GENÉRICA POR TAREAS (Guardado y Conteo)
+  // ---------------------------------------------------------------------
+  var TS_KINDS = {
+    putaway: { types: 'PUTAWAY,RESLOT,RESTOCK', title: 'Guardado', mine: 'Asignadas a mí', label: 'Escanea la ubicación de origen o escribe el SKU', loose: 'Guardado suelto (sin tarea)', nada: 'No hay stock esperando guardado.', skill: 'el guardado' },
+    count: { types: 'COUNT', title: 'Conteo', mine: 'Asignados a mí', label: 'Escanea la ubicación a contar o escribe el SKU', loose: 'Conteo libre de una ubicación', nada: 'No hay conteos pendientes hoy. 🎉', skill: 'el conteo' },
+  };
+  var TS_TL = { PUTAWAY: 'Guardado', RESLOT: 'Re-slot', RESTOCK: 'Reposición', COUNT: 'Conteo' };
+  var TS = { kind: null, tab: 'mine', board: null, busy: false };
+  function openTaskStation(kind) {
+    task = null; TS.kind = kind; var K = TS_KINDS[kind];
+    show('taskst');
+    $('ts-title').textContent = K.title; $('ts-label').textContent = K.label; $('ts-lmine').textContent = K.mine;
+    $('ts-code').placeholder = kind === 'count' ? 'Ubicación o SKU' : 'Ubicación o SKU';
+    $('ts-loose').textContent = K.loose;
+    $('ts-list').innerHTML = '<div class="pk-empty">Cargando…</div>';
+    loadTaskStation(); enfoca('ts-code');
+  }
+  function loadTaskStation() {
+    var oid = opIdOrNull(); if (!oid || !user) return;
+    api('/assignments/board?operationId=' + encodeURIComponent(oid) + '&operator=' + encodeURIComponent(user.id) + '&type=' + TS_KINDS[TS.kind].types)
+      .then(function (b) {
+        TS.board = b || { mine: [], available: [] };
+        if (TS.tab === 'mine' && !(TS.board.mine || []).length && (TS.board.available || []).length) TS.tab = 'free';
+        renderTaskStation();
+      }).catch(function (e) { $('ts-list').innerHTML = '<div class="pk-empty">No pude cargar las tareas: ' + esc(e.message) + '</div>'; });
+  }
+  function tsParts(t) { var p = String(t.entityId).split(':'); return { sid: p[0], ref: p.slice(1).join(':'), sku: p[1], loc: p[2] }; }
+  function tsCard(t, libre, first) {
+    var p = tsParts(t), run = t.estado === 'in_progress';
+    var meta = (t.cliente || sellerNom(t.sellerId || p.sid));
+    if (TS.kind === 'count') meta += ' · ' + (LOC_BY_ID[p.ref] ? 'por ubicación' : 'por SKU');
+    else meta += (t.unitsEstimate || t.unidades ? ' · ' + (t.unitsEstimate || t.unidades) + ' un' : '');
+    var btn = libre ? '<button class="oc-act" data-tstake="' + esc(t.entityId) + '" data-tstype="' + esc(t.type) + '">Tomar</button>'
+      : '<button class="oc-act' + (first ? '' : ' alt') + '" data-tsstart="' + esc(t.entityId) + '">' + (run ? 'Continuar' : 'Empezar') + '</button>';
+    return '<div class="ordc' + (run ? ' run' : '') + '"><div class="oc-main"><div class="oc-ref"><span class="typechip ' + esc(t.type) + '">' + esc(TS_TL[t.type] || t.type) + '</span> ' + esc(t.entityRef || p.ref) + (run ? ' <span class="tagrun">En curso</span>' : '') + '</div>'
+      + '<div class="oc-meta">' + esc(meta) + '</div>' + (!libre && t.priorityReason ? '<div class="oc-meta" style="color:var(--ink-2)">' + esc(t.priorityReason) + '</div>' : '') + '</div>' + btn + '</div>';
+  }
+  function renderTaskStation() {
+    var b = TS.board || { mine: [], available: [] }, K = TS_KINDS[TS.kind];
+    var mine = b.mine || [], free = b.available || [];
+    $('ts-cmine').textContent = mine.length; $('ts-cfree').textContent = b.selfPickup ? free.length : '—';
+    Array.prototype.forEach.call(document.querySelectorAll('#ts-tabs [data-tst]'), function (c) { c.classList.toggle('on', c.getAttribute('data-tst') === TS.tab); });
+    $('ts-sub').textContent = mine.length + ' asignada(s) a ti' + (b.selfPickup ? ' · ' + free.length + ' libre(s)' : '');
+    var html;
+    if (b.habilitado === false) html = '<div class="pk-empty">Tu usuario no tiene habilitado ' + K.skill + '. Pídele al administrador que lo active en tus habilidades.</div>';
+    else if (TS.tab === 'mine') html = mine.length ? mine.map(function (t, i) { return tsCard(t, false, i === 0); }).join('') : '<div class="pk-empty">No tienes tareas asignadas.' + (b.selfPickup && free.length ? ' Revisa <b>Libres</b>.' : '') + '</div>';
+    else html = !b.selfPickup ? '<div class="pk-empty">El administrador no permite tomar tareas desde la app. Pídele que active <b>«Tomar tareas»</b> en Asignaciones.</div>'
+      : (free.length ? free.map(function (t) { return tsCard(t, true, false); }).join('') : '<div class="pk-empty">' + K.nada + '</div>');
+    $('ts-list').innerHTML = html;
+  }
+  function tsStart(t) {
+    if (TS.kind === 'count') { openCount(t, null); return; }
+    PI.back = 'ts:' + TS.kind; startAssigned(t);
+  }
+  function tsTake(entityId, type, thenStart) {
+    if (TS.busy) return;
+    var t = ((TS.board && TS.board.available) || []).filter(function (x) { return x.entityId === entityId && x.type === type; })[0]; if (!t) return;
+    TS.busy = true;
+    api('/assignments/take', { method: 'POST', body: { operationId: opIdOrNull(), type: type, entityId: entityId } })
+      .then(function (a) {
+        TS.busy = false; bip(true); toast('Tarea tomada', true);
+        var asg = { type: type, entityId: entityId, entityRef: (a && a.entityRef) || t.entityRef, sellerId: (a && a.sellerId) || t.sellerId, cliente: t.cliente, unitsEstimate: (a && a.unitsEstimate) || t.unidades };
+        if (thenStart) { tsStart(asg); return; }
+        TS.tab = 'mine'; loadTaskStation();
+      }).catch(function (e) { TS.busy = false; bip(false); toast(e.message, false); loadTaskStation(); });
+  }
+  $('ts-tabs').addEventListener('click', function (e) { var c = e.target.closest('[data-tst]'); if (!c) return; TS.tab = c.getAttribute('data-tst'); renderTaskStation(); });
+  $('ts-list').addEventListener('click', function (e) {
+    var b;
+    if ((b = e.target.closest('[data-tsstart]'))) { var t = ((TS.board && TS.board.mine) || []).filter(function (x) { return x.entityId === b.getAttribute('data-tsstart'); })[0]; if (t) tsStart(t); return; }
+    if ((b = e.target.closest('[data-tstake]'))) { b.disabled = true; tsTake(b.getAttribute('data-tstake'), b.getAttribute('data-tstype'), false); }
+  });
+  $('ts-scan').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var el = $('ts-code'), c = norm(el.value); el.value = ''; if (!c) return;
+    var b = TS.board || {};
+    var hit = function (t) {
+      var p = tsParts(t), lc = TS.kind === 'count' ? LOC_BY_ID[p.ref] : LOC_BY_ID[p.loc];
+      return norm(t.entityRef) === c || (lc && norm(lc.code) === c) || norm(TS.kind === 'count' ? p.ref : p.sku) === c;
+    };
+    var m = (b.mine || []).filter(hit)[0]; if (m) { bip(true); tsStart(m); return; }
+    var f = (b.available || []).filter(hit)[0];
+    if (f) { if (!b.selfPickup) { bip(false); toast('Esa tarea está libre, pero el administrador no permite tomarlas desde la app', false); return; } tsTake(f.entityId, f.type, true); return; }
+    bip(false); toast('No encontré una tarea con «' + c + '»', false); enfoca('ts-code');
+  });
+  $('btn-tsrefresh').addEventListener('click', function () { loadTaskStation(); toast('Actualizado', true); });
+  $('btn-tsback').addEventListener('click', function () { PI.back = false; show('home'); });
+  $('ts-loose').addEventListener('click', function () {
+    PI.back = false;
+    if (TS.kind === 'count') { openCount(null, { free: true }); return; }
+    if (!cfg.seller) { toast('Para el guardado suelto elige primero el cliente en «Operar libre»', false); show('home'); switchTab('free'); var fs = $('free-seller'); if (fs) fs.focus(); return; }
+    startOp('putaway');
+  });
+
+  // ---------------------------------------------------------------------
+  // CONTEO CÍCLICO (ciego)
+  // ---------------------------------------------------------------------
+  // Por UBICACIÓN: el operario va al bin, lo confirma, y registra TODO lo que hay del
+  // cliente (lo que no registra cuenta como 0). Por SKU: cuenta ese producto en cada
+  // ubicación donde el sistema lo tiene, y puede sumar otras donde lo encuentre.
+  // Nunca se muestra la cantidad esperada: así el conteo mide lo real.
+  var CT = null;
+  function openCount(t, opts) {
+    task = null;
+    CT = { task: t || null, sid: null, mode: 'LOC', locId: null, sku: null, conf: false, lines: [], rows: [], armed: false, busy: false, done: null, free: !!(opts && opts.free) };
+    if (t) {
+      var p = tsParts(t); CT.sid = t.sellerId || p.sid;
+      if (LOC_BY_ID[p.ref]) { CT.mode = 'LOC'; CT.locId = p.ref; } else { CT.mode = 'SKU'; CT.sku = p.ref; CT.conf = true; }
+      marcaInicio(t);
+    } else {
+      CT.sid = cfg.seller || (SELLERS.length === 1 ? SELLERS[0].id : null);
+    }
+    show('count');
+    skuList(CT.sid || '').catch(function () {});
+    if (CT.mode === 'SKU') loadSkuRows(); else renderCount();
+  }
+  function loadSkuRows() {
+    renderCount();
+    api('/sellers/' + encodeURIComponent(CT.sid) + '/inventory?sku=' + encodeURIComponent(CT.sku)).then(function (rows) {
+      var seen = {};
+      (rows || []).forEach(function (b) { if (b.state === 'AVAILABLE' && !seen[b.locationId + '|' + (b.lot || '')]) { seen[b.locationId + '|' + (b.lot || '')] = 1; CT.rows.push({ locationId: b.locationId, lot: b.lot || '', qty: 0, touched: false }); } });
+      renderCount();
+    }).catch(function () { renderCount(); });
+  }
+  function ctLotc(sku) { var d = skuDef(CT.sid, sku); return !!(d && d.lotControlled); }
+  function renderCount() {
+    if (!CT) return;
+    var loc = CT.locId ? LOC_BY_ID[CT.locId] : null, body = '', ctx = '';
+    $('ct-title').textContent = CT.mode === 'SKU' ? 'Conteo · ' + CT.sku : 'Conteo' + (loc ? ' · ' + loc.code : '');
+    $('ct-sub').textContent = CT.sid ? sellerNom(CT.sid) : 'Elige el cliente';
+    if (CT.done) { renderCountDone(); return; }
+    $('ct-scan').style.display = '';
+    // Conteo libre: primero cliente y ubicación.
+    if (CT.free && (!CT.sid || !CT.locId)) {
+      ctx = '<b>Conteo libre de una ubicación</b>Elige el cliente y la ubicación. Contarás todo lo que haya de ese cliente en ella.';
+      $('ct-label').textContent = 'Escanea la ubicación a contar'; $('ct-code').placeholder = 'Código de ubicación';
+      body = '<label>Cliente</label><select id="ct-seller">' + (SELLERS.length > 1 ? '<option value="">— Elige el cliente —</option>' : '') + SELLERS.map(function (s) { return '<option value="' + esc(s.id) + '"' + (s.id === CT.sid ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') + '</select>'
+        + '<div class="sec" style="margin-top:10px">O toca la ubicación</div><div id="ct-locs"></div>';
+      $('ct-ctx').innerHTML = ctx; $('ct-body').innerHTML = body;
+      $('ct-seller').addEventListener('change', function () { CT.sid = this.value || null; skuList(CT.sid || '').catch(function () {}); renderCount(); });
+      locPicker('ct-locs', null, function (l) { if (!CT.sid) { toast('Elige primero el cliente', false); return; } CT.locId = l.id; CT.conf = true; renderCount(); });
+      enfoca('ct-code'); return;
+    }
+    if (CT.mode === 'LOC' && !CT.conf) {
+      ctx = '<b>Ve a la ubicación ' + esc(loc ? loc.code : CT.locId) + '</b>Escanéala para confirmar que estás ahí (o toca el botón).';
+      $('ct-label').textContent = 'Escanea la ubicación ' + (loc ? loc.code : ''); $('ct-code').placeholder = 'Código de ubicación';
+      body = '<button class="btn alt" id="ct-here">Estoy en ' + esc(loc ? loc.code : '') + ' (confirmar sin escanear)</button>';
+      $('ct-ctx').innerHTML = ctx; $('ct-body').innerHTML = body;
+      $('ct-here').addEventListener('click', function () { CT.conf = true; renderCount(); });
+      enfoca('ct-code'); return;
+    }
+    if (CT.mode === 'LOC') {
+      ctx = '<b>Cuenta todo lo de ' + esc(sellerNom(CT.sid)) + ' en ' + esc(loc ? loc.code : '') + '</b>Escanea cada unidad (suma 1, o lo que traiga la caja) o búscala abajo. Lo que no registres queda en 0.';
+      $('ct-label').textContent = 'Escanea cada producto'; $('ct-code').placeholder = 'EAN / DUN del producto';
+      body = (CT.lines.length ? CT.lines.map(function (l, i) {
+        return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(l.sku) + '</div><div class="cl-sub">' + esc((skuDef(CT.sid, l.sku) || {}).description || '') + '</div></div>'
+          + '<div class="pl-q"><button class="mini" data-ctm="' + i + '">−</button><b>' + l.qty + '</b><button class="mini" data-ctp="' + i + '">+</button></div><button class="cl-x" data-ctx="' + i + '" title="Quitar">✕</button>'
+          + (ctLotc(l.sku) ? '<input class="cl-lot" data-ctlot="' + i + '" placeholder="Lote (obligatorio)" value="' + esc(l.lot || '') + '">' : '') + '</div>';
+      }).join('') : '<div class="pk-empty">Aún no registras productos. Si la ubicación está vacía, confirma el conteo así.</div>')
+        + '<div class="sec" style="margin-top:12px">Agregar producto a mano</div><div id="ct-cat"></div>';
+    } else {
+      ctx = '<b>Cuenta ' + esc(CT.sku) + ' en cada ubicación</b>' + esc((skuDef(CT.sid, CT.sku) || {}).description || '') + ' · Indica cuántas unidades hay en cada una. Si lo encuentras en otra ubicación, escanéala para sumarla.';
+      $('ct-label').textContent = 'Escanea una ubicación (o el producto para sumar 1)'; $('ct-code').placeholder = 'Ubicación o EAN';
+      body = (CT.rows.length ? CT.rows.map(function (r, i) {
+        var l = LOC_BY_ID[r.locationId];
+        return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(l ? l.code : r.locationId) + (CT.sel === i ? ' <span class="tagrun">Contando</span>' : '') + '</div><div class="cl-sub">' + (r.touched ? 'Contada' : 'Sin contar') + '</div></div>'
+          + '<div class="pl-q"><button class="mini" data-csm="' + i + '">−</button><b>' + r.qty + '</b><button class="mini" data-csp="' + i + '">+</button></div>'
+          + (ctLotc(CT.sku) ? '<input class="cl-lot" data-cslot="' + i + '" placeholder="Lote (obligatorio)" value="' + esc(r.lot || '') + '">' : '') + '</div>';
+      }).join('') : '<div class="pk-empty">El sistema no tiene este producto en ninguna ubicación. Si lo encuentras, escanea o elige la ubicación.</div>')
+        + '<div class="sec" style="margin-top:12px">Sumar otra ubicación</div><div id="ct-locs"></div>';
+    }
+    var hint = CT.mode === 'LOC' ? 'Lo no registrado en esta ubicación se ajustará a 0.' : 'Las ubicaciones en 0 se ajustarán a 0.';
+    body += '<button class="btn ' + (CT.armed ? 'warn' : 'good') + '" id="ct-go" style="margin-top:12px">' + (CT.armed ? 'Toca de nuevo para confirmar el conteo' : 'Confirmar conteo') + '</button>'
+      + (CT.armed ? '<div class="banner" style="margin:0">' + hint + '</div>' : '');
+    $('ct-ctx').innerHTML = ctx; $('ct-body').innerHTML = body;
+    if ($('ct-cat')) catalogPicker('ct-cat', CT.sid, function (k) { ctAdd(k.sku, 1); });
+    if ($('ct-locs')) locPicker('ct-locs', null, function (l) { ctAddLoc(l); }, 'Buscar ubicación');
+    $('ct-go').addEventListener('click', ctConfirm);
+    enfoca('ct-code');
+  }
+  function ctAdd(sku, n) {
+    var l = CT.lines.filter(function (x) { return x.sku === sku; })[0];
+    if (!l) { l = { sku: sku, lot: '', qty: 0 }; CT.lines.unshift(l); }
+    l.qty += n; CT.armed = false; renderCount();
+  }
+  function ctAddLoc(l) {
+    var i = -1; CT.rows.forEach(function (r, k) { if (r.locationId === l.id && i < 0) i = k; });
+    if (i < 0) { CT.rows.push({ locationId: l.id, lot: '', qty: 0, touched: true }); i = CT.rows.length - 1; }
+    CT.sel = i; CT.armed = false; renderCount();
+  }
+  $('ct-body').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-ctp],[data-ctm],[data-ctx],[data-csp],[data-csm]'); if (!b) return;
+    var i;
+    if (b.hasAttribute('data-ctp')) CT.lines[+b.getAttribute('data-ctp')].qty += 1;
+    else if (b.hasAttribute('data-ctm')) { i = +b.getAttribute('data-ctm'); CT.lines[i].qty = Math.max(0, CT.lines[i].qty - 1); }
+    else if (b.hasAttribute('data-ctx')) CT.lines.splice(+b.getAttribute('data-ctx'), 1);
+    else if (b.hasAttribute('data-csp')) { i = +b.getAttribute('data-csp'); CT.rows[i].qty += 1; CT.rows[i].touched = true; CT.sel = i; }
+    else { i = +b.getAttribute('data-csm'); CT.rows[i].qty = Math.max(0, CT.rows[i].qty - 1); CT.rows[i].touched = true; CT.sel = i; }
+    CT.armed = false; renderCount();
+  });
+  $('ct-body').addEventListener('input', function (e) {
+    var el = e.target;
+    if (el.hasAttribute('data-ctlot')) CT.lines[+el.getAttribute('data-ctlot')].lot = el.value;
+    if (el.hasAttribute('data-cslot')) CT.rows[+el.getAttribute('data-cslot')].lot = el.value;
+  });
+  $('ct-scan').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var el = $('ct-code'), code = (el.value || '').trim(); el.value = ''; if (!code || !CT) return;
+    var loc = findLocByCode(code);
+    if (CT.free && (!CT.sid || !CT.locId)) {
+      if (!CT.sid) { bip(false); toast('Elige primero el cliente', false); return; }
+      if (!loc) { bip(false); toast('Ese código no es una ubicación', false); return; }
+      bip(true); CT.locId = loc.id; CT.conf = true; renderCount(); return;
+    }
+    if (CT.mode === 'LOC' && !CT.conf) {
+      if (loc && loc.id === CT.locId) { bip(true); CT.conf = true; renderCount(); }
+      else { bip(false); toast(loc ? 'Esa es ' + loc.code + ', no la ubicación a contar' : 'Escanea la ubicación ' + ((LOC_BY_ID[CT.locId] || {}).code || ''), false); }
+      return;
+    }
+    if (CT.mode === 'SKU' && loc) { bip(true); ctAddLoc(loc); return; }
+    resolveCode(CT.sid, code).then(function (r) {
+      if (CT.mode === 'SKU') {
+        if (r.sku !== CT.sku) { bip(false); toast('Ese es ' + r.sku + ', este conteo es de ' + CT.sku, false); return; }
+        if (CT.sel == null || !CT.rows[CT.sel]) { bip(false); toast('Primero escanea o toca la ubicación donde estás contando', false); return; }
+        CT.rows[CT.sel].qty += r.factor; CT.rows[CT.sel].touched = true; bip(true); CT.armed = false; renderCount(); return;
+      }
+      bip(true); ctAdd(r.sku, r.factor);
+    }).catch(function (err) { bip(false); toast(err.message, false); });
+  });
+  function ctConfirm() {
+    if (!CT || CT.busy) return;
+    var falta = CT.mode === 'LOC' ? CT.lines.filter(function (l) { return l.qty > 0 && ctLotc(l.sku) && !String(l.lot || '').trim(); })[0]
+      : CT.rows.filter(function (r) { return r.qty > 0 && ctLotc(CT.sku) && !String(r.lot || '').trim(); })[0];
+    if (falta) { toast('Falta el lote de ' + (falta.sku || CT.sku) + ': ese producto se controla por lote', false); return; }
+    if (CT.mode === 'SKU' && !CT.rows.length) { toast('Agrega al menos una ubicación', false); return; }
+    if (!CT.armed) { CT.armed = true; renderCount(); return; }
+    CT.busy = true; $('ct-go').disabled = true; $('ct-go').textContent = 'Registrando…';
+    var base = '/sellers/' + encodeURIComponent(CT.sid) + '/cycle-counts';
+    var call = CT.mode === 'LOC'
+      ? api(base, { method: 'POST', body: { locationId: CT.locId, counted: CT.lines.filter(function (l) { return l.qty >= 0; }).map(function (l) { return { sku: l.sku, lot: String(l.lot || '').trim() || null, countedQty: l.qty }; }) } }).then(function (r) { return [r]; })
+      : api(base + '/sku', { method: 'POST', body: { sku: CT.sku, counted: CT.rows.map(function (r) { return { locationId: r.locationId, lot: String(r.lot || '').trim() || null, countedQty: r.qty }; }) } }).then(function (r) { return (r && r.resultados) || []; });
+    call.then(function (res) { CT.busy = false; CT.done = res; bip(true); renderCount(); })
+      .catch(function (e) { CT.busy = false; CT.armed = false; bip(false); toast(e.message, false); renderCount(); });
+  }
+  function renderCountDone() {
+    $('ct-scan').style.display = 'none';
+    var vars = []; CT.done.forEach(function (r) { (r.variances || []).forEach(function (v) { vars.push(v); }); });
+    $('ct-ctx').innerHTML = '';
+    $('ct-body').innerHTML = '<div class="resbox"><div class="rb-t">' + (vars.length ? '⚠️ Conteo registrado con diferencias' : '✓ Conteo registrado: todo calza') + '</div>'
+      + (vars.length ? vars.map(function (v) { var l = LOC_BY_ID[v.locationId]; return '<div class="kv"><span>' + esc(v.sku) + (v.lot ? ' · ' + esc(v.lot) : '') + ' @ ' + esc(l ? l.code : v.locationId) + '</span><b style="color:' + (v.delta < 0 ? 'var(--crit)' : 'var(--good)') + '">' + (v.delta > 0 ? '+' : '') + v.delta + '</b></div>'; }).join('')
+        + '<div class="muted" style="font-size:12.5px">El inventario quedó ajustado a lo contado y las diferencias quedan en el kardex.</div>' : '')
+      + '</div><button class="btn" id="ct-next">' + (CT.task ? 'Volver a los conteos' : 'Contar otra ubicación') + '</button><button class="btn alt" id="ct-home">Volver al inicio</button>';
+    $('ct-next').addEventListener('click', function () { if (CT.task) openTaskStation('count'); else openCount(null, { free: true }); });
+    $('ct-home').addEventListener('click', function () { show('home'); });
+  }
+  $('btn-ctback').addEventListener('click', function () { if (CT && CT.task) openTaskStation('count'); else openTaskStation('count'); });
+
+  // ---------------------------------------------------------------------
+  // DEVOLUCIONES
+  // ---------------------------------------------------------------------
+  var RT = { list: [], ret: null, inc: {}, busy: false, q: '' };
+  var RT_ST = { PENDING: 'Abierta', PARTIAL: 'En proceso', COMPLETED: 'Cerrada', CANCELLED: 'Anulada' };
+  function openReturns() {
+    task = null; RT.ret = null; RT.inc = {};
+    show('ret');
+    $('rt-scan').style.display = '';
+    $('rt-label').textContent = 'Escanea o escribe el N° de la orden que vuelve';
+    $('rt-code').placeholder = 'N° de orden o tracking';
+    $('rt-title').textContent = 'Devoluciones';
+    $('rt-body').innerHTML = '<div class="pk-empty">Cargando…</div>';
+    loadReturns(); enfoca('rt-code');
+  }
+  function loadReturns() {
+    var ids = SELLERS.map(function (s) { return s.id; });
+    Promise.all(ids.map(function (sid) { return api('/sellers/' + encodeURIComponent(sid) + '/returns').catch(function () { return []; }); }))
+      .then(function (rs) {
+        RT.list = [];
+        rs.forEach(function (l) { (l || []).forEach(function (r) { if (r.status === 'PENDING' || r.status === 'PARTIAL') RT.list.push(r); }); });
+        RT.list.sort(function (a, b) { return Date.parse(b.createdAt) - Date.parse(a.createdAt); });
+        renderReturnsList();
+      });
+  }
+  function rtTot(r) { return (r.lines || []).reduce(function (a, l) { return a + l.toStock + l.toMerma + l.toQuarantine; }, 0); }
+  function renderReturnsList() {
+    $('rt-sub').textContent = RT.list.length + ' devolución(es) abierta(s)';
+    var html = RT.list.length ? '<div class="sec" style="margin-bottom:8px">Abiertas · toca para continuar</div>' + RT.list.map(function (r) {
+      var esp = (r.lines || []).reduce(function (a, l) { return a + (l.expectedQty || 0); }, 0);
+      return '<button class="ordc" data-rto="' + esc(r.id) + '" data-rts="' + esc(r.sellerId) + '"><div class="oc-main"><div class="oc-ref">' + esc(r.originalOrderRef || r.id) + ' <span class="rst ' + (r.status === 'PARTIAL' ? 'PARTIAL' : '') + '">' + esc(RT_ST[r.status] || r.status) + '</span></div>'
+        + '<div class="oc-meta">' + esc(sellerNom(r.sellerId)) + ' · ' + rtTot(r) + ' de ' + esp + ' un dispuestas' + (r.reason ? ' · ' + esc(r.reason) : '') + '</div></div><span class="oc-go">Abrir ›</span></button>';
+    }).join('') : '<div class="pk-empty">No hay devoluciones abiertas. Escanea la orden que vuelve para registrar una.</div>';
+    html += '<div class="sec" style="margin-top:14px">Nueva devolución · busca la orden despachada</div><input id="rt-find" placeholder="N° de orden, cliente o destinatario" autocomplete="off" value="' + esc(RT.q) + '"><div id="rt-found" style="margin-top:8px"></div>';
+    $('rt-body').innerHTML = html;
+    $('rt-find').addEventListener('input', function () { RT.q = this.value; rtFind(); });
+    rtFind();
+  }
+  var RT_SHIPPED = null;
+  function rtFind() {
+    var box = $('rt-found'); if (!box) return;
+    var q = norm(RT.q);
+    if (!q) { box.innerHTML = '<div class="muted" style="font-size:13px">Escribe para buscar entre las órdenes despachadas.</div>'; return; }
+    (RT_SHIPPED ? Promise.resolve(RT_SHIPPED) : opOrders().then(function (l) { RT_SHIPPED = (l || []).filter(function (o) { return o.status === 'SHIPPED'; }); return RT_SHIPPED; }))
+      .then(function (list) {
+        var hits = list.filter(function (o) { var st = o.shipTo || {}; return norm(o.externalOrderId).indexOf(q) >= 0 || norm(o.sellerName).indexOf(q) >= 0 || norm(st.name).indexOf(q) >= 0; }).slice(0, 10);
+        box.innerHTML = hits.length ? hits.map(function (o) { return '<button class="pp" data-rtnew="' + esc(o.id) + '"><div class="pp-main"><div class="pp-sku">' + esc(oRef(o)) + '</div><div class="pp-sub">' + esc(o.sellerName || '') + ' · ' + oUnits(o) + ' un' + ((o.shipTo || {}).name ? ' · ' + esc(o.shipTo.name) : '') + '</div></div><span class="pp-q">Recibir</span></button>'; }).join('') : '<div class="muted" style="font-size:13px">Sin órdenes despachadas que coincidan.</div>';
+      });
+  }
+  function rtCreate(o) {
+    if (RT.busy) return;
+    var ya = RT.list.filter(function (r) { return r.sellerId === o.sellerId && (r.originalOrderId === o.id || norm(r.originalOrderRef) === norm(o.externalOrderId)); })[0];
+    if (ya) { rtOpen(ya); return; }
+    RT.busy = true;
+    api('/sellers/' + encodeURIComponent(o.sellerId) + '/returns', { method: 'POST', body: { originalOrderRef: o.externalOrderId || o.id } })
+      .then(function (r) { RT.busy = false; bip(true); toast('Devolución creada para ' + oRef(o), true); RT.list.unshift(r); rtOpen(r); })
+      .catch(function (e) { RT.busy = false; bip(false); toast(e.message, false); });
+  }
+  function rtOpen(r) { RT.ret = r; RT.inc = {}; RT.armed = false; skuList(r.sellerId).catch(function () {}); renderReturn(); }
+  function renderReturn() {
+    var r = RT.ret; if (!r) return;
+    $('rt-title').textContent = 'Devolución ' + (r.originalOrderRef || r.id);
+    $('rt-sub').textContent = sellerNom(r.sellerId) + ' · ' + (RT_ST[r.status] || r.status);
+    $('rt-label').textContent = 'Escanea cada producto que vuelve (suma a Stock)';
+    $('rt-code').placeholder = 'EAN / DUN del producto';
+    var nuevos = Object.keys(RT.inc).reduce(function (a, k) { var x = RT.inc[k]; return a + x.s + x.m + x.q; }, 0);
+    var html = (r.lines || []).map(function (l) {
+      var x = RT.inc[l.sku] || { s: 0, m: 0, q: 0 };
+      var dc = function (k, lbl) { return '<div class="dcol"><div class="dl">' + lbl + '</div><div class="dq"><button class="mini" data-rtm="' + esc(l.sku) + '|' + k + '">−</button><b>' + x[k] + '</b><button class="mini" data-rtp="' + esc(l.sku) + '|' + k + '">+</button></div></div>'; };
+      return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(l.sku) + '</div><div class="cl-sub">Salió ' + l.expectedQty + ' · ya dispuesto: stock ' + l.toStock + ' · merma ' + l.toMerma + ' · cuarentena ' + l.toQuarantine + '</div></div>'
+        + '<div class="disp">' + dc('s', 'Stock') + dc('m', 'Merma') + dc('q', 'Cuarentena') + '</div></div>';
+    }).join('');
+    html += '<div class="muted" style="font-size:12.5px;margin-top:6px">Stock: vuelve a la venta. Merma: dañado. Cuarentena: en revisión.</div>';
+    var yaProc = rtTot(r) > 0;
+    html += '<button class="btn alt" id="rt-save"' + (nuevos ? '' : ' disabled') + ' style="margin-top:10px">Ingresar ' + nuevos + ' un y seguir después</button>'
+      + '<button class="btn ' + (RT.armed ? 'warn' : 'good') + '" id="rt-close"' + (nuevos || yaProc ? '' : ' disabled') + '>' + (RT.armed ? 'Toca de nuevo para cerrar la devolución' : (nuevos ? 'Ingresar ' + nuevos + ' un y cerrar' : 'Cerrar devolución')) + '</button>'
+      + '<button class="btn alt" id="rt-back2">Volver a la lista</button>';
+    $('rt-body').innerHTML = html;
+    $('rt-save').addEventListener('click', function () { rtProcess(false); });
+    $('rt-close').addEventListener('click', function () { if (!RT.armed) { RT.armed = true; renderReturn(); return; } rtProcess(true); });
+    $('rt-back2').addEventListener('click', openReturns);
+    enfoca('rt-code');
+  }
+  function rtBump(sku, k, d) {
+    var x = RT.inc[sku] || (RT.inc[sku] = { s: 0, m: 0, q: 0 });
+    x[k] = Math.max(0, x[k] + d); RT.armed = false; renderReturn();
+  }
+  $('rt-body').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-rtp],[data-rtm],[data-rto],[data-rtnew]'); if (!b) return;
+    if (b.hasAttribute('data-rto')) { var r = RT.list.filter(function (x) { return x.id === b.getAttribute('data-rto') && x.sellerId === b.getAttribute('data-rts'); })[0]; if (r) rtOpen(r); return; }
+    if (b.hasAttribute('data-rtnew')) { var o = (RT_SHIPPED || []).filter(function (x) { return x.id === b.getAttribute('data-rtnew'); })[0]; if (o) rtCreate(o); return; }
+    var v = (b.getAttribute('data-rtp') || b.getAttribute('data-rtm')).split('|');
+    rtBump(v[0], v[1], b.hasAttribute('data-rtp') ? 1 : -1);
+  });
+  function rtProcess(close) {
+    var r = RT.ret; if (!r || RT.busy) return;
+    var lines = Object.keys(RT.inc).map(function (sku) { var x = RT.inc[sku]; return { sku: sku, toStock: x.s, toMerma: x.m, toQuarantine: x.q }; }).filter(function (l) { return l.toStock + l.toMerma + l.toQuarantine > 0; });
+    RT.busy = true;
+    api('/sellers/' + encodeURIComponent(r.sellerId) + '/returns/' + encodeURIComponent(r.id) + '/process', { method: 'POST', body: { lines: lines, close: !!close } })
+      .then(function (nr) {
+        RT.busy = false; bip(true);
+        toast(close ? 'Devolución cerrada' : 'Unidades ingresadas', true);
+        if (close) { openReturns(); return; }
+        RT.list = RT.list.map(function (x) { return x.id === nr.id ? nr : x; });
+        rtOpen(nr);
+      }).catch(function (e) { RT.busy = false; RT.armed = false; bip(false); toast(e.message, false); renderReturn(); });
+  }
+  $('rt-scan').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var el = $('rt-code'), code = (el.value || '').trim(); el.value = ''; if (!code) return;
+    if (RT.ret) {
+      // Dentro de una devolución: el código es un producto que vuelve → suma a Stock.
+      resolveCode(RT.ret.sellerId, code).then(function (x) {
+        var en = (RT.ret.lines || []).some(function (l) { return l.sku === x.sku; });
+        if (!en) { bip(false); toast(x.sku + ' no salió en esta orden', false); return; }
+        bip(true); rtBump(x.sku, 's', x.factor);
+      }).catch(function (err) { bip(false); toast(err.message, false); });
+      return;
+    }
+    var c = norm(code);
+    var abierta = RT.list.filter(function (r) { return norm(r.originalOrderRef) === c || norm(r.id) === c; })[0];
+    if (abierta) { bip(true); rtOpen(abierta); return; }
+    opOrders().then(function (all) {
+      var o = matchOrder(all || [], code);
+      if (!o) { bip(false); toast('No encontré la orden ' + code, false); return; }
+      if (o.status !== 'SHIPPED') { bip(false); toast('La orden ' + oRef(o) + ' está ' + (ST_LBL[o.status] || o.status) + ': solo se reciben devoluciones de órdenes despachadas', false); return; }
+      RT_SHIPPED = RT_SHIPPED || []; if (RT_SHIPPED.indexOf(o) < 0) RT_SHIPPED.push(o);
+      rtCreate(o);
+    }).catch(function (err) { bip(false); toast(err.message, false); });
+  });
+  $('btn-rtrefresh').addEventListener('click', function () { RT_SHIPPED = null; openReturns(); });
+  $('btn-rtback').addEventListener('click', function () { if (RT.ret) { openReturns(); return; } show('home'); });
+
+  // ---------------------------------------------------------------------
+  // ARMADO DE KITS
+  // ---------------------------------------------------------------------
+  var KT = { kits: [], kit: null, qty: 1, pref: {}, dest: null, stock: {}, busy: false, armed: false };
+  function openKits() {
+    task = null; KT.kit = null;
+    show('kit');
+    $('kt-scan').style.display = ''; $('kt-label').textContent = 'Escanea el kit o tócalo en la lista'; $('kt-code').placeholder = 'EAN o SKU del kit';
+    $('kt-title').textContent = 'Armado de kits';
+    $('kt-body').innerHTML = '<div class="pk-empty">Cargando kits…</div>';
+    Promise.all(SELLERS.map(function (s) { return skuList(s.id).then(function (l) { return l.filter(function (k) { return k.isKit && k.kitMode === 'ASSEMBLED' && (k.components || []).length; }).map(function (k) { return { sellerId: s.id, k: k }; }); }).catch(function () { return []; }); }))
+      .then(function (rs) { KT.kits = [].concat.apply([], rs); renderKitList(); });
+    enfoca('kt-code');
+  }
+  function renderKitList() {
+    $('kt-sub').textContent = KT.kits.length + ' kit(s) armables';
+    $('kt-body').innerHTML = KT.kits.length ? KT.kits.map(function (x, i) {
+      return '<button class="ordc" data-kti="' + i + '"><div class="oc-main"><div class="oc-ref">' + esc(x.k.sku) + '</div><div class="oc-meta">' + esc(sellerNom(x.sellerId)) + ' · ' + esc(x.k.description || '') + '</div>'
+        + '<div class="oc-meta">' + x.k.components.map(function (c) { return c.qty + '× ' + esc(c.sku); }).join(' + ') + '</div></div><span class="oc-go">Armar ›</span></button>';
+    }).join('') : '<div class="pk-empty">No hay kits armables (con stock propio) configurados.</div>';
+  }
+  function ktSelect(x) {
+    KT.kit = x; KT.qty = 1; KT.pref = {}; KT.dest = null; KT.stock = {}; KT.armed = false;
+    $('kt-title').textContent = 'Armar ' + x.k.sku; $('kt-sub').textContent = sellerNom(x.sellerId);
+    $('kt-label').textContent = 'Escanea la ubicación de destino del kit'; $('kt-code').placeholder = 'Código de ubicación';
+    $('kt-body').innerHTML = '<div class="pk-empty">Buscando componentes…</div>';
+    Promise.all(x.k.components.map(function (c) {
+      return api('/sellers/' + encodeURIComponent(x.sellerId) + '/inventory?sku=' + encodeURIComponent(c.sku)).then(function (rows) {
+        KT.stock[c.sku] = (rows || []).filter(function (b) { return b.state === 'AVAILABLE' && b.qty > 0; }).map(function (b) { return { locationId: b.locationId, lot: b.lot || null, qty: b.qty }; }).sort(function (a, b) { return b.qty - a.qty; });
+      }).catch(function () { KT.stock[c.sku] = []; });
+    })).then(renderKit);
+  }
+  /** Reparte lo que necesita cada componente entre sus ubicaciones (la preferida primero). */
+  function ktPlan() {
+    var plan = {}, falta = [];
+    KT.kit.k.components.forEach(function (c) {
+      var need = c.qty * KT.qty, out = [];
+      var bk = (KT.stock[c.sku] || []).slice();
+      var p = KT.pref[c.sku]; if (p) bk.sort(function (a, b) { return (a.locationId + '|' + a.lot === p ? -1 : 0) - (b.locationId + '|' + b.lot === p ? -1 : 0); });
+      bk.forEach(function (b) { if (need <= 0) return; var t = Math.min(need, b.qty); out.push({ sku: c.sku, locationId: b.locationId, lot: b.lot, qty: t }); need -= t; });
+      plan[c.sku] = out; if (need > 0) falta.push(c.sku + ' (faltan ' + need + ')');
+    });
+    return { plan: plan, falta: falta };
+  }
+  function renderKit() {
+    var x = KT.kit; if (!x) return;
+    var pl = ktPlan(), dl = KT.dest ? LOC_BY_ID[KT.dest] : null;
+    var html = '<div class="sec">Cantidad de kits</div><div class="qtybar"><button id="kt-m">−</button><input id="kt-q" type="number" inputmode="numeric" min="1" value="' + KT.qty + '"><button id="kt-p">+</button></div>'
+      + '<div class="sec" style="margin-top:8px">De dónde sale cada componente · toca para preferir una ubicación</div>'
+      + x.k.components.map(function (c) {
+        var src = pl.plan[c.sku] || [];
+        return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(c.sku) + ' · ' + (c.qty * KT.qty) + ' un</div><div class="cl-sub">' + (src.length ? src.map(function (s) { return esc((LOC_BY_ID[s.locationId] || {}).code || s.locationId) + (s.lot ? ' (lote ' + esc(s.lot) + ')' : '') + ' ×' + s.qty; }).join(' + ') : 'Sin stock disponible') + '</div></div>'
+          + '<div class="locpick">' + (KT.stock[c.sku] || []).map(function (b) { var k = b.locationId + '|' + b.lot; return '<button class="chip' + (KT.pref[c.sku] === k ? ' on' : '') + '" data-ktpref="' + esc(c.sku) + '" data-ktk="' + esc(k) + '">' + esc((LOC_BY_ID[b.locationId] || {}).code || b.locationId) + (b.lot ? ' · ' + esc(b.lot) : '') + ' · ' + b.qty + '</button>'; }).join('') + '</div></div>';
+      }).join('')
+      + (pl.falta.length ? '<div class="banner" style="margin:0">No alcanza: ' + esc(pl.falta.join(', ')) + '</div>' : '')
+      + '<div class="sec" style="margin-top:8px">Dónde queda el kit armado</div>'
+      + (dl ? '<div class="kv"><span>Destino</span><b class="code">' + esc(dl.code) + '</b></div>' : '') + '<div id="kt-locs"></div>'
+      + '<button class="btn ' + (KT.armed ? 'warn' : 'good') + '" id="kt-go"' + (pl.falta.length || !KT.dest ? ' disabled' : '') + ' style="margin-top:10px">' + (KT.armed ? 'Toca de nuevo para armar ' + KT.qty + ' kit(s)' : 'Armar ' + KT.qty + ' kit(s)') + '</button>'
+      + '<button class="btn alt" id="kt-other">Elegir otro kit</button>';
+    $('kt-body').innerHTML = html;
+    $('kt-q').addEventListener('change', function () { KT.qty = Math.max(1, parseInt(this.value, 10) || 1); KT.armed = false; renderKit(); });
+    $('kt-m').addEventListener('click', function () { KT.qty = Math.max(1, KT.qty - 1); KT.armed = false; renderKit(); });
+    $('kt-p').addEventListener('click', function () { KT.qty += 1; KT.armed = false; renderKit(); });
+    locPicker('kt-locs', function (l) { return l.zoneType === 'STORAGE' || l.zoneType === 'PICKING'; }, function (l) { KT.dest = l.id; KT.armed = false; renderKit(); }, 'Buscar ubicación de almacenaje o picking');
+    $('kt-go').addEventListener('click', ktConfirm);
+    $('kt-other').addEventListener('click', openKits);
+    enfoca('kt-code');
+  }
+  $('kt-body').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-kti],[data-ktpref]'); if (!b) return;
+    if (b.hasAttribute('data-kti')) { ktSelect(KT.kits[+b.getAttribute('data-kti')]); return; }
+    KT.pref[b.getAttribute('data-ktpref')] = b.getAttribute('data-ktk'); KT.armed = false; renderKit();
+  });
+  function ktConfirm() {
+    if (KT.busy || !KT.kit) return;
+    if (!KT.armed) { KT.armed = true; renderKit(); return; }
+    var pl = ktPlan(), sources = [];
+    Object.keys(pl.plan).forEach(function (k) { pl.plan[k].forEach(function (s) { sources.push(s); }); });
+    KT.busy = true;
+    api('/sellers/' + encodeURIComponent(KT.kit.sellerId) + '/products/' + encodeURIComponent(KT.kit.k.sku) + '/assemble', { method: 'POST', body: { qty: KT.qty, toLocationId: KT.dest, sources: sources } })
+      .then(function () {
+        KT.busy = false; bip(true);
+        var dl = LOC_BY_ID[KT.dest];
+        $('kt-scan').style.display = 'none';
+        $('kt-body').innerHTML = '<div class="resbox"><div class="rb-t">✓ ' + KT.qty + ' kit(s) ' + esc(KT.kit.k.sku) + ' armado(s)</div><div class="muted">Quedaron en ' + esc(dl ? dl.code : '') + '. Los componentes se descontaron de sus ubicaciones.</div></div>'
+          + '<button class="btn" id="kt-again">Armar otro</button><button class="btn alt" id="kt-home">Volver al inicio</button>';
+        $('kt-again').addEventListener('click', openKits); $('kt-home').addEventListener('click', function () { show('home'); });
+        toast('Kit armado', true);
+      }).catch(function (e) { KT.busy = false; KT.armed = false; bip(false); toast(e.message, false); renderKit(); });
+  }
+  $('kt-scan').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var el = $('kt-code'), code = (el.value || '').trim(); el.value = ''; if (!code) return;
+    if (!KT.kit) {
+      var c = norm(code);
+      var x = KT.kits.filter(function (y) { return norm(y.k.sku) === c || (y.k.barcode && String(y.k.barcode) === code); })[0];
+      if (x) { bip(true); ktSelect(x); return; }
+      // ¿EAN de un pack del kit? Se prueba en cada cliente que tiene kits.
+      var sids = KT.kits.map(function (y) { return y.sellerId; }).filter(function (v, i, a) { return a.indexOf(v) === i; });
+      Promise.all(sids.map(function (sid) { return api('/sellers/' + encodeURIComponent(sid) + '/barcodes/' + encodeURIComponent(code)).then(function (p) { return { sid: sid, sku: p.sku }; }).catch(function () { return null; }); }))
+        .then(function (rs) {
+          var h = rs.filter(Boolean)[0], y = h && KT.kits.filter(function (k) { return k.sellerId === h.sid && k.k.sku === h.sku; })[0];
+          if (y) { bip(true); ktSelect(y); } else { bip(false); toast('Ese código no es de un kit armable', false); }
+        });
+      return;
+    }
+    var loc = findLocByCode(code);
+    if (!loc) { bip(false); toast('Ese código no es una ubicación', false); return; }
+    if (!(loc.zoneType === 'STORAGE' || loc.zoneType === 'PICKING')) { bip(false); toast('El kit debe quedar en una ubicación de almacenaje o picking', false); return; }
+    bip(true); KT.dest = loc.id; KT.armed = false; renderKit();
+  });
+  $('btn-ktback').addEventListener('click', function () { if (KT.kit) { openKits(); return; } show('home'); });
+
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 

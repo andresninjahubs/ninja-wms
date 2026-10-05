@@ -45,7 +45,7 @@ import {
   TenantViolationError,
   ValidationError,
 } from '../src/domain/errors';
-import { CycleCountStrategy, KitMode, MovementType, OrderStatus, OrderType, PickingStrategy, RotationClass, StockState, Uom, UserRole, ZoneType } from '../src/domain/types';
+import { ROLE_PERMISSIONS, CycleCountStrategy, KitMode, MovementType, OrderStatus, OrderType, PickingStrategy, RotationClass, StockState, Uom, UserRole, ZoneType } from '../src/domain/types';
 import { PutawayAdvisor } from '../src/domain/putaway.advisor';
 import { CycleCountService } from '../src/domain/cyclecount.service';
 import { UserService } from '../src/domain/user.service';
@@ -3155,6 +3155,41 @@ async function run() {
     assert.equal(kpi.trend.length, 2);
     // Tendencia ordenada del más viejo al más nuevo.
     assert.ok(kpi.trend[0].at <= kpi.trend[1].at);
+  });
+
+  await test('app operario: conteo por SKU solo ajusta ese SKU; SKU: elegido a mano; operario puede contar', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const a = await facade.createLocation({ operationId: 'op1', code: 'A-01-1-A', zoneType: ZoneType.STORAGE, capacity: 500, pickRank: 1 });
+    const b = await facade.createLocation({ operationId: 'op1', code: 'B-01-1-A', zoneType: ZoneType.STORAGE, capacity: 500, pickRank: 2 });
+    await facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await facade.createSku('acme', { sku: 'PAN', description: 'Pantalón' });
+    await facade.receive('acme', { sku: 'CAM', qty: 10, locationId: a.id });
+    await facade.receive('acme', { sku: 'PAN', qty: 10, locationId: a.id });
+    await facade.receive('acme', { sku: 'CAM', qty: 5, locationId: b.id });
+    const r = await facade.performSkuCount('acme', 'CAM', [{ locationId: a.id, countedQty: 8 }, { locationId: b.id, countedQty: 5 }], 'pedro');
+    assert.equal(r.resultados.length, 2);
+    const st = await facade.getStock({ sellerId: 'acme', locationId: a.id });
+    const q = (sku: string) => st.filter((x) => x.sku === sku).reduce((t, x) => t + x.qty, 0);
+    assert.equal(q('CAM'), 8, 'CAM ajustado a lo contado');
+    assert.equal(q('PAN'), 10, 'PAN no se tocó (no era parte del conteo por SKU)');
+    // Producto elegido a mano: «SKU:<código>» se toma como unidad base.
+    const res = await facade.scanInbound('acme', { barcode: 'SKU:PAN', packCount: 3, locationId: b.id });
+    assert.equal(res.scan.sku, 'PAN'); assert.equal(res.scan.baseQty, 3);
+    await expectThrows(() => facade.scanInbound('acme', { barcode: 'SKU:NOEXISTE', packCount: 1, locationId: b.id }), NotFoundError);
+    assert.ok(ROLE_PERMISSIONS[UserRole.OPERATOR].includes('count:perform'), 'el operario puede ejecutar conteos');
+  });
+
+  await test('devolución: se puede cerrar sin disponer más si ya tiene unidades', async () => {
+    const { facade, stg } = await escenarioBodega();
+    await facade.receive('acme', { sku: 'CAM', qty: 50, locationId: stg.id });
+    await facade.createOrder('acme', { externalOrderId: 'PED-CL', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 3 }] }, 'ana');
+    const dev = await facade.createReturn('acme', { originalOrderRef: 'PED-CL' }, 'ana');
+    await expectThrows(() => facade.processReturn('acme', dev.id, { lines: [], close: true }, 'ana'), ValidationError);
+    await facade.processReturn('acme', dev.id, { lines: [{ sku: 'CAM', toStock: 2 }], close: false }, 'ana');
+    const fin = await facade.processReturn('acme', dev.id, { lines: [], close: true }, 'ana');
+    assert.equal(fin.status, 'COMPLETED');
   });
 
   await test('exactitud (G8): sin conteos, el KPI es nulo pero no rompe', async () => {

@@ -159,7 +159,7 @@
     /* Las tres pastillas caben a 360px; si no, la fila se desplaza en vez de cortar texto. */
     .tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:1px}
     .tabs::-webkit-scrollbar{display:none}
-    .tab{flex:1 1 auto;height:38px;border:1px solid var(--line-2);background:var(--surface);border-radius:999px;padding:0 9px;font-weight:600;font-size:12.5px;color:#374151;display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+    .tab{flex:1 1 0;min-width:0;height:38px;border:1px solid var(--line-2);background:var(--surface);border-radius:999px;padding:0 6px;font-weight:600;font-size:12px;color:#374151;display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap;overflow:hidden}
     .tab.on{background:var(--primary);border-color:var(--primary);color:var(--on-primary);font-weight:700}
     .tab .cnt{font-size:11.5px;font-weight:700;background:var(--surface-3);border-radius:999px;min-width:20px;height:20px;padding:0 6px;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-2)}
     .tab.on .cnt{background:color-mix(in srgb, var(--on-primary) 16%, transparent);color:var(--on-primary)}
@@ -241,7 +241,7 @@
     .op.wide{grid-column:1/-1;flex-direction:row;justify-content:center;padding:14px}
     .op[data-op="packst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 16l2 2 4-4 M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14 M3.29 7 12 12l8.71-5 M12 22V12 M7.5 4.27l9 5.15'/%3E%3C/svg%3E")}
     .op[data-op="shipst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2 M15 18H9 M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14 M17 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z'/%3E%3C/svg%3E")}
-    #btn-piback,#btn-pkback,#btn-shback{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E")}
+    #btn-rcback,#btn-piback,#btn-pkback,#btn-shback{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E")}
     #btn-pkcam,#btn-shcam{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7V5a2 2 0 0 1 2-2h2 M17 3h2a2 2 0 0 1 2 2v2 M21 17v2a2 2 0 0 1-2 2h-2 M7 21H5a2 2 0 0 1-2-2v-2 M7 8v8 M11 8v8 M15 8v8 M18 8v8'/%3E%3C/svg%3E")}
     .scanbar{display:flex;flex-direction:column;gap:6px}
     .scanrow{display:flex;gap:8px}
@@ -262,7 +262,7 @@
     .ordc .oc-act:disabled{opacity:.5}
     .ordc.run{border-color:var(--primary)}
     .tagrun{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:800;background:var(--primary-wash);color:var(--primary-ink)}
-    #btn-pirefresh{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16 M16 16h5v5'/%3E%3C/svg%3E")}
+    #btn-rcrefresh,#btn-pirefresh{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16 M16 16h5v5'/%3E%3C/svg%3E")}
     .pp-title{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin:2px 0 8px;display:flex;align-items:center;gap:8px}
     .pp-title::before,.pp-title::after{content:"";flex:1;height:1px;background:var(--line-2)}
     .pp{width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;color:var(--ink)}
@@ -274,6 +274,34 @@
     .pp .pp-q{flex:none;font-weight:800;font-size:13px;color:var(--primary-ink);background:var(--primary-wash);border-radius:999px;padding:4px 10px}
     .pp.done{opacity:.45}
     #pp-q{margin-bottom:8px}
+    .rst{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:800;background:var(--surface-3);color:var(--ink-2)}
+    .rst.ARRIVED{background:#E8F0FF;color:#2453B8}.rst.PARTIAL{background:#FFF4E0;color:#A35A00}
+    .ordc.rc{flex-wrap:wrap}
+    .rc-acts{display:flex;gap:8px;width:100%;margin-top:2px}
+    .rc-acts .oc-act{flex:1}
+    .rc-arr{width:100%;display:flex;flex-direction:column;gap:8px;margin-top:4px;padding-top:10px;border-top:1px dashed var(--line-2)}
+    .rc-arr input{height:44px}
+    .iconbtn.back{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E")}
+    .iconbtn.refr{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16 M16 16h5v5'/%3E%3C/svg%3E")}
+    .op[data-op="countst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2 M9 3h6v4H9z M9 12h6 M9 16h4'/%3E%3C/svg%3E")}
+    .op[data-op="retst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11'/%3E%3C/svg%3E")}
+    .op[data-op="kitst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2 2 7l10 5 10-5-10-5z M2 17l10 5 10-5 M2 12l10 5 10-5'/%3E%3C/svg%3E")}
+    .cl{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+    .cl+.cl{margin-top:8px}
+    .cl .cl-main{flex:1;min-width:0}
+    .cl .cl-sku{font-weight:800;font-size:14.5px}
+    .cl .cl-sub{font-size:12px;color:var(--ink-3);margin-top:2px}
+    .cl .pl-q b{min-width:44px;text-align:center;font-size:16px}
+    .cl .cl-lot{width:100%;height:42px}
+    .cl .cl-x{border:0;background:transparent;color:var(--crit);font-size:18px;font-weight:800;width:30px;height:30px}
+    .disp{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;width:100%}
+    .disp .dcol{background:var(--surface-2);border-radius:12px;padding:8px 4px;text-align:center;min-width:0}
+    .disp .dcol .dl{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .disp .dcol .dq{display:flex;align-items:center;justify-content:center;gap:3px;margin-top:6px}
+    .disp .dcol .dq b{min-width:20px;font-size:16px}
+    .disp .mini{width:30px;height:32px;font-size:16px;flex:none}
+    .locpick{display:flex;flex-wrap:wrap;gap:6px;width:100%}
+    .locpick .chip{height:32px;font-size:12.5px}
     .dlc{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:800;background:var(--surface-3);color:var(--ink-2)}
     .dlc.v{background:#FDECEC;color:#B4232A}.dlc.r{background:#FFF4E0;color:#A35A00}
     .pk-empty{text-align:center;color:var(--ink-3);padding:26px 10px;background:var(--surface);border:1px dashed var(--line-2);border-radius:16px}
@@ -342,7 +370,7 @@
       <div class="body" style="gap:12px">
         <div class="tabs">
           <button class="tab on" data-tab="mine">Mis tareas <span class="cnt" id="cnt-mine">0</span></button>
-          <button class="tab" data-tab="available" id="tab-available" style="display:none">Disponibles <span class="cnt" id="cnt-available">0</span></button>
+          <button class="tab" data-tab="available" id="tab-available" style="display:none">Libres <span class="cnt" id="cnt-available">0</span></button>
           <button class="tab" data-tab="free">Operar libre</button>
         </div>
 
@@ -363,14 +391,17 @@
 
         <div id="pane-free" class="pane">
           <p class="muted" style="margin:0">Operación libre (sin tarea asignada). El supervisor verá el movimiento igual.</p>
-          <div id="free-seller-wrap"><label for="free-seller">Cliente (para Recepción, Guardado y Stock)</label><select id="free-seller"><option value="">Cargando clientes…</option></select></div>
+          <div id="free-seller-wrap"><label for="free-seller">Cliente (para Guardado, Stock y operaciones sueltas)</label><select id="free-seller"><option value="">Cargando clientes…</option></select></div>
           <div class="ops">
             <button class="op" data-op="receive"><span class="em">📦</span><span class="t">Recepción</span></button>
             <button class="op" data-op="putaway"><span class="em">⇄</span><span class="t">Guardado</span></button>
             <button class="op" data-op="pick"><span class="em">🛒</span><span class="t">Picking</span></button>
             <button class="op" data-op="packst"><span class="em">📦</span><span class="t">Empaque</span></button>
             <button class="op" data-op="shipst"><span class="em">🚚</span><span class="t">Despacho</span></button>
-            <button class="op" data-op="stock"><span class="em">🔎</span><span class="t">Consultar stock</span></button>
+            <button class="op" data-op="countst"><span class="em">🔢</span><span class="t">Conteo</span></button>
+            <button class="op" data-op="retst"><span class="em">↩</span><span class="t">Devoluciones</span></button>
+            <button class="op" data-op="kitst"><span class="em">🧩</span><span class="t">Armado de kits</span></button>
+            <button class="op wide" data-op="stock"><span class="em">🔎</span><span class="t">Consultar stock</span></button>
           </div>
         </div>
       </div>
@@ -468,6 +499,98 @@
           <button class="btn alt" id="btn-closercpt" style="display:none">Cerrar recepción con faltante</button>
           <button class="btn alt" id="btn-finish">Terminar y volver a mis tareas</button>
         </div>
+      </div>
+    </section>
+
+    <!-- Estación genérica por tareas (Guardado, Conteo): asignadas a mí + libres. -->
+    <section id="taskst" class="screen">
+      <header>
+        <button class="iconbtn back" id="btn-tsback" title="Volver">‹</button>
+        <div><div class="title" id="ts-title">Tareas</div><div class="sub" id="ts-sub">—</div></div>
+        <div class="spacer"></div>
+        <button class="iconbtn refr" id="btn-tsrefresh" title="Actualizar">↻</button>
+      </header>
+      <div class="body">
+        <form class="scanbar" id="ts-scan" autocomplete="off">
+          <label for="ts-code" id="ts-label">Escanea o escribe</label>
+          <div class="scanrow"><input id="ts-code" class="code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
+        </form>
+        <div class="chips" id="ts-tabs">
+          <button class="chip on" data-tst="mine"><span id="ts-lmine">Asignadas a mí</span> · <span id="ts-cmine">0</span></button>
+          <button class="chip" data-tst="free">Libres · <span id="ts-cfree">0</span></button>
+        </div>
+        <div id="ts-list"></div>
+        <button class="btn alt" id="ts-loose" style="margin-top:6px">—</button>
+      </div>
+    </section>
+
+    <!-- Conteo cíclico (ciego): por ubicación o por SKU. -->
+    <section id="count" class="screen">
+      <header>
+        <button class="iconbtn back" id="btn-ctback" title="Volver">‹</button>
+        <div><div class="title" id="ct-title">Conteo</div><div class="sub" id="ct-sub">—</div></div>
+      </header>
+      <div class="body">
+        <div class="taskctx" id="ct-ctx"></div>
+        <form class="scanbar" id="ct-scan" autocomplete="off">
+          <label for="ct-code" id="ct-label">Escanea</label>
+          <div class="scanrow"><input id="ct-code" class="code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
+        </form>
+        <div id="ct-body"></div>
+      </div>
+    </section>
+
+    <!-- Devoluciones: recibir lo que vuelve de una orden despachada y disponer cada unidad. -->
+    <section id="ret" class="screen">
+      <header>
+        <button class="iconbtn back" id="btn-rtback" title="Volver">‹</button>
+        <div><div class="title" id="rt-title">Devoluciones</div><div class="sub" id="rt-sub">—</div></div>
+        <div class="spacer"></div>
+        <button class="iconbtn refr" id="btn-rtrefresh" title="Actualizar">↻</button>
+      </header>
+      <div class="body">
+        <form class="scanbar" id="rt-scan" autocomplete="off">
+          <label for="rt-code" id="rt-label">Escanea o escribe el N° de la orden que vuelve</label>
+          <div class="scanrow"><input id="rt-code" class="code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
+        </form>
+        <div id="rt-body"></div>
+      </div>
+    </section>
+
+    <!-- Armado de kits: elegir kit, cantidad, de dónde sale cada componente y dónde queda. -->
+    <section id="kit" class="screen">
+      <header>
+        <button class="iconbtn back" id="btn-ktback" title="Volver">‹</button>
+        <div><div class="title" id="kt-title">Armado de kits</div><div class="sub" id="kt-sub">—</div></div>
+      </header>
+      <div class="body">
+        <form class="scanbar" id="kt-scan" autocomplete="off">
+          <label for="kt-code" id="kt-label">Escanea el kit o tócalo en la lista</label>
+          <div class="scanrow"><input id="kt-code" class="code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
+        </form>
+        <div id="kt-body"></div>
+      </div>
+    </section>
+
+    <!-- Estación de RECEPCIÓN: recepciones asignadas a mí + libres; llegada al andén y cotejo. -->
+    <section id="recvst" class="screen">
+      <header>
+        <button class="iconbtn" id="btn-rcback" title="Volver">‹</button>
+        <div><div class="title">Recepción</div><div class="sub" id="rc-sub">Tus recepciones y las libres para tomar</div></div>
+        <div class="spacer"></div>
+        <button class="iconbtn" id="btn-rcrefresh" title="Actualizar">↻</button>
+      </header>
+      <div class="body">
+        <form class="scanbar" id="rc-scan" autocomplete="off">
+          <label for="rc-code">Escanea o escribe el N° de recepción o de la guía</label>
+          <div class="scanrow"><input id="rc-code" class="code" placeholder="OR-… o N° de guía" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
+        </form>
+        <div class="chips" id="rc-tabs">
+          <button class="chip on" data-rct="mine">Asignadas a mí · <span id="rc-cmine">0</span></button>
+          <button class="chip" data-rct="free">Libres · <span id="rc-cfree">0</span></button>
+        </div>
+        <div id="rc-list"></div>
+        <button class="btn alt" id="rc-loose" style="margin-top:6px">Recepción suelta (sin orden)</button>
       </div>
     </section>
 

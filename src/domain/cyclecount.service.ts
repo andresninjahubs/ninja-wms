@@ -114,6 +114,7 @@ export class CycleCountService {
     locationId: string,
     counted: CountLine[],
     actor = 'cyclecount',
+    opts?: { onlySkus?: string[] | null },
   ): Promise<CountResult> {
     const seller = await this.sellers.findById(sellerId);
     if (!seller) throw new NotFoundError(`Seller no encontrado: ${sellerId}`);
@@ -127,6 +128,8 @@ export class CycleCountService {
     const expected = new Map<string, { sku: string; lot: string | null; qty: number }>();
     for (const b of balances) {
       if (b.state !== StockState.AVAILABLE) continue;
+      // Conteo por SKU: solo se reconcilian esos SKUs; el resto de la ubicación no se toca.
+      if (opts?.onlySkus && !opts.onlySkus.includes(b.sku)) continue;
       expected.set(bucketKey(b.sku, b.lot), { sku: b.sku, lot: b.lot, qty: b.qty });
     }
 

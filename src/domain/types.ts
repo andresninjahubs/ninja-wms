@@ -229,7 +229,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'order:fulfill', 'order:cancel', 'count:perform', 'seller:config', 'master:manage', 'product:manage', 'chat:use', 'chat:manage', 'announcement:view', 'webhook:manage',
   ],
   [UserRole.OPERATOR]: [
-    'stock:read', 'inventory:receive', 'inventory:putaway', 'order:create', 'order:fulfill',
+    'stock:read', 'inventory:receive', 'inventory:putaway', 'order:create', 'order:fulfill', 'count:perform',
   ],
   // El CLIENT (seller) puede consultar su stock, REGISTRAR recepciones de su propia
   // mercadería, y CREAR/EDITAR/CANCELAR sus órdenes de venta. La frontera de seller

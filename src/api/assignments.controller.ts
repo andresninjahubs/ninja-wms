@@ -162,8 +162,9 @@ export class AssignmentsController {
   board(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('operator') operator?: string, @Query('type') type?: string) {
     this.soloPersonal(user);
     const TIPOS = ['PICK', 'PACK', 'SHIP', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT'];
-    const t = type && TIPOS.includes(type) ? (type as WorkTaskType) : null;
-    return this.wms.operatorBoard(actorOperation(user, operationId), this.operarioConsultado(user, operator), { type: t });
+    // `type` acepta uno o varios tipos separados por coma (p. ej. PUTAWAY,RESLOT,RESTOCK).
+    const ts = String(type || '').split(',').map((x) => x.trim().toUpperCase()).filter((x) => TIPOS.includes(x)) as WorkTaskType[];
+    return this.wms.operatorBoard(actorOperation(user, operationId), this.operarioConsultado(user, operator), { types: ts.length ? ts : null });
   }
   /** El operario toma una tarea disponible (si el admin lo permite). */
   @Post('take')

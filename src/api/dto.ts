@@ -396,6 +396,32 @@ export class PerformCountDto {
   counted!: CountLineDto[];
 }
 
+export class SkuCountLineDto {
+  @IsString()
+  @MinLength(1)
+  locationId!: string;
+
+  @IsOptional()
+  @IsString()
+  lot?: string | null;
+
+  @IsInt()
+  @Min(0)
+  countedQty!: number;
+}
+
+/** Conteo de un SKU repartido en varias ubicaciones. */
+export class SkuCountDto {
+  @IsString()
+  @MinLength(1)
+  sku!: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SkuCountLineDto)
+  counted!: SkuCountLineDto[];
+}
+
 export class CreateSkuDto {
   @IsString()
   @MinLength(1)

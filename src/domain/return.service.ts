@@ -180,7 +180,11 @@ export class ReturnService {
     if (ret.status === ReturnStatus.COMPLETED || ret.status === ReturnStatus.CANCELLED) {
       throw new ValidationError(`La devolución ${returnId} ya está ${ret.status} y no se puede procesar.`);
     }
-    if (!input.lines || input.lines.length === 0) {
+    // Cerrar una devolución que ya tiene unidades dispuestas no exige disponer más:
+    // es el "terminé" del operario después de varias tandas.
+    const yaProcesada = ret.lines.some((l) => l.toStock + l.toMerma + l.toQuarantine > 0);
+    const soloCerrar = input.close === true && yaProcesada;
+    if ((!input.lines || input.lines.length === 0) && !soloCerrar) {
       throw new ValidationError('Indica al menos una línea con cantidades a disponer.');
     }
 
@@ -188,7 +192,7 @@ export class ReturnService {
     let anyPosted = false;
     let nextLineNo = ret.lines.reduce((m, l) => Math.max(m, l.lineNo), 0);
 
-    for (const inLine of input.lines) {
+    for (const inLine of input.lines || []) {
       const sku = (inLine.sku || '').trim();
       if (!sku) continue;
       const toStock = Math.max(0, Math.floor(Number(inLine.toStock) || 0));
@@ -218,7 +222,7 @@ export class ReturnService {
       if (inLine.note) line.note = inLine.note;
     }
 
-    if (!anyPosted) throw new ValidationError('No se dispuso ninguna unidad. Indica cantidades a stock, merma o cuarentena.');
+    if (!anyPosted && !soloCerrar) throw new ValidationError('No se dispuso ninguna unidad. Indica cantidades a stock, merma o cuarentena.');
 
     const totStock = ret.lines.reduce((s, l) => s + l.toStock, 0);
     const totMerma = ret.lines.reduce((s, l) => s + l.toMerma, 0);

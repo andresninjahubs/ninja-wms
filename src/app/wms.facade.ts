@@ -3225,6 +3225,25 @@ export class WmsFacade {
    * Recepción por escaneo: traduce el código + Nº de packs a unidades base
    * (múltiplos del EAN) y las ingresa al inventario.
    */
+  /**
+   * Traduce lo que entregó la app a unidades base. Además del código de barras (EAN/DUN),
+   * acepta `SKU:<código>`: es lo que manda la app del operario cuando el producto se eligió
+   * TOCÁNDOLO en pantalla (sin pistolear) — así funciona aunque el producto no tenga EAN.
+   * En ese caso se trabaja en la unidad base (factor 1).
+   */
+  private async scanToBaseUnits(sellerId: string, code: string, packCount: number): Promise<ScanResult> {
+    const raw = String(code || '');
+    if (/^SKU:/i.test(raw)) {
+      const sku = raw.slice(4).trim();
+      const def = sku ? await this.skus.find(sellerId, sku) : null;
+      if (!def) throw new NotFoundError(`SKU no encontrado para el seller ${sellerId}: ${sku}`);
+      const n = Math.floor(Number(packCount));
+      if (!(n > 0)) throw new ValidationError(`Cantidad inválida: ${packCount}`);
+      return { sellerId, sku: def.sku, code: 'UN', label: 'Unidad (elegida a mano)', factor: 1, packCount: n, baseQty: n };
+    }
+    return this.barcodes.toBaseUnits(sellerId, raw, packCount);
+  }
+
   async scanInbound(
     sellerId: string,
     input: {
@@ -3238,7 +3257,7 @@ export class WmsFacade {
       actor?: string;
     },
   ): Promise<{ scan: ScanResult; movement: StockMovement }> {
-    const scan = await this.barcodes.toBaseUnits(sellerId, input.barcode, input.packCount);
+    const scan = await this.scanToBaseUnits(sellerId, input.barcode, input.packCount);
     // Lote / vencimiento: obligatorios si el producto los controla, prohibidos si no.
     const skuDef = await this.skus.find(sellerId, scan.sku);
     validarLoteVencimientoRecepcion(skuDef ?? { sku: scan.sku }, input.lot, input.expiry, 'La recepción');
@@ -3271,7 +3290,7 @@ export class WmsFacade {
       actor?: string;
     },
   ): Promise<{ scan: ScanResult; movements: StockMovement[] }> {
-    const scan = await this.barcodes.toBaseUnits(sellerId, input.productBarcode, input.packCount);
+    const scan = await this.scanToBaseUnits(sellerId, input.productBarcode, input.packCount);
     const opId = await this.operationOfSeller(sellerId);
     const from = await this.mustLocationByCode(opId, input.fromLocationCode);
     const to = await this.mustLocationByCode(opId, input.toLocationCode);
@@ -3308,7 +3327,7 @@ export class WmsFacade {
       actor?: string;
     },
   ): Promise<{ scan: ScanResult; movement: StockMovement }> {
-    const scan = await this.barcodes.toBaseUnits(sellerId, input.productBarcode, input.packCount);
+    const scan = await this.scanToBaseUnits(sellerId, input.productBarcode, input.packCount);
     const loc = await this.mustLocationByCode(await this.operationOfSeller(sellerId), input.locationCode);
     const movement = await this.inventory.pick(sellerId, {
       sku: scan.sku,
@@ -3775,6 +3794,36 @@ export class WmsFacade {
     // Camino B: cierra la asignación de conteo por ubicación.
     if (opId) { await this.completeAssignments('COUNT', [`${sellerId}:${locationId}`], actor); await this.continuousHook(opId, 'COUNT', null); }
     return res;
+  }
+
+  /**
+   * Conteo de UN SKU en todas las ubicaciones donde se cuenta (tarea de conteo por SKU).
+   * Cada ubicación se reconcilia solo para ese SKU: el resto de lo que hay ahí no se toca.
+   * Cierra la tarea de conteo `sellerId:sku`.
+   */
+  async performSkuCount(
+    sellerId: string,
+    sku: string,
+    porUbicacion: Array<{ locationId: string; lot?: string | null; countedQty: number }>,
+    actor = 'cyclecount',
+  ): Promise<{ sku: string; resultados: CountResult[] }> {
+    const opId = await this.operationOfSeller(sellerId).catch(() => null);
+    await this.assertFeature(opId, 'cycle_count', 'El conteo cíclico');
+    if (opId) await this.assertAssignmentAllowed(opId, 'COUNT', `${sellerId}:${sku}`, actor);
+    if (!porUbicacion || !porUbicacion.length) throw new ValidationError('Indica al menos una ubicación contada.');
+    const porLoc = new Map<string, CountLine[]>();
+    for (const c of porUbicacion) {
+      if (!c.locationId) throw new ValidationError('Falta la ubicación en una línea del conteo.');
+      const arr = porLoc.get(c.locationId) || [];
+      arr.push({ sku, lot: c.lot ?? null, countedQty: Math.max(0, Math.floor(Number(c.countedQty) || 0)) });
+      porLoc.set(c.locationId, arr);
+    }
+    const resultados: CountResult[] = [];
+    for (const [locationId, lines] of porLoc) {
+      resultados.push(await this.cycleCounts.performCount(sellerId, locationId, lines, actor, { onlySkus: [sku] }));
+    }
+    if (opId) { await this.completeAssignments('COUNT', [`${sellerId}:${sku}`], actor); await this.continuousHook(opId, 'COUNT', null); }
+    return { sku, resultados };
   }
 
   /**
@@ -5766,7 +5815,7 @@ export class WmsFacade {
    * Tablero del operario: sus tareas en orden de ejecución (con estado y nombre del cliente)
    * y, si el administrador lo permite, las tareas disponibles (sin asignar) para tomar.
    */
-  async operatorBoard(operationId: string, operator: string, opts?: { type?: WorkTaskType | null }): Promise<{ operator: string; selfPickup: boolean; mode: 'advisory' | 'strict'; habilitado?: boolean; mine: Array<WorkAssignment & { next?: boolean; position?: number; estado: 'in_progress' | 'assigned'; cliente: string | null }>; available: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; cliente: string | null; unidades: number; prioridad: number; motivo: string }> }> {
+  async operatorBoard(operationId: string, operator: string, opts?: { type?: WorkTaskType | null; types?: WorkTaskType[] | null }): Promise<{ operator: string; selfPickup: boolean; mode: 'advisory' | 'strict'; habilitado?: boolean; mine: Array<WorkAssignment & { next?: boolean; position?: number; estado: 'in_progress' | 'assigned'; cliente: string | null }>; available: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; cliente: string | null; unidades: number; prioridad: number; motivo: string }> }> {
     const [selfPickupOp, mode, mine] = await Promise.all([this.getOperatorSelfPickup(operationId), this.getAssignmentMode(operationId), this.getOperatorTasks(operationId, operator)]);
     // El tablero no le ofrece trabajo a quien no puede tomarlo: si se lo mostrara,
     // un usuario cliente vería en su pantalla las órdenes de los demás clientes de
@@ -5785,22 +5834,24 @@ export class WmsFacade {
       // Solo se le ofrece trabajo de las actividades que tiene habilitadas.
       const yo = (await this.listUsers(operationId)).find((u) => u.id === operator);
       // Con `type` (p. ej. la estación de picking de la app) se trae solo ese tipo y más profundo.
-      const tipos = opts?.type ? [opts.type] : (['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT'] as WorkTaskType[]);
+      const filtro = opts?.types && opts.types.length ? opts.types : (opts?.type ? [opts.type] : null);
+      const tipos = filtro || (['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT'] as WorkTaskType[]);
       for (const t of tipos) {
         if (yo && !puedeHacer(yo, t)) continue;
-        const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: opts?.type ? 100 : 30 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
+        const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: filtro ? 100 : 30 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
         pool.forEach((p, i) => available.push({ type: t, entityId: p.entityId, entityRef: p.entityRef, sellerId: p.sellerId, cliente: sname.get(p.sellerId) || p.sellerId, unidades: p.unidades, prioridad: (TYPE_W[t] ?? 8) * 1000 + i + 1, motivo: `${LABEL[t]} #${i + 1}` }));
       }
       available.sort((a, b) => a.prioridad - b.prioridad);
     }
     // ¿Tiene habilitada la actividad pedida? (habilidades del operario) — la app lo explica.
+    const pedidos = opts?.types && opts.types.length ? opts.types : (opts?.type ? [opts.type] : null);
     let habilitado: boolean | undefined;
-    if (opts?.type) {
+    if (pedidos) {
       const yo2 = (await this.listUsers(operationId).catch(() => [] as User[])).find((u) => u.id === operator);
-      habilitado = yo2 ? puedeHacer(yo2, opts.type) : true;
+      habilitado = yo2 ? pedidos.some((t) => puedeHacer(yo2, t)) : true;
     }
-    const mineF = opts?.type ? mineOut.filter((a) => a.type === opts.type) : mineOut;
-    return { operator, selfPickup, mode, habilitado, mine: mineF, available: available.slice(0, opts?.type ? 100 : 40) };
+    const mineF = pedidos ? mineOut.filter((a) => pedidos.includes(a.type)) : mineOut;
+    return { operator, selfPickup, mode, habilitado, mine: mineF, available: available.slice(0, pedidos ? 100 : 40) };
   }
   /** El operario TOMA una tarea disponible (solo si el administrador lo permite y sigue sin asignar). */
   async takeTask(operationId: string, operator: string, input: { type: WorkTaskType; entityId: string }): Promise<WorkAssignment> {
@@ -7107,6 +7158,29 @@ export class WmsFacade {
   }
   getReceipt(sellerId: string, orderId: string): Promise<ReceiptOrder | null> {
     return this.receipts.get(sellerId, orderId);
+  }
+  /**
+   * Recepciones de TODA la operación (la app del operario recibe para cualquier cliente).
+   * `open` deja solo las que siguen por recibir: Creada, En bodega y Parcial.
+   */
+  async listOperationReceipts(
+    operationId: string,
+    opts?: { open?: boolean; sellerScope?: string | null },
+  ): Promise<Array<ReceiptOrder & { sellerName: string }>> {
+    const todos = await this.listSellers(operationId);
+    const nombre = new Map(todos.map((s) => [s.id, s.name] as const));
+    let ids = todos.map((s) => s.id);
+    if (opts?.sellerScope) ids = ids.filter((id) => id === opts.sellerScope);
+    const porSeller = await Promise.all(ids.map((sid) => this.listReceipts(sid).catch(() => [] as ReceiptOrder[])));
+    const out: Array<ReceiptOrder & { sellerName: string }> = [];
+    for (const lista of porSeller) {
+      for (const r of lista) {
+        if (opts?.open && !['PENDING', 'ARRIVED', 'PARTIAL'].includes(String(r.status))) continue;
+        out.push({ ...r, sellerName: nombre.get(r.sellerId) ?? r.sellerId });
+      }
+    }
+    out.sort((a, b) => Date.parse(String(a.createdAt)) - Date.parse(String(b.createdAt)));
+    return out;
   }
   listReceipts(sellerId: string): Promise<ReceiptOrder[]> {
     return this.receipts.list(sellerId);

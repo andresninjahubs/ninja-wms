@@ -11,7 +11,7 @@ import {
 import type { Response } from 'express';
 import * as XLSX from 'xlsx';
 import { WmsFacade } from '../app/wms.facade';
-import { PerformCountDto, PutawayDto, ReceiveDto, ScanCodeDto, ScanInboundDto, ScanPickDto, ScanPutawayDto } from './dto';
+import { PerformCountDto, SkuCountDto, PutawayDto, ReceiveDto, ScanCodeDto, ScanInboundDto, ScanPickDto, ScanPutawayDto } from './dto';
 import { actorOf, CurrentUser } from './auth/current-user.decorator';
 import { RequirePermission } from './auth/permissions.decorator';
 import { User } from '../domain/types';
@@ -252,6 +252,18 @@ export class InventoryController {
   @RequirePermission('stock:read')
   planCounts(@Param('sellerId') sellerId: string) {
     return this.wms.planCounts(sellerId);
+  }
+
+  /** Conteo de un SKU en varias ubicaciones (solo reconcilia ese SKU en cada una). */
+  @Post('cycle-counts/sku')
+  @RequirePermission('count:perform')
+  performSkuCount(@Param('sellerId') sellerId: string, @Body() dto: SkuCountDto, @CurrentUser() user: User | null) {
+    return this.wms.performSkuCount(
+      sellerId,
+      dto.sku,
+      dto.counted.map((c) => ({ locationId: c.locationId, lot: c.lot ?? null, countedQty: c.countedQty })),
+      actorOf(user),
+    );
   }
 
   /** Ejecuta un conteo en una ubicación y reconcilia el ledger. */

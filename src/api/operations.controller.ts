@@ -177,6 +177,18 @@ export class OperationsController {
    * se impone acá: un usuario CLIENT queda encerrado en el suyo, sin importar lo
    * que pida el parámetro.
    */
+  /** Recepciones de la operación (todas o solo abiertas con ?open=true). */
+  @Get(':operationId/receipts')
+  @RequirePermission('stock:read')
+  receipts(
+    @Param('operationId') operationId: string,
+    @CurrentUser() user: User | null,
+    @Query('open') open?: string,
+  ) {
+    const sellerScope = user && user.role === UserRole.CLIENT ? (user.sellerId ?? null) : null;
+    return this.wms.listOperationReceipts(operationId, { open: open === 'true', sellerScope });
+  }
+
   @Get(':operationId/orders')
   @RequirePermission('stock:read')
   orders(

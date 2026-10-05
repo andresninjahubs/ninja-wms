@@ -41,7 +41,7 @@ window.NINJA_TOUR_GUIDES = {
         text:'Con stock guardado, <b>Reservar</b> aparta las unidades (nunca vendes lo que no tienes). Luego la orden sigue su camino: picking, empaque y despacho. Cuando despaches la primera, tu bodega está operando.'}
     ],
     outro:'Ya tienes lo esencial. Cada sección tiene su propio tutorial en «▶ Tutorial» y en el Centro de aprendizaje.',
-    tips:['Si prefieres ver el flujo completo con datos ficticios, en el Dashboard está «Cargar datos de ejemplo».','La app del operario (menú → Equipo) recibe, guarda, pickea, empaca y despacha con escaneo desde el celular.']
+    tips:['Si prefieres ver el flujo completo con datos ficticios, en el Dashboard está «Cargar datos de ejemplo».','La app del operario (menú → Equipo) recibe, guarda, pickea, empaca, despacha, cuenta, procesa devoluciones y arma kits desde el celular: todo se puede hacer pistoleando o tocando en pantalla.']
   },
 
   aidash: {
@@ -222,7 +222,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#inb-body', place:'top', title:'Cotejo físico vs. teórico', text:'Con <b>Recepcionar</b> el equipo cuenta cada SKU. «Recibido ahora» <b>parte en 0</b>: ingresa lo que realmente cuentas. Si el producto controla <b>lote</b> y/o <b>vencimiento</b>, el cotejo pide ese dato y es <b>obligatorio</b>; si no los controla, no aparecen y solo registras la cantidad. El stock entra al inventario <b>solo al confirmar</b>, y puedes recibir en varias entregas.'},
       {el:'#inb-body tr', place:'bottom', title:'Manifiesto y auditoría', text:'Cada recepción se puede imprimir como <b>manifiesto PDF</b> con esperado, recibido y diferencia, y guarda una bitácora de quién contó qué y cuándo.'}
     ],
-    tips:['Lo recibido queda en zona de recepción: guárdalo en su ubicación desde «Almacenado».','¿Necesitas lote o vencimiento en un producto? Actívalo en Productos → Control de lote / Control de vencimiento.','Una recepción pendiente se puede editar; una con stock ya recibido se puede anular revirtiendo el stock si sigue íntegro.']
+    tips:['Lo recibido queda en zona de recepción: guárdalo en su ubicación desde «Almacenado».','¿Necesitas lote o vencimiento en un producto? Actívalo en Productos → Control de lote / Control de vencimiento.','En la app del operario, «Recepción» muestra las recepciones asignadas y las libres para tomar; desde ahí el operario marca «Llegó al andén» y hace el cotejo escaneando o tocando el producto.','Una recepción pendiente se puede editar; una con stock ya recibido se puede anular revirtiendo el stock si sigue íntegro.']
   },
 
   returns: {
