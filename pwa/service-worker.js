@@ -3,8 +3,8 @@
  * Cachea el "shell" de la app para que abra sin conexión; las llamadas a la API
  * van siempre a la red (el stock no se cachea, debe ser fresco).
  */
-const CACHE = 'wms-operador-v9';
-const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icon.svg'];
+const CACHE = 'wms-operador-v12';
+const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icon.svg', './brand-ninjahubs.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

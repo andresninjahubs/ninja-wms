@@ -151,7 +151,7 @@
 
   // ---- Navegación -----------------------------------------------------------
   function show(id) {
-    ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
+    ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship', 'pickst'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
     if (id !== 'scan') stopCamera();
     if (typeof camClose === 'function' && $('camsheet') && $('camsheet').style.display !== 'none') camClose();
     if (id === 'home') { loadBoard(); if (!boardTimer) boardTimer = setInterval(function () { if ($('home').classList.contains('on') && !document.hidden) loadBoard(); }, 30000); }
@@ -165,16 +165,20 @@
 
   // ---- Login ----------------------------------------------------------------
   // Si la PWA se sirve desde el mismo origen que la API (caso túnel), usa ese origen.
-  $('cfg-api').value = cfg.api || window.location.origin;
-  $('cfg-seller').value = cfg.seller || '';
+  // El operario solo escribe email y contraseña. La app se sirve desde el mismo
+  // servidor que la API, así que el servidor es el origen de la página. Para pruebas
+  // contra otro servidor se puede abrir la app con ?api=https://otro-servidor.
+  var apiParam = null;
+  try { apiParam = new URLSearchParams(window.location.search).get('api'); } catch (e) {}
+  function apiBase() { return (apiParam || window.location.origin).replace(/\/$/, ''); }
   $('cfg-email').value = cfg.email || '';
+  cfg.api = apiBase();   // una configuración vieja guardada en el aparato no debe apuntar a otro servidor
 
-  $('btn-login').addEventListener('click', function () {
-    cfg.api = $('cfg-api').value.trim();
-    cfg.seller = $('cfg-seller').value.trim();
+  function doLogin() {
+    cfg.api = apiBase();
     cfg.email = $('cfg-email').value.trim();
     var pass = $('cfg-pass').value;
-    if (!cfg.api || !cfg.email || !pass) { toast('Completa servidor, email y contraseña', false); return; }
+    if (!cfg.email || !pass) { toast('Completa email y contraseña', false); return; }
     save();
     api('/auth/login', { method: 'POST', body: { email: cfg.email, password: pass } })
       .then(function (r) {
@@ -183,7 +187,7 @@
         $('cfg-pass').value = '';
         user = r.user;
         $('h-user').textContent = user.name;
-        $('h-seller').textContent = (cfg.seller ? 'Cliente: ' + cfg.seller + ' · ' : '') + 'Operario';
+        $('h-seller').textContent = 'Operario';
         if (user.operationId) opId = user.operationId;
         loadLocations();
         loadPwaBranding();
@@ -191,9 +195,33 @@
         // Apenas hay sesión válida se vacían: esperar el minuto del intervalo dejaría
         // el tiempo del turno anterior colgando en el aparato más de lo necesario.
         laborFlush();
+        loadFreeSellers();
         show('home');
       })
       .catch(function (e) { toast('No se pudo conectar: ' + e.message, false); });
+  }
+  $('btn-login').addEventListener('click', doLogin);
+  // Enter en la contraseña entra (teclado del teléfono o pistola con teclado).
+  $('cfg-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); doLogin(); } });
+  $('cfg-email').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('cfg-pass').focus(); } });
+
+  // ---- Cliente para la operación libre --------------------------------------
+  // Recepción, guardado, picking y consulta de stock libres trabajan sobre UN cliente.
+  // Antes se escribía su id en el login; ahora se elige de la lista de la operación.
+  function loadFreeSellers() {
+    var sel = $('free-seller'); if (!sel || !user || !user.operationId) return;
+    api('/operations/' + encodeURIComponent(user.operationId) + '/sellers').then(function (list) {
+      var act = (list || []).filter(function (x) { return x.active !== false; });
+      if (cfg.seller && !act.some(function (x) { return x.id === cfg.seller; })) { cfg.seller = ''; save(); }
+      if (!cfg.seller && act.length === 1) { cfg.seller = act[0].id; save(); loadLocations(); }
+      sel.innerHTML = (act.length > 1 ? '<option value="">— Elige el cliente —</option>' : '')
+        + act.map(function (x) { return '<option value="' + esc(x.id) + '">' + esc(x.name || x.id) + '</option>'; }).join('');
+      sel.value = cfg.seller || '';
+    }).catch(function () { sel.innerHTML = '<option value="">No pude cargar los clientes</option>'; });
+  }
+  $('free-seller').addEventListener('change', function () {
+    cfg.seller = this.value || ''; save();
+    loadLocations();
   });
 
   $('btn-logout').addEventListener('click', function () {
@@ -235,7 +263,9 @@
       // Empaque y despacho trabajan con todas las órdenes de la operación: no piden cliente.
       if (which === 'packst') { openPackStation(null); return; }
       if (which === 'shipst') { openShipStation(null); return; }
-      if (!cfg.seller) { toast('Para operar libre indica el cliente en la pantalla de ingreso', false); return; }
+      // Picking: pedidos asignados y libres de toda la operación (no pide cliente).
+      if (which === 'pick') { openPickStation(); return; }
+      if (!cfg.seller) { toast('Elige primero el cliente en «Operar libre»', false); var fs = $('free-seller'); if (fs) fs.focus(); return; }
       startOp(which);
     });
   });
@@ -400,6 +430,7 @@
     setTaskCtx('<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>Cargando lista de picking…');
     api('/sellers/' + encodeURIComponent(task.sellerId) + '/orders/' + encodeURIComponent(task.entityId) + '/picklist')
       .then(function (lines) {
+        if (task) { task.picklist = lines || []; if (steps[stepIdx] === 'product') renderProductPicker(); }
         var html = '<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>Escanea cada producto y su ubicación:<div class="lines">'
           + (lines || []).map(function (l) {
             var loc = LOC_BY_ID[l.locationId]; var done = (l.pickedQty || 0) >= l.qty;
@@ -418,6 +449,7 @@
     api('/sellers/' + encodeURIComponent(task.sellerId) + '/receipts/' + encodeURIComponent(task.entityId))
       .then(function (r) {
         task.receipt = r;
+        if (steps[stepIdx] === 'product') renderProductPicker();
         var loc = LOC_BY_ID[r.locationId];
         var html = '<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || r.id) + '</b>'
           + (r.supplier ? esc(r.supplier) + ' · ' : '') + 'Ubicación de recepción: <span class="code">' + esc(loc ? loc.code : r.locationId) + '</span>. Escanea cada producto e indica la cantidad recibida:<div class="lines">'
@@ -436,7 +468,7 @@
     if (msg) $('res-sub').textContent += ' ' + msg;
     $('btn-again').style.display = 'none';
     $('btn-closercpt').style.display = 'none';
-    $('btn-finish').textContent = 'Volver a mis tareas';
+    $('btn-finish').textContent = PI.back ? 'Volver a la lista de picking' : 'Volver a mis tareas';
     task = null;
     loadBoard();
   }
@@ -535,6 +567,9 @@
     if (inp) inp.placeholder = (s === 'product') ? 'EAN / DUN del producto' : 'Código de ubicación';
     $('picklist').style.display = 'none'; $('picklist').innerHTML = '';
     if (s && s !== 'product') renderPicklist(s);
+    if (s === 'product') renderProductPicker(); else { $('prodpick').style.display = 'none'; $('prodpick').innerHTML = ''; }
+    // Con todos los pasos resueltos solo queda la cantidad: el campo de código sobra.
+    $('manual').style.display = s ? '' : 'none';
     enfocaCodigo();   // la pistola escribe donde está el cursor
   }
 
@@ -685,7 +720,8 @@
   function setupQty() {
     stopCamera();
     $('picklist').style.display = 'none';
-    $('qty-lbl').textContent = 'Cantidad de packs (' + captured.resolved.code + ')';
+    $('qty-lbl').textContent = captured.resolved.isBase ? 'Cantidad de unidades' : ('Cantidad de packs (' + (captured.resolved.label || captured.resolved.code) + ')');
+    $('prodpick').style.display = 'none';
     $('q-count').value = 1;
     captured.ctl = { lot: false, exp: false };
     $('q-lot').value = ''; $('q-exp').value = '';
@@ -793,7 +829,7 @@
       $('qtywrap').style.display = 'none'; $('btn-confirm').style.display = 'none';
       $('after').style.display = 'flex';
       $('btn-closercpt').style.display = 'none';
-      $('btn-finish').textContent = 'Terminar y volver a mis tareas';
+      $('btn-finish').textContent = PI.back ? 'Terminar y volver a la lista de picking' : 'Terminar y volver a mis tareas';
       if (task && task.type === 'PICK') {
         if (r.order && r.order.status === 'PICKED') finishTask('Orden completamente pickeada: la tarea salió de tu bandeja.');
         else { loadTaskPicklist(); $('btn-again').style.display = ''; }
@@ -928,7 +964,9 @@
     onDetect(code);
   });
 
-  $('btn-back').addEventListener('click', function () { task = null; show('home'); });
+  // Si el flujo se abrió desde la estación de picking, volver lleva a esa lista.
+  function volverDeFlujo() { task = null; if (PI.back) { PI.back = false; openPickStation(); } else show('home'); }
+  $('btn-back').addEventListener('click', volverDeFlujo);
   $('btn-again').addEventListener('click', function () {
     var t = task; startOp(op);
     if (t && t.type === 'PICK') loadTaskPicklist();
@@ -943,7 +981,7 @@
       .catch(function (e) { toast(e.message, false); })
       .then(function () { b.disabled = false; });
   });
-  $('btn-finish').addEventListener('click', function () { task = null; show('home'); });
+  $('btn-finish').addEventListener('click', volverDeFlujo);
 
   // ---- Marca (white-label) de la operación ----------------------------------
   // La marca que configura el administrador (logo, nombre, color) se refleja aquí.
@@ -971,7 +1009,8 @@
         if (name) { var d = document.createElement('div'); d.textContent = name; d.style.cssText = 'font-weight:800;font-size:16px;color:var(--primary-2)'; return d; }
         return null;
       }
-      var lg = $('pwa-brand-login'); if (lg) { lg.innerHTML = ''; var e1 = logoHtml(56); if (e1) lg.appendChild(e1); }
+      // En el login se mantiene el logo Ninja Hubs salvo que la operación tenga logo propio.
+      var lg = $('pwa-brand-login'); if (lg && b && b.logoDataUri) { lg.innerHTML = ''; var e1 = logoHtml(56); if (e1) lg.appendChild(e1); }
       var hb = $('pwa-brand-home'); if (hb) { hb.innerHTML = ''; var e2 = logoHtml(30); if (e2) hb.appendChild(e2); }
     } catch (e) {}
   }
@@ -1550,6 +1589,230 @@
   });
   $('btn-shback').addEventListener('click', function () { SH.task = null; show('home'); });
 
+
+  // =====================================================================
+  // ESTACIÓN DE PICKING
+  // ---------------------------------------------------------------------
+  // El operario ve sus pedidos de picking asignados (en el orden en que debe hacerlos)
+  // y, si el administrador lo permite, los pedidos libres de la bodega para tomarlos.
+  // Al empezar uno se abre el flujo de picking guiado por la lista del pedido.
+  // =====================================================================
+  var PI = { tab: 'mine', board: null, ord: {}, back: false, busy: false };
+  function openPickStation() {
+    task = null;
+    show('pickst');
+    $('pi-list').innerHTML = '<div class="pk-empty">Cargando pedidos…</div>';
+    loadPickStation();
+    enfoca('pi-code');
+  }
+  function loadPickStation() {
+    var oid = opIdOrNull(); if (!oid || !user) return;
+    Promise.all([
+      api('/assignments/board?operationId=' + encodeURIComponent(oid) + '&operator=' + encodeURIComponent(user.id) + '&type=PICK'),
+      opOrders().catch(function () { return []; }),
+    ]).then(function (r) {
+      PI.board = r[0] || { mine: [], available: [] };
+      PI.ord = {}; (r[1] || []).forEach(function (o) { PI.ord[o.id] = o; });
+      // Libres: el deadline manda (lo que vence antes, primero).
+      (PI.board.available || []).sort(function (a, b) {
+        var oa = PI.ord[a.entityId] || {}, ob = PI.ord[b.entityId] || {};
+        var da = oa.dueAt ? Date.parse(oa.dueAt) : Infinity, db = ob.dueAt ? Date.parse(ob.dueAt) : Infinity;
+        return da !== db ? da - db : (a.prioridad || 0) - (b.prioridad || 0);
+      });
+      if (PI.tab === 'mine' && !(PI.board.mine || []).length && (PI.board.available || []).length) PI.tab = 'free';
+      renderPickStation();
+    }).catch(function (e) { $('pi-list').innerHTML = '<div class="pk-empty">No pude cargar los pedidos: ' + esc(e.message) + '</div>'; });
+  }
+  function piCard(t, libre) {
+    var o = PI.ord[t.entityId] || {};
+    var run = t.estado === 'in_progress';
+    var lineas = (o.lines || []).length, un = t.unitsEstimate || t.unidades || oUnits(o);
+    var btn = libre
+      ? '<button class="oc-act" data-pitake="' + esc(t.entityId) + '">Tomar</button>'
+      : '<button class="oc-act' + (t._first ? '' : ' alt') + '" data-pistart="' + esc(t.entityId) + '">' + (run ? 'Continuar' : 'Empezar') + '</button>';
+    return '<div class="ordc' + (run ? ' run' : '') + '"><div class="oc-main"><div class="oc-ref">' + esc(t.entityRef || oRef(o)) + ' ' + (run ? '<span class="tagrun">En curso</span> ' : '') + dlChipHtml(o) + '</div>'
+      + '<div class="oc-meta">' + esc(t.cliente || o.sellerName || '') + (lineas ? ' · ' + lineas + ' línea(s)' : '') + (un ? ' · ' + un + ' un' : '') + (o.status === 'PICKING' && !run ? ' · picking a medias' : '') + '</div>'
+      + (!libre && t.priorityReason ? '<div class="oc-meta" style="color:var(--ink-2)">' + esc(t.priorityReason) + '</div>' : '')
+      + '</div>' + btn + '</div>';
+  }
+  function renderPickStation() {
+    var b = PI.board || { mine: [], available: [] };
+    var mine = b.mine || [], free = b.available || [];
+    $('pi-cmine').textContent = mine.length; $('pi-cfree').textContent = b.selfPickup ? free.length : '—';
+    Array.prototype.forEach.call(document.querySelectorAll('#pi-tabs [data-pit]'), function (c) { c.classList.toggle('on', c.getAttribute('data-pit') === PI.tab); });
+    $('pi-sub').textContent = mine.length + ' asignado(s) a ti' + (b.selfPickup ? ' · ' + free.length + ' libre(s)' : '');
+    var html = '';
+    if (b.habilitado === false) {
+      html = '<div class="pk-empty">Tu usuario no tiene habilitado el <b>picking</b>. Pídele al administrador que lo active en tus habilidades.</div>';
+    } else if (PI.tab === 'mine') {
+      html = mine.length
+        ? '<div class="sec" style="margin-bottom:8px">En el orden en que debes hacerlos</div>' + mine.map(function (t, i) { t._first = i === 0; return piCard(t, false); }).join('')
+        : '<div class="pk-empty">No tienes pedidos de picking asignados.' + (b.selfPickup && free.length ? ' Revisa <b>Libres</b> para tomar uno.' : '') + '</div>';
+    } else {
+      html = !b.selfPickup
+        ? '<div class="pk-empty">El administrador no permite tomar pedidos desde la app. Espera a que te asignen, o pídele que active <b>«Tomar tareas»</b> en Asignaciones.</div>'
+        : (free.length
+          ? '<div class="sec" style="margin-bottom:8px">Más urgentes primero · toca Tomar para agregarlo a tu lista</div>' + free.map(function (t) { return piCard(t, true); }).join('')
+          : '<div class="pk-empty">No hay pedidos libres para pickear ahora. 🎉</div>');
+    }
+    $('pi-list').innerHTML = html;
+  }
+  $('pi-tabs').addEventListener('click', function (e) {
+    var c = e.target.closest('[data-pit]'); if (!c) return;
+    PI.tab = c.getAttribute('data-pit'); renderPickStation();
+  });
+  function piStart(t) {
+    PI.back = true;          // al terminar, vuelve a la estación de picking
+    startAssigned(t);
+  }
+  function piTake(entityId, thenStart) {
+    if (PI.busy) return;
+    var t = ((PI.board && PI.board.available) || []).filter(function (x) { return x.entityId === entityId; })[0];
+    if (!t) return;
+    PI.busy = true;
+    api('/assignments/take', { method: 'POST', body: { operationId: opIdOrNull(), type: 'PICK', entityId: entityId } })
+      .then(function (a) {
+        PI.busy = false; bip(true);
+        toast((t.entityRef || 'Pedido') + ' es tuyo', true);
+        var asg = { type: 'PICK', entityId: entityId, entityRef: (a && a.entityRef) || t.entityRef, sellerId: (a && a.sellerId) || t.sellerId, cliente: t.cliente, unitsEstimate: (a && a.unitsEstimate) || t.unidades };
+        if (thenStart) { piStart(asg); return; }
+        PI.tab = 'mine'; loadPickStation();
+      })
+      .catch(function (e) { PI.busy = false; bip(false); toast(e.message, false); loadPickStation(); });
+  }
+  $('pi-list').addEventListener('click', function (e) {
+    var s = e.target.closest('[data-pistart]');
+    if (s) { var t = ((PI.board && PI.board.mine) || []).filter(function (x) { return x.entityId === s.getAttribute('data-pistart'); })[0]; if (t) piStart(t); return; }
+    var k = e.target.closest('[data-pitake]');
+    if (k) { k.disabled = true; piTake(k.getAttribute('data-pitake'), false); }
+  });
+  $('pi-scan').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var el = $('pi-code'), c = norm(el.value); el.value = '';
+    if (!c) return;
+    var b = PI.board || {};
+    var hit = function (t) { var o = PI.ord[t.entityId] || {}; return norm(t.entityRef) === c || norm(t.entityId) === c || norm(o.externalOrderId) === c; };
+    var m = (b.mine || []).filter(hit)[0];
+    if (m) { bip(true); piStart(m); return; }
+    var f = (b.available || []).filter(hit)[0];
+    if (f) {
+      if (!b.selfPickup) { bip(false); toast('Ese pedido está libre, pero el administrador no permite tomar pedidos desde la app', false); return; }
+      piTake(f.entityId, true); return;   // escanear un pedido libre = tomarlo y empezar
+    }
+    var x = matchOrder(Object.keys(PI.ord).map(function (k) { return PI.ord[k]; }), c);
+    bip(false);
+    toast(x ? ('El pedido ' + oRef(x) + ' está ' + (ST_LBL[x.status] || x.status) + (x.status === 'ALLOCATED' || x.status === 'PICKING' ? ' y asignado a otro operario' : '')) : ('No encontré el pedido ' + c), false);
+    enfoca('pi-code');
+  });
+  $('btn-pirefresh').addEventListener('click', function () { loadPickStation(); toast('Actualizado', true); });
+  $('btn-piback').addEventListener('click', function () { PI.back = false; show('home'); });
+  $('pi-loose').addEventListener('click', function () {
+    // El picking suelto saca stock reservado sin ligarlo a un pedido: queda como
+    // opción secundaria y pide cliente, como antes.
+    PI.back = false;
+    if (!cfg.seller) { toast('Para el picking suelto elige primero el cliente en «Operar libre»', false); show('home'); switchTab('free'); var fs = $('free-seller'); if (fs) fs.focus(); return; }
+    startOp('pick');
+  });
+
+
+
+  // ---- Selección MANUAL del producto -----------------------------------------
+  // Cuando el código no se puede leer (etiqueta rota, sin EAN, sin pistola) el operario
+  // toca el producto en una lista. Se trabaja en UNIDADES base y después elige cuántas
+  // (una o varias). En una tarea la lista es la de la propia tarea; en operación libre,
+  // el catálogo del cliente con buscador.
+  var PACKS = {}, SKU_LIST = {};
+  function basePack(sellerId, sku) {
+    var k = sellerId + '|' + sku;
+    if (PACKS[k]) return Promise.resolve(PACKS[k]);
+    return api('/sellers/' + encodeURIComponent(sellerId) + '/skus/' + encodeURIComponent(sku) + '/packs')
+      .then(function (ps) { return (ps || []).filter(function (x) { return x.isBase; })[0] || (ps || []).filter(function (x) { return x.factor === 1; })[0] || null; })
+      .catch(function () { return null; })
+      .then(function (b) {
+        var r = { sku: sku, code: (b && b.code) || 'UN', label: (b && b.label) || 'Unidad', factor: 1, isBase: true, barcode: (b && b.barcode) || null };
+        PACKS[k] = r; return r;
+      });
+  }
+  function ppItem(it, i) {
+    return '<button class="pp' + (it.done ? ' done' : '') + '" data-pp="' + i + '"' + (it.done ? ' disabled' : '') + '><div class="pp-main"><div class="pp-sku">' + esc(it.sku) + '</div>'
+      + '<div class="pp-sub">' + esc(it.sub || '') + '</div></div>' + (it.badge ? '<span class="pp-q">' + esc(it.badge) + '</span>' : '') + '</button>';
+  }
+  var PP_ITEMS = [];
+  function renderProductPicker() {
+    var box = $('prodpick'); if (!box) return;
+    var items = [], titulo = 'O toca el producto sin escanear';
+    if (task && task.type === 'PICK') {
+      if (!task.picklist) { box.style.display = 'none'; return; }
+      items = task.picklist.map(function (l) {
+        var loc = LOC_BY_ID[l.locationId], falta = Math.max(0, l.qty - (l.pickedQty || 0));
+        return { sku: l.sku, sub: 'Ubicación ' + (loc ? loc.code : l.locationId) + (l.lot ? ' · lote ' + l.lot : '') + ' · ' + (l.pickedQty || 0) + '/' + l.qty, badge: falta ? 'faltan ' + falta : '✓', done: !falta, loc: loc ? loc.code : null, pend: falta };
+      });
+    } else if (task && task.type === 'RECEIVE') {
+      if (!task.receipt) { box.style.display = 'none'; return; }
+      items = (task.receipt.lines || []).map(function (l) {
+        var falta = Math.max(0, l.expectedQty - (l.receivedQty || 0));
+        return { sku: l.sku, sub: 'Recibido ' + (l.receivedQty || 0) + ' de ' + l.expectedQty, badge: falta ? 'faltan ' + falta : '✓', done: !falta, pend: falta };
+      });
+    } else if (task && (task.type === 'PUTAWAY' || task.type === 'RESLOT' || task.type === 'RESTOCK')) {
+      var parts = String(task.entityId).split(':');
+      if (parts.length >= 2) items = [{ sku: parts[1], sub: 'Producto de esta tarea' }];
+    } else {
+      // Operación libre: catálogo del cliente con buscador.
+      if (!cfg.seller) { box.style.display = 'none'; return; }
+      if (!SKU_LIST[cfg.seller]) {
+        box.style.display = ''; box.innerHTML = '<div class="pp-title">O elige el producto sin escanear</div><div class="muted" style="font-size:13px">Cargando productos…</div>';
+        api('/sellers/' + encodeURIComponent(cfg.seller) + '/skus').then(function (l) { SKU_LIST[cfg.seller] = (l || []).filter(function (k) { return k.active !== false; }); if (steps[stepIdx] === 'product') renderProductPicker(); }).catch(function () { box.style.display = 'none'; });
+        return;
+      }
+      var q = ($('pp-q') && $('pp-q').value || '').trim().toLowerCase();
+      var all = SKU_LIST[cfg.seller];
+      var hits = all.filter(function (k) { return !q || String(k.sku).toLowerCase().indexOf(q) >= 0 || String(k.description || '').toLowerCase().indexOf(q) >= 0; });
+      items = hits.slice(0, 25).map(function (k) { return { sku: k.sku, sub: k.description || '' }; });
+      PP_ITEMS = items;
+      var keep = $('pp-q') ? $('pp-q').value : '';
+      box.style.display = '';
+      box.innerHTML = '<div class="pp-title">O elige el producto sin escanear</div>'
+        + '<input id="pp-q" placeholder="Buscar por SKU o nombre (' + all.length + ' productos)" autocomplete="off" value="' + esc(keep) + '">'
+        + '<div id="pp-list">' + (items.length ? items.map(ppItem).join('') : '<div class="muted" style="font-size:13px;padding:6px 2px">Sin resultados.</div>')
+        + (hits.length > 25 ? '<div class="muted" style="font-size:12px;padding:8px 2px">… ' + (hits.length - 25) + ' más: escribe para filtrar.</div>' : '') + '</div>';
+      $('pp-q').addEventListener('input', function () { var pos = this.selectionStart; renderProductPicker(); var el = $('pp-q'); el.focus(); try { el.setSelectionRange(pos, pos); } catch (e) {} });
+      return;
+    }
+    PP_ITEMS = items;
+    if (!items.length) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    box.innerHTML = '<div class="pp-title">' + titulo + '</div>' + items.map(ppItem).join('');
+  }
+  $('prodpick').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-pp]'); if (!b || b.disabled) return;
+    var it = PP_ITEMS[parseInt(b.getAttribute('data-pp'), 10)]; if (!it) return;
+    manualProduct(it);
+  });
+  function manualProduct(it) {
+    var seller = cfg.seller;
+    basePack(seller, it.sku).then(function (pack) {
+      // Los flujos libres (y el guardado) registran por código de barras: sin EAN no se puede.
+      var porCodigo = !task || task.type === 'PUTAWAY' || task.type === 'RESLOT' || task.type === 'RESTOCK';
+      if (porCodigo && op !== 'stock' && !pack.barcode) { toast('El producto ' + it.sku + ' no tiene EAN registrado. Pídele al administrador que lo cargue en Productos.', false); return; }
+      if (navigator.vibrate) navigator.vibrate(40);
+      captured.product = pack.barcode || it.sku; captured.resolved = pack; captured.manual = true;
+      $('r-sku').textContent = pack.sku;
+      $('r-level').textContent = 'Elegido a mano · ' + pack.label;
+      $('r-factor').textContent = '× 1 (unidad base)';
+      $('reso').style.display = '';
+      $('prodpick').style.display = 'none';
+      // Picking de tarea: la línea ya dice de qué ubicación sale y cuánto falta.
+      if (task && task.type === 'PICK' && it.loc && steps[stepIdx + 1] === 'loc') {
+        captured.maxBase = it.pend;
+        stepIdx += 1;          // queda en el paso de ubicación…
+        pickValue('loc', it.loc); // …y lo resuelve con la de la línea
+      } else {
+        advance();
+      }
+      // "Una o varias unidades": se propone lo que falta (si se sabe) y se ajusta con − / +.
+      if ($('qtywrap').style.display !== 'none' && it.pend > 0) { $('q-count').value = it.pend; updatePreview(); }
+    });
+  }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 

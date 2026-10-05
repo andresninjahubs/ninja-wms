@@ -5766,7 +5766,7 @@ export class WmsFacade {
    * Tablero del operario: sus tareas en orden de ejecución (con estado y nombre del cliente)
    * y, si el administrador lo permite, las tareas disponibles (sin asignar) para tomar.
    */
-  async operatorBoard(operationId: string, operator: string): Promise<{ operator: string; selfPickup: boolean; mode: 'advisory' | 'strict'; mine: Array<WorkAssignment & { next?: boolean; position?: number; estado: 'in_progress' | 'assigned'; cliente: string | null }>; available: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; cliente: string | null; unidades: number; prioridad: number; motivo: string }> }> {
+  async operatorBoard(operationId: string, operator: string, opts?: { type?: WorkTaskType | null }): Promise<{ operator: string; selfPickup: boolean; mode: 'advisory' | 'strict'; habilitado?: boolean; mine: Array<WorkAssignment & { next?: boolean; position?: number; estado: 'in_progress' | 'assigned'; cliente: string | null }>; available: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; cliente: string | null; unidades: number; prioridad: number; motivo: string }> }> {
     const [selfPickupOp, mode, mine] = await Promise.all([this.getOperatorSelfPickup(operationId), this.getAssignmentMode(operationId), this.getOperatorTasks(operationId, operator)]);
     // El tablero no le ofrece trabajo a quien no puede tomarlo: si se lo mostrara,
     // un usuario cliente vería en su pantalla las órdenes de los demás clientes de
@@ -5784,14 +5784,23 @@ export class WmsFacade {
       const LABEL: Record<string, string> = { SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: 'cola de picking', RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', RESTOCK: 'devolver a su ubicación', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' };
       // Solo se le ofrece trabajo de las actividades que tiene habilitadas.
       const yo = (await this.listUsers(operationId)).find((u) => u.id === operator);
-      for (const t of ['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
+      // Con `type` (p. ej. la estación de picking de la app) se trae solo ese tipo y más profundo.
+      const tipos = opts?.type ? [opts.type] : (['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT'] as WorkTaskType[]);
+      for (const t of tipos) {
         if (yo && !puedeHacer(yo, t)) continue;
-        const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: 30 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
+        const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: opts?.type ? 100 : 30 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
         pool.forEach((p, i) => available.push({ type: t, entityId: p.entityId, entityRef: p.entityRef, sellerId: p.sellerId, cliente: sname.get(p.sellerId) || p.sellerId, unidades: p.unidades, prioridad: (TYPE_W[t] ?? 8) * 1000 + i + 1, motivo: `${LABEL[t]} #${i + 1}` }));
       }
       available.sort((a, b) => a.prioridad - b.prioridad);
     }
-    return { operator, selfPickup, mode, mine: mineOut, available: available.slice(0, 40) };
+    // ¿Tiene habilitada la actividad pedida? (habilidades del operario) — la app lo explica.
+    let habilitado: boolean | undefined;
+    if (opts?.type) {
+      const yo2 = (await this.listUsers(operationId).catch(() => [] as User[])).find((u) => u.id === operator);
+      habilitado = yo2 ? puedeHacer(yo2, opts.type) : true;
+    }
+    const mineF = opts?.type ? mineOut.filter((a) => a.type === opts.type) : mineOut;
+    return { operator, selfPickup, mode, habilitado, mine: mineF, available: available.slice(0, opts?.type ? 100 : 40) };
   }
   /** El operario TOMA una tarea disponible (solo si el administrador lo permite y sigue sin asignar). */
   async takeTask(operationId: string, operator: string, input: { type: WorkTaskType; entityId: string }): Promise<WorkAssignment> {

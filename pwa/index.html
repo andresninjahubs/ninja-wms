@@ -82,6 +82,14 @@
 
     /* Login: el formulario queda en una tarjeta blanca sobre el fondo gris. */
     #login .body{margin:24px 16px;flex:0 0 auto;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:24px 20px;gap:14px}
+    @media (min-width:560px){#login .body{width:100%;max-width:440px;margin:48px auto;padding:32px 28px}}
+    .lg-brand{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-bottom:4px}
+    .lg-logo{display:block;width:190px;max-width:70%;height:auto}
+    #pwa-brand-login img{max-width:220px}
+    .lg-app{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;color:var(--ink-2)}
+    .lg-wms{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;background:var(--ink);color:#fff;font-size:11.5px;font-weight:800;letter-spacing:.08em}
+    .lg-help{margin:2px 0 0;font-size:12.5px;color:var(--ink-3);text-align:center}
+    .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
     #login h1{font-size:22px}
     #login .muted{margin:0 0 4px;font-size:13.5px;color:var(--ink-2)}
     #login input{background:#F8F9FC}
@@ -233,7 +241,7 @@
     .op.wide{grid-column:1/-1;flex-direction:row;justify-content:center;padding:14px}
     .op[data-op="packst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 16l2 2 4-4 M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14 M3.29 7 12 12l8.71-5 M12 22V12 M7.5 4.27l9 5.15'/%3E%3C/svg%3E")}
     .op[data-op="shipst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2 M15 18H9 M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14 M17 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z'/%3E%3C/svg%3E")}
-    #btn-pkback,#btn-shback{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E")}
+    #btn-piback,#btn-pkback,#btn-shback{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E")}
     #btn-pkcam,#btn-shcam{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7V5a2 2 0 0 1 2-2h2 M17 3h2a2 2 0 0 1 2 2v2 M21 17v2a2 2 0 0 1-2 2h-2 M7 21H5a2 2 0 0 1-2-2v-2 M7 8v8 M11 8v8 M15 8v8 M18 8v8'/%3E%3C/svg%3E")}
     .scanbar{display:flex;flex-direction:column;gap:6px}
     .scanrow{display:flex;gap:8px}
@@ -249,6 +257,23 @@
     .ordc.sel{border:2px solid var(--primary);background:var(--primary-wash)}
     .ordc .ck{flex:none;width:26px;height:26px;border-radius:8px;border:2px solid var(--line-2);display:grid;place-items:center;font-weight:900;font-size:15px;color:var(--on-primary)}
     .ordc.sel .ck{background:var(--primary);border-color:var(--primary)}
+    .ordc .oc-act{flex:none;height:40px;border-radius:11px;border:0;padding:0 14px;font-weight:800;font-size:13.5px;background:var(--primary);color:var(--on-primary)}
+    .ordc .oc-act.alt{background:var(--surface);border:1px solid var(--line-2);color:var(--ink)}
+    .ordc .oc-act:disabled{opacity:.5}
+    .ordc.run{border-color:var(--primary)}
+    .tagrun{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:800;background:var(--primary-wash);color:var(--primary-ink)}
+    #btn-pirefresh{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16 M16 16h5v5'/%3E%3C/svg%3E")}
+    .pp-title{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin:2px 0 8px;display:flex;align-items:center;gap:8px}
+    .pp-title::before,.pp-title::after{content:"";flex:1;height:1px;background:var(--line-2)}
+    .pp{width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;color:var(--ink)}
+    .pp+.pp{margin-top:8px}
+    .pp:active{border-color:var(--primary);background:var(--primary-wash)}
+    .pp .pp-main{flex:1;min-width:0}
+    .pp .pp-sku{font-weight:800;font-size:14.5px}
+    .pp .pp-sub{font-size:12px;color:var(--ink-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .pp .pp-q{flex:none;font-weight:800;font-size:13px;color:var(--primary-ink);background:var(--primary-wash);border-radius:999px;padding:4px 10px}
+    .pp.done{opacity:.45}
+    #pp-q{margin-bottom:8px}
     .dlc{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:800;background:var(--surface-3);color:var(--ink-2)}
     .dlc.v{background:#FDECEC;color:#B4232A}.dlc.r{background:#FFF4E0;color:#A35A00}
     .pk-empty{text-align:center;color:var(--ink-3);padding:26px 10px;background:var(--surface);border:1px dashed var(--line-2);border-radius:16px}
@@ -291,15 +316,16 @@
     <!-- Login / configuración -->
     <section id="login" class="screen on">
       <div class="body">
-        <div id="pwa-brand-login" style="margin-bottom:6px"></div>
-        <h1 id="pwa-title">WMS Operador</h1>
+        <div class="lg-brand">
+          <div id="pwa-brand-login"><img class="lg-logo" src="./brand-ninjahubs.png" alt="Ninja Hubs" width="480" height="119"></div>
+          <div class="lg-app"><span class="lg-wms">WMS</span> App del operario</div>
+        </div>
+        <h1 id="pwa-title" class="sr">WMS Operador</h1>
         <p class="muted">Ingresa para ver tus tareas en orden y operar con el lector de códigos.</p>
-        <div><label for="cfg-api">Servidor (API del WMS)</label><input id="cfg-api" placeholder="https://tu-servidor:3000" inputmode="url"></div>
-        <div><label for="cfg-seller">Cliente (opcional, solo para operar libre)</label><input id="cfg-seller" placeholder="Déjalo vacío si trabajas por tareas"></div>
-        <div><label for="cfg-email">Email</label><input id="cfg-email" placeholder="pedro@nh.cl" inputmode="email" autocomplete="username"></div>
+        <div><label for="cfg-email">Email</label><input id="cfg-email" type="email" placeholder="tu@empresa.cl" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false"></div>
         <div><label for="cfg-pass">Contraseña</label><input id="cfg-pass" type="password" placeholder="••••••••" autocomplete="current-password"></div>
         <button class="btn" id="btn-login">Entrar</button>
-        <p class="banner">Inicia sesión con tu email y contraseña. Necesitas el WMS corriendo y accesible desde el teléfono.</p>
+        <p class="lg-help">¿No tienes acceso u olvidaste tu contraseña? Pídeselo a tu supervisor.</p>
       </div>
     </section>
 
@@ -336,7 +362,8 @@
         </div>
 
         <div id="pane-free" class="pane">
-          <p class="muted" style="margin:0">Operación libre (sin tarea asignada). El supervisor verá el movimiento igual. Empaque y Despacho trabajan con las órdenes de todos los clientes.</p>
+          <p class="muted" style="margin:0">Operación libre (sin tarea asignada). El supervisor verá el movimiento igual.</p>
+          <div id="free-seller-wrap"><label for="free-seller">Cliente (para Recepción, Guardado y Stock)</label><select id="free-seller"><option value="">Cargando clientes…</option></select></div>
           <div class="ops">
             <button class="op" data-op="receive"><span class="em">📦</span><span class="t">Recepción</span></button>
             <button class="op" data-op="putaway"><span class="em">⇄</span><span class="t">Guardado</span></button>
@@ -402,6 +429,9 @@
           <button class="btn alt" id="btn-mresolve" type="submit">Buscar código</button>
         </form>
 
+        <!-- Selección MANUAL del producto (sin escanear): se toca en la lista. -->
+        <div id="prodpick" style="display:none"></div>
+
         <div class="card" id="reso" style="display:none">
           <div class="kv"><span>Producto</span><b id="r-sku">—</b></div>
           <div class="kv"><span>Nivel</span><b><span class="pill" id="r-level">—</span></b></div>
@@ -438,6 +468,28 @@
           <button class="btn alt" id="btn-closercpt" style="display:none">Cerrar recepción con faltante</button>
           <button class="btn alt" id="btn-finish">Terminar y volver a mis tareas</button>
         </div>
+      </div>
+    </section>
+
+    <!-- Estación de PICKING: pedidos asignados a mí + pedidos libres para tomar. -->
+    <section id="pickst" class="screen">
+      <header>
+        <button class="iconbtn" id="btn-piback" title="Volver">‹</button>
+        <div><div class="title">Picking</div><div class="sub" id="pi-sub">Tus pedidos y los libres para tomar</div></div>
+        <div class="spacer"></div>
+        <button class="iconbtn" id="btn-pirefresh" title="Actualizar">↻</button>
+      </header>
+      <div class="body">
+        <form class="scanbar" id="pi-scan" autocomplete="off">
+          <label for="pi-code">Escanea o escribe el N° de pedido para empezar</label>
+          <div class="scanrow"><input id="pi-code" class="code" placeholder="N° de pedido" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
+        </form>
+        <div class="chips" id="pi-tabs">
+          <button class="chip on" data-pit="mine">Asignados a mí · <span id="pi-cmine">0</span></button>
+          <button class="chip" data-pit="free">Libres · <span id="pi-cfree">0</span></button>
+        </div>
+        <div id="pi-list"></div>
+        <button class="btn alt" id="pi-loose" style="margin-top:6px">Picking suelto (sin pedido)</button>
       </div>
     </section>
 

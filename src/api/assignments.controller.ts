@@ -159,9 +159,11 @@ export class AssignmentsController {
   /** Tablero del operario (PWA): sus tareas en orden de ejecución + disponibles para tomar. */
   @Get('board')
   @RequirePermission('stock:read')
-  board(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('operator') operator?: string) {
+  board(@CurrentUser() user: User | null, @Query('operationId') operationId?: string, @Query('operator') operator?: string, @Query('type') type?: string) {
     this.soloPersonal(user);
-    return this.wms.operatorBoard(actorOperation(user, operationId), this.operarioConsultado(user, operator));
+    const TIPOS = ['PICK', 'PACK', 'SHIP', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT'];
+    const t = type && TIPOS.includes(type) ? (type as WorkTaskType) : null;
+    return this.wms.operatorBoard(actorOperation(user, operationId), this.operarioConsultado(user, operator), { type: t });
   }
   /** El operario toma una tarea disponible (si el admin lo permite). */
   @Post('take')
