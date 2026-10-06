@@ -212,6 +212,7 @@
    * y recién ahí aparece el panel. Si no hay escena 3D, entra directo.
    */
   function entrarAlWms(listo){
+    // Sin caja ni viaje 3D (v176): se entra directo al panel.
     var esc=window.__login3d, stage=document.getElementById('loginstage');
     if(!esc||!stage||!stage.classList.contains('has3d'))return listo();
     var hecho=false;
@@ -9209,59 +9210,20 @@
       j++; sl.textContent=SLOGAN.slice(0,j);
       if(j<SLOGAN.length)return setTimeout(tecleaSlogan, 62);
     }
-    if(tecleando)setTimeout(tecleaNombre, 1500); // apenas la caja termina de armarse
+    if(tecleando)setTimeout(tecleaNombre, 300);
 
-    // La caja se abre con un clic (o con el teclado). Si alguien se queda mirando,
-    // se abre sola a los 12 s: nadie puede quedarse afuera por no entender el gesto.
+    // Sin la caja (v176): el formulario se muestra de inmediato, sin animación de
+    // armado/apertura ni viaje 3D al entrar. Se mantiene #lh-open (oculto) porque
+    // abrirRegistroDirecto() lo usa para abrir el registro desde los anuncios.
     var stage=document.getElementById('loginstage'), boton=document.getElementById('lh-open');
-    if(!stage||!boton)return;
-
-    // Caja real en 3D. Si WebGL no está, la librería no cargó o el usuario pidió
-    // menos movimiento, montar() devuelve null y queda la caja SVG de siempre.
-    var escena=null;
-    // La clase va ANTES de montar: el canvas está oculto hasta tenerla y el
-    // renderer necesita medirlo para no arrancar en 2x2 píxeles.
-    stage.classList.add('has3d');
-    try{
-      if(window.NinjaLogin3D)escena=window.NinjaLogin3D.montar(document.getElementById('lh-canvas'),{});
-    }catch(e){ escena=null; }
-    if(escena){ window.__login3d=escena; requestAnimationFrame(function(){ try{ window.dispatchEvent(new Event('resize')); }catch(e){} }); }
-    else stage.classList.remove('has3d');
-
-    var abierta=false;
+    if(!stage)return;
     function abrir(){
-      if(abierta)return; abierta=true;
-      if(escena)escena.abrir();
-      stage.classList.remove('closed'); stage.classList.add('open');
-      setTimeout(function(){ var e=document.getElementById('lg-email'); if(e&&window.innerWidth>720)e.focus(); }, 900);
+      stage.classList.remove('closed','viajando'); stage.classList.add('open','nobox');
+      var e=document.getElementById('lg-email'); if(e&&window.innerWidth>720)setTimeout(function(){ try{e.focus({preventScroll:true});}catch(x){e.focus();} },60);
     }
-    boton.addEventListener('click',abrir);
-    document.addEventListener('keydown',function(e){ if(!abierta&&(e.key==='Enter'||e.key===' '))abrir(); });
-    var reloj=setTimeout(abrir, 12000);
-    if(reduce)abrir();
-
-    /**
-     * Volver al login tras cerrar sesión. Sin esto la caja quedaba marcada como
-     * "ya abierta" y el clic no hacía nada: el usuario se quedaba mirando una
-     * portada vacía sin forma de volver a entrar.
-     */
-    window.__loginReset=function(){
-      clearTimeout(reloj);
-      abierta=false;
-      stage.classList.remove('open'); stage.classList.remove('viajando'); stage.classList.add('closed');
-      if(escena){
-        try{ escena.destruir(); }catch(e){}
-        // Canvas nuevo: reusar el viejo deja colgando el contexto WebGL anterior.
-        var viejo=document.getElementById('lh-canvas');
-        if(viejo){ viejo.parentNode.replaceChild(viejo.cloneNode(false), viejo); }
-        escena=window.NinjaLogin3D?window.NinjaLogin3D.montar(document.getElementById('lh-canvas'),{}):null;
-        window.__login3d=escena;
-        if(!escena)stage.classList.remove('has3d');
-        else requestAnimationFrame(function(){ try{ window.dispatchEvent(new Event('resize')); }catch(e){} });
-      }
-      reloj=setTimeout(abrir, 12000);
-      if(reduce)abrir();
-    };
+    if(boton)boton.addEventListener('click',abrir);
+    abrir();
+    window.__loginReset=abrir;
   })();
 
   // Aterrizaje común tras autenticarse (login o registro).
@@ -9386,7 +9348,7 @@
     try{
       // Abre la caja como si el usuario hubiera apretado "Entrar" y muestra el registro.
       var b=document.getElementById('lh-open'); if(b)b.click();
-      setTimeout(function(){ lgShow('register'); var f=$('#rg-company'); if(f&&window.innerWidth>720)f.focus(); },950);
+      setTimeout(function(){ lgShow('register'); var f=$('#rg-company'); if(f&&window.innerWidth>720)f.focus(); },60);
       var qs=new URLSearchParams(location.search); qs.delete('registro');
       var rest=qs.toString(); history.replaceState({},document.title,location.pathname+(rest?'?'+rest:''));
     }catch(e){ lgShow('register'); }

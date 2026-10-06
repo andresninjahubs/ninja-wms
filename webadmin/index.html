@@ -997,6 +997,10 @@
     .lh-seam,.lh-seam2{stroke-dashoffset:0} .lh-flapB{opacity:1}
     .loginstage.open .loginbox{opacity:1;transform:none}
   }
+  /* Sin caja (v176): el login muestra el formulario de inmediato, sin armado, apertura ni viaje 3D. */
+  .loginstage.nobox .loginhero{display:none!important}
+  .loginstage.nobox .loginbox{animation:none!important;opacity:1;transform:none}
+  .loginstage.nobox .lh-type{margin-top:22px}
   .loginov::after{content:"";position:absolute;top:-1px;left:0;right:0;height:4px;background:var(--aurora)}
   .loginbox{width:360px;max-width:92vw;background:color-mix(in srgb,var(--surface) 88%, transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lg);padding:28px}
   .loginbox h1{font-family:"Sora",system-ui,sans-serif;font-size:23px;margin:0 0 4px;letter-spacing:-.02em}
@@ -2643,7 +2647,7 @@
 
 <div class="loginov" id="loginov">
   <!-- La caja se arma sola. El usuario la abre y de adentro sale el formulario. -->
-  <div class="loginstage closed" id="loginstage">
+  <div class="loginstage open nobox" id="loginstage">
     <button class="loginhero" id="lh-open" type="button" aria-label="Abrir la caja para iniciar sesión">
       <canvas class="lh-canvas" id="lh-canvas" aria-hidden="true"></canvas>
       <svg viewBox="0 0 240 150" class="lh-svg" xmlns="http://www.w3.org/2000/svg">
@@ -2772,8 +2776,6 @@
 </div>
 
 <script src="./vendor/xlsx.full.min.js"></script>
-<script src="./vendor/three.min.js"></script>
-<script src="./login3d.js"></script>
 <script src="./mobile.js"></script>
 <script src="./tutorial-guides.js"></script>
 <script src="./tutorial.js"></script>
