@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#12B76A">
   <link rel="manifest" href="./manifest.webmanifest">
+  <!-- iPhone / iPad: app instalable desde «Compartir › Agregar a inicio» -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="WMS Operador">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="apple-touch-icon" href="./icon-180.png">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <title>WMS Operador</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -43,9 +50,12 @@
       padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
     button,input,select,textarea{font-family:inherit}
+    html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+    button,a,.loc,.pp,.ordc{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+    .toast{bottom:calc(24px + env(safe-area-inset-bottom))!important}
     button{cursor:pointer}
     h1,header .title{font-family:var(--sans);letter-spacing:-.02em}
-    .app{max-width:520px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;background:var(--bg)}
+    .app{max-width:520px;margin:0 auto;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;background:var(--bg)}
     .screen{display:none;flex:1;flex-direction:column}
     .screen.on{display:flex}
 
@@ -351,6 +361,7 @@
     .dock .banner{font-size:12.5px;padding:8px 10px;line-height:1.35}
     .dock input{height:44px}
     .camsheet{position:fixed;inset:0;z-index:40;background:rgba(11,18,32,.92);display:flex;flex-direction:column;justify-content:center;gap:14px;padding:16px}
+    .camsheet{padding-top:calc(16px + env(safe-area-inset-top));padding-bottom:calc(16px + env(safe-area-inset-bottom))}
     .resbox{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px}
     .resbox .rb-t{font-size:18px;font-weight:800}
     .lbls{display:grid;grid-template-columns:1fr 1fr;gap:8px}
@@ -465,7 +476,7 @@
       <div class="body">
         <div class="taskctx" id="taskctx" style="display:none"></div>
         <div class="cam" id="cam">
-          <video id="video" playsinline muted></video>
+          <video id="video" playsinline webkit-playsinline muted autoplay></video>
           <div class="frame"></div><div class="laser"></div>
           <div class="hint" id="cam-hint">Iniciando cámara…</div>
         </div>
@@ -653,7 +664,7 @@
         <button class="iconbtn" id="btn-pkcam" title="Leer con la cámara"></button>
       </header>
       <div class="body">
-        <div class="cam dock" id="pk-cam" style="display:none"><video playsinline muted></video><div class="frame"></div><div class="laser"></div><div class="hint">Iniciando cámara…</div></div>
+        <div class="cam dock" id="pk-cam" style="display:none"><video playsinline webkit-playsinline muted autoplay></video><div class="frame"></div><div class="laser"></div><div class="hint">Iniciando cámara…</div></div>
         <form class="scanbar" id="pk-scan" autocomplete="off">
           <label for="pk-code" id="pk-label">Escanea o escribe el N° de orden</label>
           <div class="scanrow"><input id="pk-code" class="code" placeholder="N° de orden" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
@@ -690,13 +701,16 @@
 
     <!-- Lector con cámara compartido por Empaque y Despacho. -->
     <div class="camsheet" id="camsheet" style="display:none">
-      <div class="cam"><video id="cs-video" playsinline muted></video><div class="frame"></div><div class="laser"></div><div class="hint" id="cs-hint">Apunta al código</div></div>
+      <div class="cam"><video id="cs-video" playsinline webkit-playsinline muted autoplay></video><div class="frame"></div><div class="laser"></div><div class="hint" id="cs-hint">Apunta al código</div></div>
       <button class="btn alt" id="cs-close">Cerrar cámara</button>
     </div>
   </div>
 
   <div class="toast" id="toast"><div class="i ok" id="toast-i"></div></div>
 
+  <!-- Lector de códigos para iPhone y Android sin lector nativo (ZXing/WebAssembly, local). -->
+  <script src="./vendor/barcode-detector.js"></script>
+  <script src="./scanner-compat.js"></script>
   <script src="./app.js"></script>
 <script>
 /* Texto sobre el color de marca: oscuro si la marca es clara, blanco si es oscura.

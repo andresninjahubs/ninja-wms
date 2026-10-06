@@ -722,34 +722,35 @@
     if (s === 'product') {
       api('/sellers/' + encodeURIComponent(cfg.seller) + '/barcodes/' + encodeURIComponent(raw))
         .then(function (pack) {
-          captured.product = raw; captured.resolved = pack;
+          captured.product = raw; captured.resolved = pack; tono(true);
           $('r-sku').innerHTML = esc(pack.sku) + pdsc(pack.sku, cfg.seller, 'blk');
           $('r-level').textContent = pack.label + ' (' + pack.code + ')';
           $('r-factor').textContent = '× ' + pack.factor + (pack.isBase ? '  (unidad base)' : '');
           $('reso').style.display = '';
           advance();
         })
-        .catch(function (e) { toast('Código no reconocido', false); });
+        .catch(function (e) { tono(false); toast('Código no reconocido', false); });
     } else {
       // Paso de UBICACIÓN: solo se acepta si el código es una ubicación real de la
       // operación. Así, si la cámara relee el producto (o se teclea otra cosa), no se
       // toma por error como bin. Si no tenemos la lista cargada, confiamos (el backend valida).
       var loc = findLocByCode(raw);
       if (ALL_LOCS.length && !loc) {
-        if (raw !== lastRejected) { toast('Ese código no es una ubicación. Toca la ubicación en la lista.', false); lastRejected = raw; }
+        if (raw !== lastRejected) { tono(false); toast('Ese código no es una ubicación. Toca la ubicación en la lista.', false); lastRejected = raw; }
         return; // no captura ni avanza
       }
       // Restricciones de zona coherentes con cada paso.
       if (loc) {
         if (s === 'to' && !(loc.zoneType === 'STORAGE' || loc.zoneType === 'PICKING')) {
-          toast('El destino debe ser una ubicación de almacenaje o picking.', false); return;
+          tono(false); toast('El destino debe ser una ubicación de almacenaje o picking.', false); return;
         }
         if (s === 'to' && loc.code === captured.from) {
-          toast('El destino no puede ser la misma ubicación de origen.', false); return;
+          tono(false); toast('El destino no puede ser la misma ubicación de origen.', false); return;
         }
       }
       // Escaneo/manual: no conocemos la cantidad exacta en esa ubicación -> sin tope local.
       if (s === 'from' || s === 'loc') captured.maxBase = null;
+      tono(true);
       pickValue(s, loc ? loc.code : raw);
     }
   }
@@ -955,17 +956,56 @@
     return false;
   }
 
+  // ---- Cámara: compatible con iPhone y Android ------------------------------
+  // · iPhone (Safari / app instalada): exige HTTPS, video `playsinline` + `muted`, y no
+  //   trae lector nativo → scanner-compat.js instala ZXing (WebAssembly).
+  // · Android: cámara trasera con resolución pedida como "ideal" (si el equipo no la
+  //   tiene, no falla) y enfoque continuo cuando la cámara lo permite (lee de cerca).
+  /** Motivo por el que este equipo NO puede leer con cámara, o '' si puede. */
+  function camNoDisponible() {
+    if (!window.isSecureContext) return 'La cámara necesita una conexión segura (https). Usa la pistola o escribe el código.';
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return 'Este navegador no da acceso a la cámara. Usa la pistola o escribe el código.';
+    if (!('BarcodeDetector' in window)) return 'Este equipo lee con pistola o a mano.';
+    return '';
+  }
+  function camStream() {
+    var ideal = { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } };
+    return navigator.mediaDevices.getUserMedia(ideal)
+      .catch(function (e) {
+        // Cámaras viejas o restricciones que el equipo no cumple: se pide lo mínimo.
+        if (e && (e.name === 'OverconstrainedError' || e.name === 'ConstraintNotSatisfiedError' || e.name === 'NotReadableError')) return navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment' } });
+        throw e;
+      })
+      .then(function (s) {
+        try {
+          var t = s.getVideoTracks()[0], cap = t && t.getCapabilities ? t.getCapabilities() : null;
+          if (cap && cap.focusMode && cap.focusMode.indexOf('continuous') >= 0) t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function () {});
+        } catch (e) { /* no todos los equipos exponen capacidades */ }
+        return s;
+      });
+  }
+  /** Prepara un <video> para reproducir la cámara en iPhone (sin pantalla completa, sin sonido). */
+  function camVideo(v) { if (!v) return v; v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.setAttribute('autoplay', ''); v.muted = true; v.playsInline = true; return v; }
+  function camErrMsg(e) {
+    var n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'SecurityError') return 'Sin permiso para usar la cámara. Actívalo en los ajustes del navegador (en iPhone: Ajustes › Safari › Cámara) o usa la pistola.';
+    if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No encontré una cámara en este equipo. Usa la pistola o escribe el código.';
+    if (n === 'NotReadableError') return 'La cámara está ocupada por otra app. Ciérrala y vuelve a intentar, o usa la pistola.';
+    return 'Sin acceso a la cámara. Usa la pistola o escribe el código.';
+  }
+
   function startCamera() {
-    var video = $('video');
+    var video = camVideo($('video'));
     // La cámara es un extra, no el camino principal: si no está, la app sigue
     // perfectamente usable con la pistola o el teclado.
-    if (!('BarcodeDetector' in window)) { sinCamara('Este equipo lee con pistola o a mano.'); return; }
+    var nd = camNoDisponible(); if (nd) { sinCamara(nd); return; }
+    var cam = $('cam'); if (cam) cam.style.display = '';
     try { detector = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'] }); }
     catch (e) { sinCamara('Este equipo lee con pistola o a mano.'); return; }
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    camStream()
       .then(function (s) { stream = s; video.srcObject = s; return video.play(); })
       .then(function () { scanning = true; $('cam-hint').textContent = STEP_HINT[steps[stepIdx]] || ''; requestAnimationFrame(loop); })
-      .catch(function () { sinCamara('Sin acceso a la cámara. Usa la pistola o escribe el código.'); });
+      .catch(function (e) { sinCamara(camErrMsg(e)); });
   }
 
   /** Sin cámara: se oculta el visor para no ocupar media pantalla con un recuadro negro. */
@@ -1321,7 +1361,37 @@
     if (da !== db) return da - db;
     return Date.parse(a.createdAt) - Date.parse(b.createdAt);
   }
-  function bip(ok) { if (navigator.vibrate) navigator.vibrate(ok ? 40 : [80, 60, 80]); }
+  // Confirmación de lectura: vibración (Android) + tono corto (iPhone no vibra desde la
+  // web, así que el sonido es la única señal sin mirar la pantalla).
+  var AC = null;
+  function audioCtx() {
+    if (AC) return AC;
+    var C = window.AudioContext || window.webkitAudioContext; if (!C) return null;
+    try { AC = new C(); } catch (e) { AC = null; }
+    return AC;
+  }
+  // iOS solo deja sonar audio después de un toque del usuario: se "desbloquea" en el primero.
+  ['touchend', 'pointerdown', 'keydown'].forEach(function (ev) {
+    document.addEventListener(ev, function unlock() {
+      var c = audioCtx(); if (c && c.state === 'suspended') c.resume().catch(function () {});
+    }, { passive: true });
+  });
+  function tono(ok) {
+    var c = audioCtx(); if (!c) return;
+    try {
+      if (c.state === 'suspended') c.resume().catch(function () {});
+      var t0 = c.currentTime, pasos = ok ? [[1760, 0, 0.08]] : [[330, 0, 0.12], [330, 0.17, 0.12]];
+      pasos.forEach(function (p) {
+        var o = c.createOscillator(), g = c.createGain();
+        o.type = ok ? 'sine' : 'square'; o.frequency.value = p[0];
+        g.gain.setValueAtTime(0.0001, t0 + p[1]);
+        g.gain.exponentialRampToValueAtTime(ok ? 0.25 : 0.12, t0 + p[1] + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + p[1] + p[2]);
+        o.connect(g); g.connect(c.destination); o.start(t0 + p[1]); o.stop(t0 + p[1] + p[2] + 0.02);
+      });
+    } catch (e) { /* sin audio */ }
+  }
+  function bip(ok) { if (navigator.vibrate) navigator.vibrate(ok ? 40 : [80, 60, 80]); tono(ok); }
   function enfoca(id) { var el = $(id); if (!el) return; try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } }
   function opOrders() {
     var oid = opIdOrNull(); if (!oid) return Promise.reject(new Error('Sin operación'));
@@ -1342,15 +1412,16 @@
   var CS = { stream: null, on: false, det: null, cb: null, cont: false, last: '', lastAt: 0 };
   function camOpen(cb, opts) {
     opts = opts || {};
-    if (!('BarcodeDetector' in window)) { toast('Este equipo no lee con cámara: usa la pistola o escribe el código', false); return; }
+    var nd = camNoDisponible(); if (nd) { toast(nd, false); return; }
+    camVideo($('cs-video'));
     try { CS.det = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'] }); }
     catch (e) { toast('Este equipo no lee con cámara', false); return; }
     CS.cb = cb; CS.cont = !!opts.continuous; $('cs-hint').textContent = opts.hint || 'Apunta al código';
     $('camsheet').style.display = '';
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    camStream()
       .then(function (s) { CS.stream = s; $('cs-video').srcObject = s; return $('cs-video').play(); })
       .then(function () { CS.on = true; requestAnimationFrame(camLoop); })
-      .catch(function () { camClose(); toast('Sin acceso a la cámara. Usa la pistola o escribe el código.', false); });
+      .catch(function (e) { camClose(); toast(camErrMsg(e), false); });
   }
   function camLoop() {
     if (!CS.on) return;
@@ -1387,13 +1458,13 @@
     if (CI.off) { host.style.display = 'none'; return; }
     if (CI.host === hostId && CI.stream) { host.style.display = ''; return; }   // ya está leyendo
     camDockStop();
-    if (!('BarcodeDetector' in window) || !navigator.mediaDevices) { host.style.display = 'none'; return; }
+    if (camNoDisponible()) { host.style.display = 'none'; return; }
     try { CI.det = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'] }); }
     catch (e) { host.style.display = 'none'; return; }
     host.style.display = ''; CI.host = hostId; CI.seen = {};
     if (h) h.textContent = 'Iniciando cámara…';
-    var v = host.querySelector('video');
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    var v = camVideo(host.querySelector('video'));
+    camStream()
       .then(function (st) {
         if (CI.host !== hostId) { st.getTracks().forEach(function (t) { t.stop(); }); return null; }
         CI.stream = st; v.srcObject = st; return v.play();
@@ -1403,7 +1474,7 @@
         if (h) h.textContent = hint || 'Apunta al código';
         CI.on = true; requestAnimationFrame(camDockLoop);
       })
-      .catch(function () { host.style.display = 'none'; CI.host = null; CI.on = false; });
+      .catch(function (e) { host.style.display = 'none'; CI.host = null; CI.on = false; if (e && e.name === 'NotAllowedError') toast(camErrMsg(e), false); });
   }
   function camDockHint(hint) { var host = CI.host && $(CI.host); var h = host && host.querySelector('.hint'); if (h && CI.on) h.textContent = hint; }
   function camDockLoop() {

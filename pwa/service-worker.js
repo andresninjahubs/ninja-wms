@@ -3,8 +3,11 @@
  * Cachea el "shell" de la app para que abra sin conexión; las llamadas a la API
  * van siempre a la red (el stock no se cachea, debe ser fresco).
  */
-const CACHE = 'wms-operador-v21';
-const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icon.svg', './brand-ninjahubs.png'];
+const CACHE = 'wms-operador-v22';
+const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icon.svg', './brand-ninjahubs.png',
+  './icon-180.png', './icon-192.png', './icon-512.png',
+  // Lector de códigos para iPhone/Android sin lector nativo (se usa también sin señal).
+  './scanner-compat.js', './vendor/barcode-detector.js', './vendor/zxing_reader.wasm'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
