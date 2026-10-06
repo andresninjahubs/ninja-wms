@@ -593,6 +593,8 @@
 
   function loadOp(){
     var isClient = role==="CLIENT";
+    // Atajo a la app del operador: solo para el personal de bodega y administración.
+    if($("#opapp-btn")) $("#opapp-btn").classList.toggle("hidden",isClient);
     loadPlanFeatures(); // candados del menú según el plan de la operación
     // El CLIENT carga su propio seller REAL (trae webhooksClientEnabled para el panel de webhooks).
     var pSellers = isClient
@@ -8298,6 +8300,31 @@
   document.addEventListener("click",function(e){if(!e.target.closest(".gsearch"))$("#gres").classList.remove("on");});
 
   function wireTips(root){var tt=$("#tt");root.querySelectorAll("[data-tip]").forEach(function(el){el.addEventListener("mousemove",function(e){tt.textContent=el.getAttribute("data-tip");tt.style.opacity="1";tt.style.left=(e.clientX+12)+"px";tt.style.top=(e.clientY-10)+"px";});el.addEventListener("mouseleave",function(){tt.style.opacity="0";});});}
+  // «App operador»: copia el link al portapapeles (para enviárselo al operario) y
+  // abre la app SIEMPRE en una ventana nueva, del tamaño de un teléfono.
+  function copiaTexto(txt){
+    if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(txt).then(function(){return true;},function(){return copiaLegacy(txt);});
+    return Promise.resolve(copiaLegacy(txt));
+  }
+  function copiaLegacy(txt){
+    try{var ta=document.createElement("textarea");ta.value=txt;ta.setAttribute("readonly","");ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.select();var ok=document.execCommand("copy");document.body.removeChild(ta);return ok;}catch(e){return false;}
+  }
+  (function(){
+    var b=document.getElementById("opapp-btn"); if(!b) return;
+    b.addEventListener("click",function(e){
+      e.preventDefault();
+      var url=new URL("/app/",location.origin).href;
+      var w=Math.min(440,screen.availWidth||440), h=Math.min(900,(screen.availHeight||900)-40);
+      var left=Math.max(0,(screen.availWidth||w)-w-40), top=20;
+      var win=window.open(url,"wms-app-operador","popup=yes,width="+w+",height="+h+",left="+left+",top="+top);
+      if(win){ try{win.opener=null;}catch(x){} try{win.focus();}catch(x){} }
+      copiaTexto(url).then(function(ok){
+        toast(ok ? "Link de la App operador copiado: "+url+" · pégalo para enviárselo al operario"
+                 : "Abre la App operador en "+url+" (no se pudo copiar el link automáticamente)");
+        if(!win) toast((ok?"Link copiado. ":"")+"El navegador bloqueó la ventana nueva: permite ventanas emergentes para este sitio");
+      });
+    });
+  })();
   var toastT; function toast(m){var t=$("#toast");$("#toast-i").textContent="✓  "+m;t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(function(){t.classList.remove("on");},2600);}
   function err(e){toast((e&&e.message)||"Error de conexión");}
 

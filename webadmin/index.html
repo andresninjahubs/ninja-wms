@@ -1335,6 +1335,21 @@
 @keyframes tlpulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--primary) 60%,transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
 .tl-dot{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface);font-size:11.5px;font-weight:700;color:var(--ink-2);white-space:nowrap}
 .tl-dot.hidden{display:none}
+/* Atajo «App operador» en la barra superior: llamativo a propósito. */
+.opapp-btn{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 14px 0 10px;border-radius:12px;flex:none;white-space:nowrap;
+  background:linear-gradient(135deg,#12F093 0%,#0BD47F 100%);color:#0B1220;font-weight:800;font-size:13.5px;letter-spacing:.1px;text-decoration:none;
+  border:1px solid #0BC476;box-shadow:0 6px 18px -6px rgba(18,240,147,.75),inset 0 1px 0 rgba(255,255,255,.35);position:relative;transition:transform .12s ease,box-shadow .12s ease}
+.opapp-btn:hover{transform:translateY(-1px);box-shadow:0 10px 24px -6px rgba(18,240,147,.9),inset 0 1px 0 rgba(255,255,255,.35)}
+.opapp-btn:active{transform:translateY(0)}
+.opapp-btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(18,240,147,.35),0 6px 18px -6px rgba(18,240,147,.75)}
+.opapp-btn .oa-ic{display:inline-flex;width:28px;height:28px;border-radius:8px;background:#0B1220;color:#12F093;align-items:center;justify-content:center}
+.opapp-btn .oa-go{display:inline-flex;opacity:.75}
+.opapp-btn::after{content:"";position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:#FF7A1A;border:2px solid var(--surface);animation:oapulse 1.8s infinite}
+@keyframes oapulse{0%{box-shadow:0 0 0 0 rgba(255,122,26,.6)}70%{box-shadow:0 0 0 7px rgba(255,122,26,0)}100%{box-shadow:0 0 0 0 rgba(255,122,26,0)}}
+.opapp-btn.hidden{display:none}
+@media(max-width:1440px){.opapp-btn .oa-go{display:none}}
+@media(max-width:1200px){.opapp-btn .oa-lbl{display:none}.opapp-btn{padding:0 8px}}
+
 .tl-dot .d{width:8px;height:8px;border-radius:50%;background:var(--primary);animation:tlpulse 1.8s infinite}
 .tl-dot.off .d{background:var(--ink-3);animation:none}
 @media(max-width:1560px){.tl-dot .lbl{display:none}.tl-dot{padding:0 11px}}
@@ -1622,6 +1637,8 @@
       <div class="sel" id="seller-wrap"><label for="seller">Cliente</label><select id="seller"></select></div>
       <!-- Modo oscuro: lo maneja theme-shell.js (data-theme en <html>, recordado en localStorage). -->
       <button class="iconbtn" id="theme-toggle" type="button" title="Modo oscuro" aria-label="Modo oscuro" aria-pressed="false"><span class="th-moon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></span><span class="th-sun"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2 M12 20v2 M4.93 4.93l1.41 1.41 M17.66 17.66l1.41 1.41 M2 12h2 M20 12h2 M6.34 17.66l-1.41 1.41 M19.07 4.93l-1.41 1.41"/></svg></span></button>
+      <!-- Atajo a la app del operario (PWA en /app/). Se oculta para usuarios cliente. -->
+      <a class="opapp-btn" id="opapp-btn" href="/app/" target="_blank" rel="noopener" title="Abre la app del operador en una ventana nueva y copia su link para enviarlo"><span class="oa-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10 6h4 M9 11v4 M12 11v4 M15 11v4"/></svg></span><span class="oa-lbl">App operador</span><span class="oa-go" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7 M9 7h8v8"/></svg></span></a>
       <button class="btn iconbtn" id="btn-mypass" title="Cambiar mi contraseña" aria-label="Cambiar mi contraseña"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6 M15.5 7.5l3 3L22 7l-3-3"/></svg></button>
     </div>
 
