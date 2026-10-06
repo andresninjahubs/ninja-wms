@@ -8303,6 +8303,8 @@
   function wireTips(root){var tt=$("#tt");root.querySelectorAll("[data-tip]").forEach(function(el){el.addEventListener("mousemove",function(e){tt.textContent=el.getAttribute("data-tip");tt.style.opacity="1";tt.style.left=(e.clientX+12)+"px";tt.style.top=(e.clientY-10)+"px";});el.addEventListener("mouseleave",function(){tt.style.opacity="0";});});}
   // «App operador»: copia el link al portapapeles (para enviárselo al operario) y
   // abre la app SIEMPRE en una ventana nueva, del tamaño de un teléfono.
+  // Dirección pública de la app del operador (dominio propio de Ninja Hubs).
+  var OPAPP_URL="https://wms.ninjahubs.cl/app/";
   function copiaTexto(txt){
     if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(txt).then(function(){return true;},function(){return copiaLegacy(txt);});
     return Promise.resolve(copiaLegacy(txt));
@@ -8314,7 +8316,7 @@
     var b=document.getElementById("opapp-btn"); if(!b) return;
     b.addEventListener("click",function(e){
       e.preventDefault();
-      var url=new URL("/app/",location.origin).href;
+      var url=OPAPP_URL;
       var w=Math.min(440,screen.availWidth||440), h=Math.min(900,(screen.availHeight||900)-40);
       var left=Math.max(0,(screen.availWidth||w)-w-40), top=20;
       var win=window.open(url,"wms-app-operador","popup=yes,width="+w+",height="+h+",left="+left+",top="+top);
