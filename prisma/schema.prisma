@@ -41,6 +41,9 @@ model Operation {
   /// Cuándo la plataforma revisó el alta (popup de nuevas operaciones del super admin). null = pendiente.
   reviewedAt   DateTime?
   reviewedBy   String?
+  /// Eliminada por la plataforma (borrado lógico: se oculta, sus usuarios no entran y se puede restaurar).
+  deletedAt    DateTime?
+  deletedBy    String?
   createdAt   DateTime  @default(now())
 
   packagingMaterials PackagingMaterial[] // FK PackagingMaterial → Operation (G8)

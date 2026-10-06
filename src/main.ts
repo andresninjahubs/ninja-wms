@@ -9,6 +9,7 @@ import { WMS_CLOCK, WMS_FACADE } from './api/tokens';
 import type { MutableClock } from './infra/system';
 import { seedDemo } from './infra/seed-demo';
 import { startAgentScheduler } from './infra/agent-scheduler';
+import { attachLiveHub } from './infra/live-hub';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger: ['log', 'warn', 'error'] });
@@ -72,6 +73,10 @@ async function bootstrap() {
   // Agente autónomo (Fase 1): reloj propio en el servidor. Ver src/infra/agent-scheduler.ts.
   // eslint-disable-next-line no-console
   startAgentScheduler(app.get(WMS_FACADE), (m) => console.log(m));
+
+  // Canal en vivo (WebSocket /ws): la app del operario avisa en qué trabaja y el panel lo ve.
+  // eslint-disable-next-line no-console
+  attachLiveHub(app.getHttpServer(), app.get(WMS_FACADE), (m) => console.log(m));
 
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);

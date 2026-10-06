@@ -266,6 +266,13 @@ export interface Operation {
   /** Alta revisada por la plataforma (popup de nuevas operaciones). null = pendiente de revisar. */
   reviewedAt?: string | null;
   reviewedBy?: string | null;
+  /**
+   * Eliminada por la plataforma (ISO). Borrado LÓGICO: la operación desaparece de las
+   * listas, sus usuarios no pueden entrar y los agentes la ignoran, pero sus datos
+   * (inventario, órdenes, facturación, auditoría) se conservan y se puede restaurar.
+   */
+  deletedAt?: string | null;
+  deletedBy?: string | null;
   /** Cuándo nació la cuenta (ISO). En las operaciones antiguas puede venir null. */
   createdAt?: string | null;
   // Plan del SaaS (PLG · Fase 1). Ausente = 'internal' (sin límites): super-admin / semilla.

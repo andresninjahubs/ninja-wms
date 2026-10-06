@@ -3157,6 +3157,30 @@ async function run() {
     assert.ok(kpi.trend[0].at <= kpi.trend[1].at);
   });
 
+  await test('super admin elimina una operación (lógico): confirma por nombre, bloquea acceso y se restaura', async () => {
+    const { facade } = buildFacade();
+    await facade.createOperation({ id: 'op-x', name: 'Bodega Norte' });
+    await facade.createOperation({ id: 'op-y', name: 'Bodega Sur' });
+    const u = await facade.createUser({ id: 'ux', name: 'Admin X', email: 'ux@x.cl', role: UserRole.ADMIN, operationId: 'op-x' });
+    await facade.setUserPassword(u.id, 'claveSegura1');
+    assert.equal((await facade.loginWithPassword('ux@x.cl', 'claveSegura1')).authenticated, true);
+    // Sin el nombre correcto no se elimina.
+    await expectThrows(() => facade.deleteOperation('op-x', { id: 'root', operationId: null }, 'Bodega'), ValidationError);
+    // No se puede eliminar la propia.
+    await expectThrows(() => facade.deleteOperation('op-y', { id: 'yy', operationId: 'op-y' }, 'Bodega Sur'), ValidationError);
+    const r = await facade.deleteOperation('op-x', { id: 'root', operationId: null }, '  bodega norte ');
+    assert.equal(r.usuarios, 1);
+    assert.ok(r.operation.deletedAt); assert.equal(r.operation.active, false);
+    assert.ok(!(await facade.listOperations()).some((o) => o.id === 'op-x'), 'sale de la lista');
+    assert.equal((await facade.listDeletedOperations()).length, 1);
+    assert.equal((await facade.loginWithPassword('ux@x.cl', 'claveSegura1')).authenticated, false, 'sus usuarios no entran');
+    await expectThrows(() => facade.deleteOperation('op-x', { id: 'root', operationId: null }, 'Bodega Norte'), ValidationError);
+    const back = await facade.restoreOperation('op-x');
+    assert.equal(back.active, true); assert.equal(back.deletedAt, null);
+    assert.ok((await facade.listOperations()).some((o) => o.id === 'op-x'));
+    assert.equal((await facade.loginWithPassword('ux@x.cl', 'claveSegura1')).authenticated, true, 'restaurada: vuelven a entrar');
+  });
+
   await test('app operario: conteo por SKU solo ajusta ese SKU; SKU: elegido a mano; operario puede contar', async () => {
     const { facade } = buildFacade();
     await facade.createOperation({ id: 'op1', name: 'Op 1' });

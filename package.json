@@ -33,6 +33,7 @@
     "playwright": "^1.62.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "ws": "^8.22.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -41,6 +42,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.7.0",
     "@types/nodemailer": "^8.0.1",
+    "@types/ws": "^8.18.2",
     "prisma": "^5.20.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.0",

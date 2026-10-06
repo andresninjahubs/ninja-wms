@@ -153,6 +153,9 @@
   function show(id) {
     ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship', 'pickst', 'recvst', 'taskst', 'count', 'ret', 'kit'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
     if (id !== 'scan') stopCamera();
+    if (typeof camDockStop === 'function') camDockStop();
+    // Pantallas de lista o menú: el operario no está trabajando en nada concreto.
+    if (['login', 'home', 'msgs', 'pickst', 'recvst', 'taskst', 'ret', 'kit'].indexOf(id) >= 0 && typeof liveIdle === 'function') liveIdle();
     if (typeof camClose === 'function' && $('camsheet') && $('camsheet').style.display !== 'none') camClose();
     if (id === 'home') { loadBoard(); if (!boardTimer) boardTimer = setInterval(function () { if ($('home').classList.contains('on') && !document.hidden) loadBoard(); }, 30000); }
   }
@@ -182,7 +185,7 @@
     save();
     api('/auth/login', { method: 'POST', body: { email: cfg.email, password: pass } })
       .then(function (r) {
-        if (!r.authenticated) { toast('Email o contraseña incorrectos', false); return; }
+        if (!r.authenticated) { toast(r.detail || 'Email o contraseña incorrectos', false); return; }
         cfg.token = r.token; save();   // guarda el JWT firmado
         $('cfg-pass').value = '';
         user = r.user;
@@ -196,6 +199,7 @@
         // el tiempo del turno anterior colgando en el aparato más de lo necesario.
         laborFlush();
         loadFreeSellers();
+        liveConnect();
         show('home');
       })
       .catch(function (e) { toast('No se pudo conectar: ' + e.message, false); });
@@ -213,6 +217,7 @@
     api('/operations/' + encodeURIComponent(user.operationId) + '/sellers').then(function (list) {
       var act = (list || []).filter(function (x) { return x.active !== false; });
       SELLERS = act;
+      act.forEach(function (x) { wantSkus(x.id); });   // descripciones de productos para todas las pantallas
       if (cfg.seller && !act.some(function (x) { return x.id === cfg.seller; })) { cfg.seller = ''; save(); }
       if (!cfg.seller && act.length === 1) { cfg.seller = act[0].id; save(); loadLocations(); }
       sel.innerHTML = (act.length > 1 ? '<option value="">— Elige el cliente —</option>' : '')
@@ -226,6 +231,7 @@
   });
 
   $('btn-logout').addEventListener('click', function () {
+    liveClose();
     // Salir tiene que BORRAR la credencial. Antes solo volvía a la pantalla de login
     // con el token intacto en el aparato: cualquiera que recargara la página entraba.
     // La cola de mediciones NO se toca: es trabajo que ya ocurrió y se manda cuando
@@ -329,13 +335,13 @@
     em.style.display = 'none';
     var n = mine[0];
     nx.innerHTML = '<div class="next"><div class="lbl">' + (n.estado === 'in_progress' ? '▶ En curso' : '▶ Siguiente') + '</div>'
-      + '<div class="tt">' + taskTitle(n) + ' · <span class="ref">' + esc(n.entityRef || n.entityId) + '</span></div>'
+      + '<div class="tt">' + taskTitle(n) + ' · <span class="ref">' + esc(n.entityRef || n.entityId) + '</span></div>' + taskDesc(n)
       + '<div class="meta">' + esc(n.cliente || '') + (n.unitsEstimate ? ' · ' + n.unitsEstimate + ' un' : '') + '</div>'
       + (n.priorityReason ? '<div class="why">' + esc(n.priorityReason) + '</div>' : '')
       + '<button class="btn" data-start="0">' + (n.estado === 'in_progress' ? 'Continuar' : 'Iniciar') + '</button></div>';
     ls.innerHTML = mine.slice(1).map(function (t, i) {
       return '<div class="task' + (t.estado === 'in_progress' ? ' running' : '') + '"><div class="num">' + (t.position || (i + 2)) + '</div>'
-        + '<div style="flex:1;min-width:0"><div class="tt"><span class="typechip ' + esc(t.type) + '">' + esc(TL[t.type] || t.type) + '</span><span class="ref">' + esc(t.entityRef || t.entityId) + '</span></div>'
+        + '<div style="flex:1;min-width:0"><div class="tt"><span class="typechip ' + esc(t.type) + '">' + esc(TL[t.type] || t.type) + '</span><span class="ref">' + esc(t.entityRef || t.entityId) + '</span></div>' + taskDesc(t)
         + '<div class="meta">' + esc(t.cliente || '') + (t.unitsEstimate ? ' · ' + t.unitsEstimate + ' un' : '') + (t.estado === 'in_progress' ? ' · en curso' : '') + '</div>'
         + (t.priorityReason ? '<div class="why">' + esc(t.priorityReason) + '</div>' : '') + '</div>'
         + '<div class="act"><button data-start="' + (i + 1) + '">' + (t.estado === 'in_progress' ? 'Continuar' : 'Iniciar') + '</button></div></div>';
@@ -347,7 +353,7 @@
     var al = $('avail-list');
     al.innerHTML = avail.length ? avail.map(function (t, i) {
       return '<div class="task"><div class="num">' + (i + 1) + '</div>'
-        + '<div style="flex:1;min-width:0"><div class="tt"><span class="typechip ' + esc(t.type) + '">' + esc(TL[t.type] || t.type) + '</span><span class="ref">' + esc(t.entityRef || t.entityId) + '</span></div>'
+        + '<div style="flex:1;min-width:0"><div class="tt"><span class="typechip ' + esc(t.type) + '">' + esc(TL[t.type] || t.type) + '</span><span class="ref">' + esc(t.entityRef || t.entityId) + '</span></div>' + taskDesc(t)
         + '<div class="meta">' + esc(t.cliente || '') + (t.unidades ? ' · ' + t.unidades + ' un' : '') + '</div><div class="why">' + esc(t.motivo || '') + '</div></div>'
         + '<div class="act"><button data-take="' + i + '">Tomar</button></div></div>';
     }).join('') : '<div class="card muted" style="text-align:center">No hay tareas disponibles ahora.</div>';
@@ -387,6 +393,7 @@
     });
     task = t;
     if (t.sellerId) { cfg.seller = t.sellerId; save(); }
+    liveTask();
     if (t.type === 'PICK') { startOp('pick'); loadTaskPicklist(); return; }
     if (t.type === 'RESTOCK') {
       // Reposición: la mercadería está en la ubicación DEV-REPOSICION y hay que devolverla
@@ -400,8 +407,9 @@
         destino = findLocByCode(String(t.entityRef).split('→').pop().trim());
       }
       startOp('putaway');
+      captured.sugDest = destino ? destino.code : null;   // reposición: vuelve a su ubicación
       if (fromR) { captured.from = fromR.code; steps = ['product', 'to']; enterStep(); }
-      setTaskCtx('<b>' + esc(taskTitle(t)) + ' · ' + esc(t.entityRef || '') + '</b>'
+      setTaskCtx('<b>' + esc(taskTitle(t)) + ' · ' + esc(t.entityRef || '') + '</b>' + taskDesc(t)
         + (fromR ? 'Está en <span class="code">' + esc(fromR.code) + '</span>. ' : '')
         + (destino ? 'Vuelve a <span class="code">' + esc(destino.code) + '</span> (puedes elegir otra).' : 'Escanea el producto y elige el destino.'));
       return;
@@ -411,8 +419,10 @@
       var parts = String(t.entityId).split(':');
       var fromLoc = parts.length >= 3 ? LOC_BY_ID[parts[2]] : null;
       startOp('putaway');
+      // Re-slot: el destino que propone el sistema viene en el texto de la tarea ("… → CÓDIGO").
+      if (t.type === 'RESLOT' && t.entityRef && t.entityRef.indexOf('→') > 0) { var rd = findLocByCode(String(t.entityRef).split('→').pop().trim()); captured.sugDest = rd ? rd.code : null; }
       if (fromLoc) { captured.from = fromLoc.code; steps = ['product', 'to']; enterStep(); }
-      setTaskCtx('<b>' + esc(taskTitle(t)) + ' · ' + esc(t.entityRef || '') + '</b>' + (fromLoc ? 'Origen: <span class="code">' + esc(fromLoc.code) + '</span> · escanea el producto y elige el destino.' : 'Escanea el producto, luego origen y destino.'));
+      setTaskCtx('<b>' + esc(taskTitle(t)) + ' · ' + esc(t.entityRef || '') + '</b>' + taskDesc(t) + (fromLoc ? 'Origen: <span class="code">' + esc(fromLoc.code) + '</span> · escanea el producto y elige el destino.' : 'Escanea el producto, luego origen y destino.'));
       return;
     }
     if (t.type === 'RECEIVE') {
@@ -437,11 +447,11 @@
     setTaskCtx('<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>Cargando lista de picking…');
     api('/sellers/' + encodeURIComponent(task.sellerId) + '/orders/' + encodeURIComponent(task.entityId) + '/picklist')
       .then(function (lines) {
-        if (task) { task.picklist = lines || []; if (steps[stepIdx] === 'product') renderProductPicker(); }
+        if (task) { task.picklist = lines || []; if (steps[stepIdx] === 'product') renderProductPicker(); liveTask(); }
         var html = '<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || '') + '</b>Escanea cada producto y su ubicación:<div class="lines">'
           + (lines || []).map(function (l) {
             var loc = LOC_BY_ID[l.locationId]; var done = (l.pickedQty || 0) >= l.qty;
-            return '<div class="ln' + (done ? ' done' : '') + '"><span>' + esc(l.sku) + (l.lot ? ' · ' + esc(l.lot) : '') + '</span><span>' + esc(loc ? loc.code : l.locationId) + ' · ' + (l.pickedQty || 0) + '/' + l.qty + '</span></div>';
+            return '<div class="ln' + (done ? ' done' : '') + '"><span>' + esc(l.sku) + (l.lot ? ' · ' + esc(l.lot) : '') + pdsc(l.sku, task.sellerId, 'blk') + '</span><span>' + esc(loc ? loc.code : l.locationId) + ' · ' + (l.pickedQty || 0) + '/' + l.qty + '</span></div>';
           }).join('') + '</div>';
         setTaskCtx(html);
         if ((lines || []).length && lines.every(function (l) { return (l.pickedQty || 0) >= l.qty; })) toast('Esta orden ya está completamente pickeada', true);
@@ -457,12 +467,13 @@
       .then(function (r) {
         task.receipt = r;
         if (steps[stepIdx] === 'product') renderProductPicker();
+        liveTask();
         var loc = LOC_BY_ID[r.locationId];
         var html = '<b>' + esc(taskTitle(task)) + ' · ' + esc(task.entityRef || r.id) + '</b>'
           + (r.supplier ? esc(r.supplier) + ' · ' : '') + 'Ubicación de recepción: <span class="code">' + esc(loc ? loc.code : r.locationId) + '</span>. Escanea cada producto e indica la cantidad recibida:<div class="lines">'
           + (r.lines || []).map(function (l) {
             var done = (l.receivedQty || 0) >= l.expectedQty;
-            return '<div class="ln' + (done ? ' done' : '') + '"><span>' + esc(l.sku) + (l.lot ? ' · ' + esc(l.lot) : '') + '</span><span>' + (l.receivedQty || 0) + '/' + l.expectedQty + '</span></div>';
+            return '<div class="ln' + (done ? ' done' : '') + '"><span>' + esc(l.sku) + (l.lot ? ' · ' + esc(l.lot) : '') + pdsc(l.sku, task.sellerId, 'blk') + '</span><span>' + (l.receivedQty || 0) + '/' + l.expectedQty + '</span></div>';
           }).join('') + '</div>';
         setTaskCtx(html);
         if (r.status === 'RECEIVED') toast('Esta recepción ya está cerrada', true);
@@ -477,7 +488,9 @@
     $('btn-closercpt').style.display = 'none';
     $('btn-finish').textContent = PI.back === 'recv' ? 'Volver a la lista de recepciones' : PI.back === 'ts:putaway' ? 'Volver a la lista de guardado' : PI.back ? 'Volver a la lista de picking' : 'Volver a mis tareas';
     task = null;
+    liveIdle();
     loadBoard();
+    paintTaskActs();
   }
 
   // ---- Acción rápida: empacar / despachar (sin escaneo) ----------------------
@@ -577,6 +590,7 @@
     if (s === 'product') renderProductPicker(); else { $('prodpick').style.display = 'none'; $('prodpick').innerHTML = ''; }
     // Con todos los pasos resueltos solo queda la cantidad: el campo de código sobra.
     $('manual').style.display = s ? '' : 'none';
+    paintTaskActs();
     enfocaCodigo();   // la pistola escribe donde está el cursor
   }
 
@@ -593,6 +607,8 @@
         return (l.zoneType === 'STORAGE' || l.zoneType === 'PICKING') && l.code !== captured.from;
       });
       paintLocs(step, 'Toca la ubicación destino (o escanéala):', dest.map(function (l) { return { loc: l }; }), false);
+      // La ubicación SUGERIDA por el sistema va siempre primero; el operario puede elegir otra.
+      sugerirDestino(dest);
     } else if (step === 'from' || step === 'loc') {
       // Origen (guardado) / picking: solo ubicaciones con stock del SKU.
       var wantState = step === 'loc' ? 'RESERVED' : 'AVAILABLE';
@@ -608,12 +624,12 @@
             return { loc: l, qty: agg[id] };
           }).sort(function (a, b) { return b.qty - a.qty; });
           var title = step === 'loc'
-            ? 'Toca la ubicación con stock RESERVADO de ' + captured.resolved.sku + ':'
-            : 'Toca la ubicación ORIGEN con stock de ' + captured.resolved.sku + ':';
+            ? 'Toca la ubicación con stock RESERVADO de ' + skuTxt(captured.resolved.sku, cfg.seller) + ':'
+            : 'Toca la ubicación ORIGEN con stock de ' + skuTxt(captured.resolved.sku, cfg.seller) + ':';
           if (!items.length) {
             box.innerHTML = '<div class="pl-empty">' + (step === 'loc'
-              ? 'No hay stock reservado de ' + esc(captured.resolved.sku) + ' en ninguna ubicación. El picking retira de reservas de órdenes; primero debe existir una orden asignada.'
-              : 'No hay stock disponible de ' + esc(captured.resolved.sku) + ' en ninguna ubicación.') + '</div>';
+              ? 'No hay stock reservado de ' + esc(skuTxt(captured.resolved.sku, cfg.seller)) + ' en ninguna ubicación. El picking retira de reservas de órdenes; primero debe existir una orden asignada.'
+              : 'No hay stock disponible de ' + esc(skuTxt(captured.resolved.sku, cfg.seller)) + ' en ninguna ubicación.') + '</div>';
             return;
           }
           paintLocs(step, title, items, true);
@@ -646,6 +662,40 @@
     });
   }
 
+  /**
+   * Pone primero la ubicación que sugiere el sistema para guardar:
+   *  - reposición / re-slot: la que trae la tarea;
+   *  - guardado: el motor de guardado dirigido (capacidad, rotación, consolidación).
+   * Se muestran hasta 3 sugerencias marcadas «Sugerida»; debajo, todas las demás.
+   */
+  function sugerirDestino(dest) {
+    var box = $('picklist'); if (!box || !captured.resolved) return;
+    var sku = captured.resolved.sku, qty = captured.maxBase || (task && task.unitsEstimate) || 1;
+    var pinta = function (sugs) {
+      if (steps[stepIdx] !== 'to' || !sugs.length) return;
+      var codes = sugs.map(function (x) { return x.code; });
+      var html = '<div class="pl-title">Ubicación sugerida por el sistema</div>'
+        + sugs.map(function (x, i) {
+          return '<button class="loc sug' + (i === 0 ? ' top' : '') + '" data-code="' + esc(x.code) + '"><span><span class="lc">' + esc(x.code) + '</span> <span class="lz">' + (i === 0 ? '★ Sugerida' : 'Alternativa') + '</span>'
+            + (x.why ? '<br><span class="lwhy">' + esc(x.why) + '</span>' : '') + '</span>' + (i === 0 ? '<span class="lq">Usar</span>' : '') + '</button>';
+        }).join('')
+        + '<div class="pl-title" style="margin-top:12px">O elige otra ubicación (o escanéala):</div>'
+        + dest.filter(function (l) { return codes.indexOf(l.code) < 0; }).map(function (l) {
+          return '<button class="loc" data-code="' + esc(l.code) + '"><span><span class="lc">' + esc(l.code) + '</span></span><span class="lz">' + esc(zoneName(l.zoneType)) + '</span></button>';
+        }).join('');
+      box.innerHTML = html; box.style.display = '';
+      Array.prototype.forEach.call(box.querySelectorAll('.loc'), function (btn) {
+        btn.addEventListener('click', function () { pickValue('to', btn.getAttribute('data-code')); });
+      });
+    };
+    if (captured.sugDest) { pinta([{ code: captured.sugDest, why: task && task.type === 'RESTOCK' ? 'Su ubicación de origen' : 'Destino propuesto para esta tarea' }]); return; }
+    api('/sellers/' + encodeURIComponent(cfg.seller) + '/putaway-suggestions?sku=' + encodeURIComponent(sku) + '&qty=' + encodeURIComponent(qty))
+      .then(function (list) {
+        var ok = (list || []).filter(function (x) { return x.locationCode && x.locationCode !== captured.from; }).slice(0, 3);
+        pinta(ok.map(function (x) { return { code: x.locationCode, why: (x.reasons || []).slice(0, 2).join(' · ') }; }));
+      }).catch(function () { /* sin sugerencia: queda la lista normal */ });
+  }
+
   // Selección de un valor de ubicación (por toque o por escaneo/manual).
   function pickValue(step, code) {
     captured[step] = code;
@@ -673,7 +723,7 @@
       api('/sellers/' + encodeURIComponent(cfg.seller) + '/barcodes/' + encodeURIComponent(raw))
         .then(function (pack) {
           captured.product = raw; captured.resolved = pack;
-          $('r-sku').textContent = pack.sku;
+          $('r-sku').innerHTML = esc(pack.sku) + pdsc(pack.sku, cfg.seller, 'blk');
           $('r-level').textContent = pack.label + ' (' + pack.code + ')';
           $('r-factor').textContent = '× ' + pack.factor + (pack.isBase ? '  (unidad base)' : '');
           $('reso').style.display = '';
@@ -745,6 +795,7 @@
   function skuCtlMap(sellerId) {
     if (SKU_CTL[sellerId]) return Promise.resolve(SKU_CTL[sellerId]);
     return api('/sellers/' + encodeURIComponent(sellerId) + '/skus').then(function (list) {
+      learnSkus(sellerId, list);
       var m = {};
       (list || []).forEach(function (k) { m[k.sku] = { lot: !!k.lotControlled, exp: !!k.expiryControlled }; });
       SKU_CTL[sellerId] = m; return m;
@@ -810,7 +861,7 @@
       // Cotejo de una TAREA de recepción: se registra contra la línea de la orden de recepción.
       var rc = task.receipt, sku = captured.resolved ? captured.resolved.sku : null;
       var line = rc && (rc.lines || []).filter(function (l) { return l.sku === sku; })[0];
-      if (!line) { toast('El producto ' + (sku || captured.product) + ' no está en esta recepción', false); return; }
+      if (!line) { toast('El producto ' + (sku ? skuTxt(sku, task.sellerId) : captured.product) + ' no está en esta recepción', false); return; }
       var rq = packCount * (captured.resolved ? captured.resolved.factor : 1);
       call = api(base + '/receipts/' + encodeURIComponent(task.entityId) + '/receive', { method: 'POST', body: { counts: [Object.assign({ lineNo: line.lineNo, qty: rq }, lotV ? { lot: lotV } : {}, expV ? { expiry: expV } : {})] } })
         .then(function (o) { return { scan: { baseQty: rq, code: captured.resolved.code, sku: sku }, receipt: o }; });
@@ -830,8 +881,9 @@
     $('btn-confirm').disabled = true;
     call.then(function (r) {
       var q = r.scan.baseQty;
+      if (task && task.type !== 'PICK' && task.type !== 'RECEIVE') { task._done = (task._done || 0) + q; liveTask(); }
       $('res-big').textContent = '✓ ' + packCount + ' × ' + r.scan.code + ' = ' + q + ' un';
-      $('res-sub').textContent = OP_META[op].title + ' de ' + r.scan.sku + ' confirmada (' + q + ' unidades base).';
+      $('res-sub').textContent = OP_META[op].title + ' de ' + skuTxt(r.scan.sku, cfg.seller) + ' confirmada (' + q + ' unidades base).';
       $('result').style.display = '';
       $('qtywrap').style.display = 'none'; $('btn-confirm').style.display = 'none';
       $('after').style.display = 'flex';
@@ -848,6 +900,7 @@
         finishTask('Tarea completada: salió de tu bandeja.');
       } else $('btn-again').style.display = task ? '' : 'none';
       toast(OP_META[op].title + ' registrada', true);
+      paintTaskActs();
       // Captura de productividad con inicio/fin reales. Va por la cola: si no hay red,
       // la muestra espera en el aparato en vez de perderse.
       var LABOR_TYPE = { pick: 'PICK', putaway: 'PUTAWAY', receive: 'RECEIVE' };
@@ -878,7 +931,7 @@
         rows.forEach(function (b) { byState[b.state] = (byState[b.state] || 0) + b.qty; });
         var detail = Object.keys(byState).map(function (k) { return k + ': ' + byState[k]; }).join('  ·  ') || 'sin stock';
         $('res-big').textContent = total + ' un base';
-        $('res-sub').textContent = captured.resolved.sku + '  —  ' + detail;
+        $('res-sub').textContent = skuTxt(captured.resolved.sku, cfg.seller) + '  —  ' + detail;
         $('result').style.display = '';
       })
       .catch(function (e) { toast(e.message, false); });
@@ -984,9 +1037,29 @@
     else if (t && t.type === 'RECEIVE') { steps = ['product']; stepIdx = 0; enterStep(); loadTaskReceipt(); }
     else if (t && (t.type === 'PUTAWAY' || t.type === 'RESLOT')) startAssigned(t);
   });
-  $('btn-closercpt').addEventListener('click', function () {
+  /** Texto del botón para salir de la tarea, según desde dónde se abrió. */
+  function textoVolver(terminar) {
+    var dest = PI.back === 'recv' ? 'la lista de recepciones' : PI.back === 'ts:putaway' ? 'la lista de guardado' : PI.back ? 'la lista de picking' : 'mis tareas';
+    return (terminar ? 'Terminar y volver a ' : 'Volver a ') + dest;
+  }
+  /**
+   * Acciones de la tarea en la pantalla de escaneo: «Cerrar recepción con faltante»
+   * (recepción) y «Terminar y volver» están SIEMPRE visibles mientras haya una tarea,
+   * justo bajo el campo de código. Antes aparecían solo después de confirmar algo, y una
+   * recepción en la que no llegó nada no se podía cerrar.
+   */
+  function paintTaskActs() {
+    var box = $('taskacts'); if (!box) return;
+    var on = !!task && $('scan').classList.contains('on');
+    box.style.display = on ? 'flex' : 'none';
+    $('ta-close').style.display = on && task.type === 'RECEIVE' ? '' : 'none';
+    $('ta-finish').textContent = textoVolver(true);
+    // Mientras estén arriba, no se repiten abajo.
+    $('btn-closercpt').style.display = 'none';
+    $('btn-finish').style.display = on ? 'none' : '';
+  }
+  function cerrarConFaltante(b) {
     if (!task || task.type !== 'RECEIVE') return;
-    var b = $('btn-closercpt');
     // Cerrar con faltante no tiene vuelta atrás: pide un segundo toque.
     if (!b.getAttribute('data-arm')) {
       b.setAttribute('data-arm', '1'); b.textContent = 'Toca de nuevo para cerrar con faltante';
@@ -995,11 +1068,24 @@
     }
     b.removeAttribute('data-arm'); b.textContent = 'Cerrar recepción con faltante';
     b.disabled = true;
+    var ref = task.entityRef || task.entityId;
     api('/sellers/' + encodeURIComponent(task.sellerId) + '/receipts/' + encodeURIComponent(task.entityId) + '/close', { method: 'POST', body: {} })
-      .then(function () { toast('Recepción cerrada con faltante', true); finishTask('Recepción cerrada: la tarea salió de tu bandeja.'); })
+      .then(function () {
+        toast('Recepción cerrada con faltante', true);
+        stopCamera();
+        ['cam', 'manual', 'prodpick', 'reso', 'picklist', 'bins', 'qtywrap', 'btn-confirm'].forEach(function (id) { if ($(id)) $(id).style.display = 'none'; });
+        $('res-big').textContent = '✓ ' + ref + ' cerrada'; $('res-sub').textContent = '';
+        $('result').style.display = '';
+        finishTask('Recepción cerrada con lo recibido: la tarea salió de tu bandeja.');
+        $('after').style.display = 'flex';
+        paintTaskActs();
+      })
       .catch(function (e) { toast(e.message, false); })
       .then(function () { b.disabled = false; });
-  });
+  }
+  $('btn-closercpt').addEventListener('click', function () { cerrarConFaltante($('btn-closercpt')); });
+  $('ta-close').addEventListener('click', function () { cerrarConFaltante($('ta-close')); });
+  $('ta-finish').addEventListener('click', volverDeFlujo);
   $('btn-finish').addEventListener('click', volverDeFlujo);
 
   // ---- Marca (white-label) de la operación ----------------------------------
@@ -1285,6 +1371,71 @@
   }
   $('cs-close').addEventListener('click', camClose);
 
+  // ---- Lector con cámara EN PANTALLA (siempre visible y activo) --------------
+  // Igual que en la pantalla de escaneo: el visor queda a la vista y leyendo mientras
+  // el operario está en la estación, sin tener que abrirlo con un botón. Convive con la
+  // pistola y el teclado (el campo de código sigue con el foco).
+  // Para contar unidades sin dobles lecturas: un mismo código vuelve a contar solo
+  // después de salir del cuadro (~0,9 s sin verlo). Mientras el producto siga frente a
+  // la cámara, cuenta una sola vez.
+  var CI = { stream: null, on: false, det: null, host: null, cb: null, seen: {}, off: false };
+  try { CI.off = localStorage.getItem('wms.camdock.off') === '1'; } catch (e) { /* sin almacenamiento */ }
+  function camDockStart(hostId, cb, hint) {
+    var host = $(hostId); if (!host) return;
+    CI.cb = cb;
+    var h = host.querySelector('.hint'); if (h) h.textContent = hint || 'Apunta al código';
+    if (CI.off) { host.style.display = 'none'; return; }
+    if (CI.host === hostId && CI.stream) { host.style.display = ''; return; }   // ya está leyendo
+    camDockStop();
+    if (!('BarcodeDetector' in window) || !navigator.mediaDevices) { host.style.display = 'none'; return; }
+    try { CI.det = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'] }); }
+    catch (e) { host.style.display = 'none'; return; }
+    host.style.display = ''; CI.host = hostId; CI.seen = {};
+    if (h) h.textContent = 'Iniciando cámara…';
+    var v = host.querySelector('video');
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(function (st) {
+        if (CI.host !== hostId) { st.getTracks().forEach(function (t) { t.stop(); }); return null; }
+        CI.stream = st; v.srcObject = st; return v.play();
+      })
+      .then(function () {
+        if (CI.host !== hostId || !CI.stream) return;
+        if (h) h.textContent = hint || 'Apunta al código';
+        CI.on = true; requestAnimationFrame(camDockLoop);
+      })
+      .catch(function () { host.style.display = 'none'; CI.host = null; CI.on = false; });
+  }
+  function camDockHint(hint) { var host = CI.host && $(CI.host); var h = host && host.querySelector('.hint'); if (h && CI.on) h.textContent = hint; }
+  function camDockLoop() {
+    if (!CI.on || !CI.host) return;
+    var host = $(CI.host), v = host && host.querySelector('video');
+    if (!v) return;
+    CI.det.detect(v).then(function (codes) {
+      var now = Date.now();
+      (codes || []).slice(0, 1).forEach(function (c) {
+        var raw = c && c.rawValue; if (!raw) return;
+        var prev = CI.seen[raw]; CI.seen[raw] = now;
+        if (prev && now - prev < 900) return;          // sigue en el cuadro: no se vuelve a contar
+        host.classList.add('hit'); setTimeout(function () { host.classList.remove('hit'); }, 350);
+        if (navigator.vibrate) navigator.vibrate(40);
+        if (CI.cb) CI.cb(raw);
+      });
+    }).catch(function () {}).then(function () { if (CI.on) requestAnimationFrame(camDockLoop); });
+  }
+  function camDockStop() {
+    CI.on = false;
+    if (CI.stream) { CI.stream.getTracks().forEach(function (t) { t.stop(); }); CI.stream = null; }
+    if (CI.host && $(CI.host)) { var v = $(CI.host).querySelector('video'); if (v) v.srcObject = null; }
+    CI.host = null;
+  }
+  /** Botón de cámara del encabezado: apaga / enciende el visor (se recuerda en el aparato). */
+  function camDockToggle(hostId, cb, hint) {
+    CI.off = !CI.off;
+    try { localStorage.setItem('wms.camdock.off', CI.off ? '1' : '0'); } catch (e) { /* ignore */ }
+    if (CI.off) { camDockStop(); if ($(hostId)) $(hostId).style.display = 'none'; toast('Cámara apagada: lee con la pistola o escribe el código', true); }
+    else camDockStart(hostId, cb, hint);
+  }
+
   // =====================================================================
   // EMPAQUE
   // =====================================================================
@@ -1299,6 +1450,7 @@
     $('pk-code').placeholder = 'N° de orden';
     $('pk-scan').style.display = '';
     $('pk-list').innerHTML = '<div class="pk-empty">Cargando órdenes…</div>';
+    camDockStart('pk-cam', function (c) { onPackCode(c); }, 'Escanea el N° de orden');
     // Insumos de embalaje de la bodega (cajas, bolsas…): se cargan una vez por entrada.
     var oid = opIdOrNull();
     api('/packaging?operationId=' + encodeURIComponent(oid)).then(function (m) { PK.materials = (m || []).filter(function (x) { return x.active !== false; }); }).catch(function () { PK.materials = []; });
@@ -1314,6 +1466,7 @@
     enfoca('pk-code');
   }
   function renderPackList() {
+    liveIdle();
     $('pk-sub').textContent = PK.orders.length + ' orden(es) pickeada(s) para empacar';
     if (!PK.orders.length) { $('pk-list').innerHTML = '<div class="pk-empty">No hay órdenes pickeadas esperando empaque. 🎉</div>'; return; }
     $('pk-list').innerHTML = '<div class="sec" style="margin-bottom:8px">Más urgentes primero</div>' + PK.orders.map(function (o) {
@@ -1331,6 +1484,7 @@
     PK.order = o; PK.counts = {}; PK.mats = {}; PK.bultos = 1; PK.armado = false; PK.startAt = new Date().toISOString();
     $('pk-list').style.display = 'none'; $('pk-order').style.display = '';
     $('pk-title').textContent = 'Empacar ' + oRef(o);
+    camDockStart('pk-cam', function (c) { onPackCode(c); }, 'Escanea cada producto (o el embalaje)');
     $('pk-sub').textContent = (o.sellerName || o.sellerId) + ' · ' + oUnits(o) + ' un';
     $('pk-label').textContent = 'Escanea cada PRODUCTO para verificarlo (o el embalaje)';
     $('pk-code').placeholder = 'EAN del producto o del embalaje';
@@ -1340,18 +1494,19 @@
   function pkContado() { return (PK.order.lines || []).reduce(function (a, l) { return a + (PK.counts[l.lineNo] || 0); }, 0); }
   function renderPackOrder() {
     var o = PK.order; if (!o) return;
+    liveWorking([{ type: 'PACK', entityId: o.id, ref: oRef(o), sellerId: o.sellerId, done: pkContado(), total: oUnits(o), unit: 'un' }]);
     var total = oUnits(o), cont = pkContado(), pct = total ? Math.min(100, Math.round(cont * 100 / total)) : 0;
     var lines = (o.lines || []).map(function (l) {
       var c = PK.counts[l.lineNo] || 0;
       var cls = c === l.qty ? ' done' : (c > l.qty ? ' over' : '');
-      return '<div class="pkl' + cls + '"><div><div class="pl-sku">' + esc(l.sku) + (c === l.qty ? ' ✓' : '') + '</div>'
+      return '<div class="pkl' + cls + '"><div style="min-width:0"><div class="pl-sku">' + esc(l.sku) + (c === l.qty ? ' ✓' : '') + '</div>' + pdsc(l.sku, o.sellerId, 'blk')
         + '<div class="pl-sub">' + (l.lot ? 'Lote ' + esc(l.lot) + ' · ' : '') + 'pide ' + l.qty + '</div></div>'
         + '<div class="pl-q"><button class="mini" data-pkm="' + l.lineNo + '">−</button><b>' + c + '/' + l.qty + '</b><button class="mini" data-pkp="' + l.lineNo + '">+</button></div></div>';
     }).join('');
     var mats = PK.materials.length
       ? PK.materials.map(function (m) {
           var q = PK.mats[m.sku] || 0;
-          return '<div class="matrow"><div class="mn">' + esc(m.name) + '<small>Saldo ' + (m.onHand || 0) + (m.barcode ? ' · EAN ' + esc(m.barcode) : '') + '</small></div>'
+          return '<div class="matrow"><div class="mn">' + esc(m.sku) + ' · ' + esc(m.name) + '<small>Saldo ' + (m.onHand || 0) + (m.barcode ? ' · EAN ' + esc(m.barcode) : '') + '</small></div>'
             + '<div class="pl-q"><button class="mini" data-mtm="' + esc(m.sku) + '">−</button><b style="min-width:28px;text-align:center">' + q + '</b><button class="mini" data-mtp="' + esc(m.sku) + '">+</button></div></div>';
         }).join('')
       : '<div class="muted" style="font-size:13px">Esta bodega no tiene insumos de embalaje cargados.</div>';
@@ -1383,7 +1538,7 @@
     else if (b.hasAttribute('data-pkm')) { var m = +b.getAttribute('data-pkm'); PK.counts[m] = Math.max(0, (PK.counts[m] || 0) - 1); }
     else if (b.hasAttribute('data-mtp')) { var s = b.getAttribute('data-mtp'); PK.mats[s] = (PK.mats[s] || 0) + 1; }
     else { var s2 = b.getAttribute('data-mtm'); PK.mats[s2] = Math.max(0, (PK.mats[s2] || 0) - 1); }
-    PK.armado = false; renderPackOrder();
+    PK.armado = false; renderPackOrder(); enfoca('pk-code');   // el lector sigue activo tras tocar ±
   });
   /** Un código en el paso de verificación: embalaje (local) o producto (vía API del cliente). */
   function packScan(code) {
@@ -1396,12 +1551,12 @@
     p.then(function (r) {
       var sku = r && r.sku, f = (r && r.factor) || 1;
       var ls = (o.lines || []).filter(function (l) { return l.sku === sku; });
-      if (!ls.length) { bip(false); toast('El producto ' + (sku || code) + ' NO es de esta orden', false); return; }
+      if (!ls.length) { bip(false); toast('El producto ' + (sku ? skuTxt(sku, o.sellerId) : code) + ' NO es de esta orden', false); return; }
       var l = ls.filter(function (x) { return (PK.counts[x.lineNo] || 0) < x.qty; })[0];
-      if (!l) { bip(false); toast('Ya están todas las unidades de ' + sku + '. Revisa si sobra una.', false); return; }
+      if (!l) { bip(false); toast('Ya están todas las unidades de ' + skuTxt(sku, o.sellerId) + '. Revisa si sobra una.', false); return; }
       PK.counts[l.lineNo] = (PK.counts[l.lineNo] || 0) + f;
       bip(true);
-      toast(sku + ' +' + f + (f > 1 ? ' (' + (r.label || 'pack') + ')' : ''), true);
+      toast(skuTxt(sku, o.sellerId) + ' +' + f + (f > 1 ? ' (' + (r.label || 'pack') + ')' : ''), true);
       PK.armado = false; renderPackOrder();
     }).catch(function () { bip(false); toast('Código no reconocido: ' + code, false); });
   }
@@ -1423,10 +1578,12 @@
       .catch(function (e) { toast(e.message, false); btn.disabled = false; PK.armado = false; renderPackOrder(); });
   }
   function renderPackDone(r, verificada) {
+    liveIdle();
     var p = r.packing || {};
     var labels = p.labels || [];
     var deTarea = !!PK.task; PK.task = null; PK.order = null;
     $('pk-scan').style.display = 'none';
+    camDockStop(); $('pk-cam').style.display = 'none';
     $('pk-title').textContent = 'Empacada ✓';
     $('pk-order').innerHTML = '<div class="resbox"><div class="rb-t">✓ ' + esc(oRef(r)) + ' empacada</div>'
       + '<div class="muted">' + (p.bultos || PK.bultos) + ' bulto(s)' + (verificada ? ' · verificada sin diferencias' : '') + '</div>'
@@ -1467,8 +1624,11 @@
       toast(x ? ('La orden ' + oRef(x) + ' está ' + (ST_LBL[x.status] || x.status) + ': solo se empacan órdenes pickeadas') : ('No encontré la orden ' + code), false);
     }).catch(function () { bip(false); toast('No encontré la orden ' + code, false); });
   }
+  // El visor ya está en pantalla y leyendo; el botón lo apaga o lo vuelve a encender.
   $('btn-pkcam').addEventListener('click', function () {
-    camOpen(function (c) { onPackCode(c); }, { continuous: !!PK.order, hint: PK.order ? 'Escanea los productos' : 'Escanea el N° de orden' });
+    if ($('pk-scan').style.display === 'none') return;
+    camDockToggle('pk-cam', function (c) { onPackCode(c); }, PK.order ? 'Escanea cada producto (o el embalaje)' : 'Escanea el N° de orden');
+    enfoca('pk-code');
   });
   $('btn-pkback').addEventListener('click', function () {
     if (PK.order && !PK.task) { PK.order = null; openPackStation(null); return; }
@@ -1526,6 +1686,9 @@
     $('sh-list').innerHTML = html;
     var n = enCarga.length;
     $('sh-dock').style.display = n ? '' : 'none';
+    // En vivo: cada orden de la carga aparece en el panel como «despachando».
+    if (n) liveWorking(enCarga.map(function (o, i) { return { type: 'SHIP', entityId: o.id, ref: oRef(o), sellerId: o.sellerId, done: 0, total: (o.packing && o.packing.bultos) || 1, unit: 'bultos' }; }));
+    else liveIdle();
     var bultos = enCarga.reduce(function (a, o) { return a + ((o.packing && o.packing.bultos) || 1); }, 0);
     $('sh-go').textContent = 'Despachar ' + n + (n === 1 ? ' orden' : ' órdenes') + ' · ' + bultos + (bultos === 1 ? ' bulto' : ' bultos');
     // Cada orden sale con SU courier. El campo solo reemplaza (o completa si falta).
@@ -1589,6 +1752,7 @@
       });
     }, Promise.resolve()).then(function () {
       SH.busy = false; $('sh-go').disabled = false;
+      liveIdle();
       var deTarea = !!SH.task; SH.task = null;
       SH.orders = SH.orders.filter(function (o) { return ok.indexOf(o) < 0; });
       ok.forEach(function (o) { delete SH.sel[o.id]; });
@@ -1754,7 +1918,7 @@
   }
   function ppItem(it, i) {
     return '<button class="pp' + (it.done ? ' done' : '') + '" data-pp="' + i + '"' + (it.done ? ' disabled' : '') + '><div class="pp-main"><div class="pp-sku">' + esc(it.sku) + '</div>'
-      + '<div class="pp-sub">' + esc(it.sub || '') + '</div></div>' + (it.badge ? '<span class="pp-q">' + esc(it.badge) + '</span>' : '') + '</button>';
+      + pdsc(it.sku, (task && task.sellerId) || cfg.seller, 'pp-d') + (it.sub ? '<div class="pp-sub">' + esc(it.sub) + '</div>' : '') + '</div>' + (it.badge ? '<span class="pp-q">' + esc(it.badge) + '</span>' : '') + '</button>';
   }
   var PP_ITEMS = [];
   function renderProductPicker() {
@@ -1780,13 +1944,13 @@
       if (!cfg.seller) { box.style.display = 'none'; return; }
       if (!SKU_LIST[cfg.seller]) {
         box.style.display = ''; box.innerHTML = '<div class="pp-title">O elige el producto sin escanear</div><div class="muted" style="font-size:13px">Cargando productos…</div>';
-        api('/sellers/' + encodeURIComponent(cfg.seller) + '/skus').then(function (l) { SKU_LIST[cfg.seller] = (l || []).filter(function (k) { return k.active !== false; }); if (steps[stepIdx] === 'product') renderProductPicker(); }).catch(function () { box.style.display = 'none'; });
+        api('/sellers/' + encodeURIComponent(cfg.seller) + '/skus').then(function (l) { learnSkus(cfg.seller, l); SKU_LIST[cfg.seller] = (l || []).filter(function (k) { return k.active !== false; }); if (steps[stepIdx] === 'product') renderProductPicker(); }).catch(function () { box.style.display = 'none'; });
         return;
       }
       var q = ($('pp-q') && $('pp-q').value || '').trim().toLowerCase();
       var all = SKU_LIST[cfg.seller];
       var hits = all.filter(function (k) { return !q || String(k.sku).toLowerCase().indexOf(q) >= 0 || String(k.description || '').toLowerCase().indexOf(q) >= 0; });
-      items = hits.slice(0, 25).map(function (k) { return { sku: k.sku, sub: k.description || '' }; });
+      items = hits.slice(0, 25).map(function (k) { return { sku: k.sku, sub: '' }; });
       PP_ITEMS = items;
       var keep = $('pp-q') ? $('pp-q').value : '';
       box.style.display = '';
@@ -1814,7 +1978,7 @@
       // Sin EAN registrado se manda «SKU:<código>»: el servidor lo entiende como la unidad base.
       if (navigator.vibrate) navigator.vibrate(40);
       captured.product = pack.barcode || ('SKU:' + it.sku); captured.resolved = pack; captured.manual = true;
-      $('r-sku').textContent = pack.sku;
+      $('r-sku').innerHTML = esc(pack.sku) + pdsc(pack.sku, cfg.seller, 'blk');
       $('r-level').textContent = 'Elegido a mano · ' + pack.label;
       $('r-factor').textContent = '× 1 (unidad base)';
       $('reso').style.display = '';
@@ -1990,6 +2154,7 @@
   function skuList(sellerId) {
     if (SKU_LIST[sellerId]) return Promise.resolve(SKU_LIST[sellerId]);
     return api('/sellers/' + encodeURIComponent(sellerId) + '/skus').then(function (l) {
+      learnSkus(sellerId, l);
       SKU_LIST[sellerId] = (l || []).filter(function (k) { return k.active !== false; }); return SKU_LIST[sellerId];
     });
   }
@@ -2045,11 +2210,13 @@
   // ESTACIÓN GENÉRICA POR TAREAS (Guardado y Conteo)
   // ---------------------------------------------------------------------
   var TS_KINDS = {
-    putaway: { types: 'PUTAWAY,RESLOT,RESTOCK', title: 'Guardado', mine: 'Asignadas a mí', label: 'Escanea la ubicación de origen o escribe el SKU', loose: 'Guardado suelto (sin tarea)', nada: 'No hay stock esperando guardado.', skill: 'el guardado' },
+    putaway: { types: 'PUTAWAY,RECEIVE,RESLOT,RESTOCK', title: 'Guardado', mine: 'Asignadas a mí', label: 'Escanea la ubicación de origen, el SKU o la guía', loose: 'Guardado suelto (sin tarea)', nada: 'No hay tareas de este tipo ahora.', skill: 'el guardado',
+      // Filtro por tipo dentro de la estación (se recuerda en el aparato).
+      filtros: [['', 'Todas'], ['PUTAWAY', 'Guardado'], ['RECEIVE', 'Recepción'], ['RESLOT', 'Re-slot'], ['RESTOCK', 'Reposición']] },
     count: { types: 'COUNT', title: 'Conteo', mine: 'Asignados a mí', label: 'Escanea la ubicación a contar o escribe el SKU', loose: 'Conteo libre de una ubicación', nada: 'No hay conteos pendientes hoy. 🎉', skill: 'el conteo' },
   };
-  var TS_TL = { PUTAWAY: 'Guardado', RESLOT: 'Re-slot', RESTOCK: 'Reposición', COUNT: 'Conteo' };
-  var TS = { kind: null, tab: 'mine', board: null, busy: false };
+  var TS_TL = { PUTAWAY: 'Guardado', RECEIVE: 'Recepción', RESLOT: 'Re-slot', RESTOCK: 'Reposición', COUNT: 'Conteo' };
+  var TS = { kind: null, tab: 'mine', board: null, busy: false, tipo: (function () { try { return localStorage.getItem('wms.ts.tipo') || ''; } catch (e) { return ''; } })() };
   function openTaskStation(kind) {
     task = null; TS.kind = kind; var K = TS_KINDS[kind];
     show('taskst');
@@ -2076,12 +2243,22 @@
     else meta += (t.unitsEstimate || t.unidades ? ' · ' + (t.unitsEstimate || t.unidades) + ' un' : '');
     var btn = libre ? '<button class="oc-act" data-tstake="' + esc(t.entityId) + '" data-tstype="' + esc(t.type) + '">Tomar</button>'
       : '<button class="oc-act' + (first ? '' : ' alt') + '" data-tsstart="' + esc(t.entityId) + '">' + (run ? 'Continuar' : 'Empezar') + '</button>';
-    return '<div class="ordc' + (run ? ' run' : '') + '"><div class="oc-main"><div class="oc-ref"><span class="typechip ' + esc(t.type) + '">' + esc(TS_TL[t.type] || t.type) + '</span> ' + esc(t.entityRef || p.ref) + (run ? ' <span class="tagrun">En curso</span>' : '') + '</div>'
+    return '<div class="ordc' + (run ? ' run' : '') + '"><div class="oc-main"><div class="oc-ref"><span class="typechip ' + esc(t.type) + '">' + esc(TS_TL[t.type] || t.type) + '</span> ' + esc(t.entityRef || p.ref) + (run ? ' <span class="tagrun">En curso</span>' : '') + '</div>' + taskDesc(t)
       + '<div class="oc-meta">' + esc(meta) + '</div>' + (!libre && t.priorityReason ? '<div class="oc-meta" style="color:var(--ink-2)">' + esc(t.priorityReason) + '</div>' : '') + '</div>' + btn + '</div>';
   }
   function renderTaskStation() {
     var b = TS.board || { mine: [], available: [] }, K = TS_KINDS[TS.kind];
-    var mine = b.mine || [], free = b.available || [];
+    var mineAll = b.mine || [], freeAll = b.available || [];
+    // Filtro por tipo (Guardado / Recepción / Re-slot / Reposición).
+    var tf = $('ts-types');
+    if (K.filtros) {
+      var cuenta = function (tp) { var l = TS.tab === 'mine' ? mineAll : freeAll; return tp ? l.filter(function (t) { return t.type === tp; }).length : l.length; };
+      if (TS.tipo && !K.filtros.some(function (f) { return f[0] === TS.tipo; })) TS.tipo = '';
+      tf.style.display = '';
+      tf.innerHTML = K.filtros.map(function (f) { var n = cuenta(f[0]); return '<button class="chip' + (TS.tipo === f[0] ? ' on' : '') + (n ? '' : ' zero') + '" data-tsf="' + f[0] + '">' + f[1] + ' · ' + n + '</button>'; }).join('');
+    } else { tf.style.display = 'none'; tf.innerHTML = ''; }
+    var porTipo = function (t) { return !K.filtros || !TS.tipo || t.type === TS.tipo; };
+    var mine = mineAll.filter(porTipo), free = freeAll.filter(porTipo);
     $('ts-cmine').textContent = mine.length; $('ts-cfree').textContent = b.selfPickup ? free.length : '—';
     Array.prototype.forEach.call(document.querySelectorAll('#ts-tabs [data-tst]'), function (c) { c.classList.toggle('on', c.getAttribute('data-tst') === TS.tab); });
     $('ts-sub').textContent = mine.length + ' asignada(s) a ti' + (b.selfPickup ? ' · ' + free.length + ' libre(s)' : '');
@@ -2109,6 +2286,11 @@
       }).catch(function (e) { TS.busy = false; bip(false); toast(e.message, false); loadTaskStation(); });
   }
   $('ts-tabs').addEventListener('click', function (e) { var c = e.target.closest('[data-tst]'); if (!c) return; TS.tab = c.getAttribute('data-tst'); renderTaskStation(); });
+  $('ts-types').addEventListener('click', function (e) {
+    var c = e.target.closest('[data-tsf]'); if (!c) return;
+    TS.tipo = c.getAttribute('data-tsf'); try { localStorage.setItem('wms.ts.tipo', TS.tipo); } catch (x) {}
+    renderTaskStation();
+  });
   $('ts-list').addEventListener('click', function (e) {
     var b;
     if ((b = e.target.closest('[data-tsstart]'))) { var t = ((TS.board && TS.board.mine) || []).filter(function (x) { return x.entityId === b.getAttribute('data-tsstart'); })[0]; if (t) tsStart(t); return; }
@@ -2170,9 +2352,15 @@
   function renderCount() {
     if (!CT) return;
     var loc = CT.locId ? LOC_BY_ID[CT.locId] : null, body = '', ctx = '';
-    $('ct-title').textContent = CT.mode === 'SKU' ? 'Conteo · ' + CT.sku : 'Conteo' + (loc ? ' · ' + loc.code : '');
+    $('ct-title').textContent = CT.mode === 'SKU' ? 'Conteo · ' + skuTxt(CT.sku, CT.sid) : 'Conteo' + (loc ? ' · ' + loc.code : '');
     $('ct-sub').textContent = CT.sid ? sellerNom(CT.sid) : 'Elige el cliente';
-    if (CT.done) { renderCountDone(); return; }
+    if (CT.done) { liveIdle(); renderCountDone(); return; }
+    // En vivo: conteo en curso (ciego: se informa lo contado, no lo esperado).
+    var ctKey = CT.task ? CT.task.entityId : (CT.sid && CT.locId ? CT.sid + ':' + CT.locId : null);
+    if (ctKey && (CT.conf || CT.mode === 'SKU')) {
+      var ctDone = CT.mode === 'LOC' ? CT.lines.reduce(function (a, l) { return a + l.qty; }, 0) : CT.rows.reduce(function (a, r) { return a + r.qty; }, 0);
+      liveWorking([{ type: 'COUNT', entityId: ctKey, ref: CT.task ? CT.task.entityRef : ('Ubicación ' + ((LOC_BY_ID[CT.locId] || {}).code || '')), sellerId: CT.sid, done: ctDone, total: null, unit: 'un contadas' }]);
+    }
     $('ct-scan').style.display = '';
     // Conteo libre: primero cliente y ubicación.
     if (CT.free && (!CT.sid || !CT.locId)) {
@@ -2197,13 +2385,13 @@
       ctx = '<b>Cuenta todo lo de ' + esc(sellerNom(CT.sid)) + ' en ' + esc(loc ? loc.code : '') + '</b>Escanea cada unidad (suma 1, o lo que traiga la caja) o búscala abajo. Lo que no registres queda en 0.';
       $('ct-label').textContent = 'Escanea cada producto'; $('ct-code').placeholder = 'EAN / DUN del producto';
       body = (CT.lines.length ? CT.lines.map(function (l, i) {
-        return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(l.sku) + '</div><div class="cl-sub">' + esc((skuDef(CT.sid, l.sku) || {}).description || '') + '</div></div>'
+        return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(l.sku) + '</div>' + pdsc(l.sku, CT.sid, 'cl-d') + '</div>'
           + '<div class="pl-q"><button class="mini" data-ctm="' + i + '">−</button><b>' + l.qty + '</b><button class="mini" data-ctp="' + i + '">+</button></div><button class="cl-x" data-ctx="' + i + '" title="Quitar">✕</button>'
           + (ctLotc(l.sku) ? '<input class="cl-lot" data-ctlot="' + i + '" placeholder="Lote (obligatorio)" value="' + esc(l.lot || '') + '">' : '') + '</div>';
       }).join('') : '<div class="pk-empty">Aún no registras productos. Si la ubicación está vacía, confirma el conteo así.</div>')
         + '<div class="sec" style="margin-top:12px">Agregar producto a mano</div><div id="ct-cat"></div>';
     } else {
-      ctx = '<b>Cuenta ' + esc(CT.sku) + ' en cada ubicación</b>' + esc((skuDef(CT.sid, CT.sku) || {}).description || '') + ' · Indica cuántas unidades hay en cada una. Si lo encuentras en otra ubicación, escanéala para sumarla.';
+      ctx = '<b>Cuenta ' + esc(CT.sku) + ' en cada ubicación</b>' + pdsc(CT.sku, CT.sid, 'cl-d') + 'Indica cuántas unidades hay en cada una. Si lo encuentras en otra ubicación, escanéala para sumarla.';
       $('ct-label').textContent = 'Escanea una ubicación (o el producto para sumar 1)'; $('ct-code').placeholder = 'Ubicación o EAN';
       body = (CT.rows.length ? CT.rows.map(function (r, i) {
         var l = LOC_BY_ID[r.locationId];
@@ -2264,7 +2452,7 @@
     if (CT.mode === 'SKU' && loc) { bip(true); ctAddLoc(loc); return; }
     resolveCode(CT.sid, code).then(function (r) {
       if (CT.mode === 'SKU') {
-        if (r.sku !== CT.sku) { bip(false); toast('Ese es ' + r.sku + ', este conteo es de ' + CT.sku, false); return; }
+        if (r.sku !== CT.sku) { bip(false); toast('Ese es ' + skuTxt(r.sku, CT.sid) + ', este conteo es de ' + skuTxt(CT.sku, CT.sid), false); return; }
         if (CT.sel == null || !CT.rows[CT.sel]) { bip(false); toast('Primero escanea o toca la ubicación donde estás contando', false); return; }
         CT.rows[CT.sel].qty += r.factor; CT.rows[CT.sel].touched = true; bip(true); CT.armed = false; renderCount(); return;
       }
@@ -2275,7 +2463,7 @@
     if (!CT || CT.busy) return;
     var falta = CT.mode === 'LOC' ? CT.lines.filter(function (l) { return l.qty > 0 && ctLotc(l.sku) && !String(l.lot || '').trim(); })[0]
       : CT.rows.filter(function (r) { return r.qty > 0 && ctLotc(CT.sku) && !String(r.lot || '').trim(); })[0];
-    if (falta) { toast('Falta el lote de ' + (falta.sku || CT.sku) + ': ese producto se controla por lote', false); return; }
+    if (falta) { toast('Falta el lote de ' + skuTxt(falta.sku || CT.sku, CT.sid) + ': ese producto se controla por lote', false); return; }
     if (CT.mode === 'SKU' && !CT.rows.length) { toast('Agrega al menos una ubicación', false); return; }
     if (!CT.armed) { CT.armed = true; renderCount(); return; }
     CT.busy = true; $('ct-go').disabled = true; $('ct-go').textContent = 'Registrando…';
@@ -2291,7 +2479,7 @@
     var vars = []; CT.done.forEach(function (r) { (r.variances || []).forEach(function (v) { vars.push(v); }); });
     $('ct-ctx').innerHTML = '';
     $('ct-body').innerHTML = '<div class="resbox"><div class="rb-t">' + (vars.length ? '⚠️ Conteo registrado con diferencias' : '✓ Conteo registrado: todo calza') + '</div>'
-      + (vars.length ? vars.map(function (v) { var l = LOC_BY_ID[v.locationId]; return '<div class="kv"><span>' + esc(v.sku) + (v.lot ? ' · ' + esc(v.lot) : '') + ' @ ' + esc(l ? l.code : v.locationId) + '</span><b style="color:' + (v.delta < 0 ? 'var(--crit)' : 'var(--good)') + '">' + (v.delta > 0 ? '+' : '') + v.delta + '</b></div>'; }).join('')
+      + (vars.length ? vars.map(function (v) { var l = LOC_BY_ID[v.locationId]; return '<div class="kv"><span>' + esc(v.sku) + (v.lot ? ' · ' + esc(v.lot) : '') + ' @ ' + esc(l ? l.code : v.locationId) + pdsc(v.sku, CT.sid, 'blk') + '</span><b style="color:' + (v.delta < 0 ? 'var(--crit)' : 'var(--good)') + '">' + (v.delta > 0 ? '+' : '') + v.delta + '</b></div>'; }).join('')
         + '<div class="muted" style="font-size:12.5px">El inventario quedó ajustado a lo contado y las diferencias quedan en el kardex.</div>' : '')
       + '</div><button class="btn" id="ct-next">' + (CT.task ? 'Volver a los conteos' : 'Contar otra ubicación') + '</button><button class="btn alt" id="ct-home">Volver al inicio</button>';
     $('ct-next').addEventListener('click', function () { if (CT.task) openTaskStation('count'); else openCount(null, { free: true }); });
@@ -2368,7 +2556,7 @@
     var html = (r.lines || []).map(function (l) {
       var x = RT.inc[l.sku] || { s: 0, m: 0, q: 0 };
       var dc = function (k, lbl) { return '<div class="dcol"><div class="dl">' + lbl + '</div><div class="dq"><button class="mini" data-rtm="' + esc(l.sku) + '|' + k + '">−</button><b>' + x[k] + '</b><button class="mini" data-rtp="' + esc(l.sku) + '|' + k + '">+</button></div></div>'; };
-      return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(l.sku) + '</div><div class="cl-sub">Salió ' + l.expectedQty + ' · ya dispuesto: stock ' + l.toStock + ' · merma ' + l.toMerma + ' · cuarentena ' + l.toQuarantine + '</div></div>'
+      return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(l.sku) + '</div>' + pdsc(l.sku, r.sellerId, 'cl-d') + '<div class="cl-sub">Salió ' + l.expectedQty + ' · ya dispuesto: stock ' + l.toStock + ' · merma ' + l.toMerma + ' · cuarentena ' + l.toQuarantine + '</div></div>'
         + '<div class="disp">' + dc('s', 'Stock') + dc('m', 'Merma') + dc('q', 'Cuarentena') + '</div></div>';
     }).join('');
     html += '<div class="muted" style="font-size:12.5px;margin-top:6px">Stock: vuelve a la venta. Merma: dañado. Cuarentena: en revisión.</div>';
@@ -2413,7 +2601,7 @@
       // Dentro de una devolución: el código es un producto que vuelve → suma a Stock.
       resolveCode(RT.ret.sellerId, code).then(function (x) {
         var en = (RT.ret.lines || []).some(function (l) { return l.sku === x.sku; });
-        if (!en) { bip(false); toast(x.sku + ' no salió en esta orden', false); return; }
+        if (!en) { bip(false); toast(skuTxt(x.sku, RT.ret.sellerId) + ' no salió en esta orden', false); return; }
         bip(true); rtBump(x.sku, 's', x.factor);
       }).catch(function (err) { bip(false); toast(err.message, false); });
       return;
@@ -2450,12 +2638,12 @@
     $('kt-sub').textContent = KT.kits.length + ' kit(s) armables';
     $('kt-body').innerHTML = KT.kits.length ? KT.kits.map(function (x, i) {
       return '<button class="ordc" data-kti="' + i + '"><div class="oc-main"><div class="oc-ref">' + esc(x.k.sku) + '</div><div class="oc-meta">' + esc(sellerNom(x.sellerId)) + ' · ' + esc(x.k.description || '') + '</div>'
-        + '<div class="oc-meta">' + x.k.components.map(function (c) { return c.qty + '× ' + esc(c.sku); }).join(' + ') + '</div></div><span class="oc-go">Armar ›</span></button>';
+        + '<div class="oc-meta">' + x.k.components.map(function (c) { return c.qty + '× ' + esc(skuTxt(c.sku, x.sellerId)); }).join(' + ') + '</div></div><span class="oc-go">Armar ›</span></button>';
     }).join('') : '<div class="pk-empty">No hay kits armables (con stock propio) configurados.</div>';
   }
   function ktSelect(x) {
     KT.kit = x; KT.qty = 1; KT.pref = {}; KT.dest = null; KT.stock = {}; KT.armed = false;
-    $('kt-title').textContent = 'Armar ' + x.k.sku; $('kt-sub').textContent = sellerNom(x.sellerId);
+    $('kt-title').textContent = 'Armar ' + skuTxt(x.k.sku, x.sellerId); $('kt-sub').textContent = sellerNom(x.sellerId);
     $('kt-label').textContent = 'Escanea la ubicación de destino del kit'; $('kt-code').placeholder = 'Código de ubicación';
     $('kt-body').innerHTML = '<div class="pk-empty">Buscando componentes…</div>';
     Promise.all(x.k.components.map(function (c) {
@@ -2472,7 +2660,7 @@
       var bk = (KT.stock[c.sku] || []).slice();
       var p = KT.pref[c.sku]; if (p) bk.sort(function (a, b) { return (a.locationId + '|' + a.lot === p ? -1 : 0) - (b.locationId + '|' + b.lot === p ? -1 : 0); });
       bk.forEach(function (b) { if (need <= 0) return; var t = Math.min(need, b.qty); out.push({ sku: c.sku, locationId: b.locationId, lot: b.lot, qty: t }); need -= t; });
-      plan[c.sku] = out; if (need > 0) falta.push(c.sku + ' (faltan ' + need + ')');
+      plan[c.sku] = out; if (need > 0) falta.push(skuTxt(c.sku, KT.kit.sellerId) + ' (faltan ' + need + ')');
     });
     return { plan: plan, falta: falta };
   }
@@ -2483,7 +2671,7 @@
       + '<div class="sec" style="margin-top:8px">De dónde sale cada componente · toca para preferir una ubicación</div>'
       + x.k.components.map(function (c) {
         var src = pl.plan[c.sku] || [];
-        return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(c.sku) + ' · ' + (c.qty * KT.qty) + ' un</div><div class="cl-sub">' + (src.length ? src.map(function (s) { return esc((LOC_BY_ID[s.locationId] || {}).code || s.locationId) + (s.lot ? ' (lote ' + esc(s.lot) + ')' : '') + ' ×' + s.qty; }).join(' + ') : 'Sin stock disponible') + '</div></div>'
+        return '<div class="cl"><div class="cl-main"><div class="cl-sku">' + esc(c.sku) + ' · ' + (c.qty * KT.qty) + ' un</div>' + pdsc(c.sku, x.sellerId, 'cl-d') + '<div class="cl-sub">' + (src.length ? src.map(function (s) { return esc((LOC_BY_ID[s.locationId] || {}).code || s.locationId) + (s.lot ? ' (lote ' + esc(s.lot) + ')' : '') + ' ×' + s.qty; }).join(' + ') : 'Sin stock disponible') + '</div></div>'
           + '<div class="locpick">' + (KT.stock[c.sku] || []).map(function (b) { var k = b.locationId + '|' + b.lot; return '<button class="chip' + (KT.pref[c.sku] === k ? ' on' : '') + '" data-ktpref="' + esc(c.sku) + '" data-ktk="' + esc(k) + '">' + esc((LOC_BY_ID[b.locationId] || {}).code || b.locationId) + (b.lot ? ' · ' + esc(b.lot) : '') + ' · ' + b.qty + '</button>'; }).join('') + '</div></div>';
       }).join('')
       + (pl.falta.length ? '<div class="banner" style="margin:0">No alcanza: ' + esc(pl.falta.join(', ')) + '</div>' : '')
@@ -2516,7 +2704,7 @@
         KT.busy = false; bip(true);
         var dl = LOC_BY_ID[KT.dest];
         $('kt-scan').style.display = 'none';
-        $('kt-body').innerHTML = '<div class="resbox"><div class="rb-t">✓ ' + KT.qty + ' kit(s) ' + esc(KT.kit.k.sku) + ' armado(s)</div><div class="muted">Quedaron en ' + esc(dl ? dl.code : '') + '. Los componentes se descontaron de sus ubicaciones.</div></div>'
+        $('kt-body').innerHTML = '<div class="resbox"><div class="rb-t">✓ ' + KT.qty + ' kit(s) ' + esc(skuTxt(KT.kit.k.sku, KT.kit.sellerId)) + ' armado(s)</div><div class="muted">Quedaron en ' + esc(dl ? dl.code : '') + '. Los componentes se descontaron de sus ubicaciones.</div></div>'
           + '<button class="btn" id="kt-again">Armar otro</button><button class="btn alt" id="kt-home">Volver al inicio</button>';
         $('kt-again').addEventListener('click', openKits); $('kt-home').addEventListener('click', function () { show('home'); });
         toast('Kit armado', true);
@@ -2546,7 +2734,109 @@
   $('btn-ktback').addEventListener('click', function () { if (KT.kit) { openKits(); return; } show('home'); });
 
 
+  // =====================================================================
+  // CANAL EN VIVO (WebSocket) → el panel ve qué tarea tiene tomada cada operario
+  // y cuánto lleva. La app avisa al entrar a una tarea, en cada avance y al salir.
+  // Si el socket no está disponible la app sigue igual (es un extra, no un requisito).
+  // =====================================================================
+  var LV = { ws: null, cur: null, timer: null, retry: 0, closing: false };
+  function liveUrl() { return apiBase().replace(/^http/i, 'ws') + '/ws?token=' + encodeURIComponent(cfg.token || ''); }
+  function liveConnect() {
+    if (!cfg.token || typeof WebSocket === 'undefined') return;
+    if (LV.ws && (LV.ws.readyState === 0 || LV.ws.readyState === 1)) return;
+    LV.closing = false;
+    try { LV.ws = new WebSocket(liveUrl()); } catch (e) { return; }
+    LV.ws.onopen = function () { LV.retry = 0; liveFlush(); };
+    LV.ws.onclose = function () {
+      LV.ws = null;
+      if (LV.closing || !cfg.token) return;
+      var wait = Math.min(30000, 2000 * Math.pow(2, LV.retry++));   // reintento con espera creciente
+      setTimeout(liveConnect, wait);
+    };
+    LV.ws.onerror = function () { /* onclose se encarga */ };
+    if (!LV.timer) LV.timer = setInterval(function () {
+      // Latido: reenvía lo que está haciendo (el servidor olvida presencias sin latido).
+      if (LV.ws && LV.ws.readyState === 1) { if (LV.cur) liveFlush(); else liveSend({ t: 'ping' }); }
+    }, 20000);
+  }
+  function liveClose() {
+    LV.closing = true; LV.cur = null;
+    if (LV.ws) { try { LV.ws.send(JSON.stringify({ t: 'idle' })); LV.ws.close(); } catch (e) {} }
+    LV.ws = null;
+  }
+  function liveSend(m) { if (LV.ws && LV.ws.readyState === 1) { try { LV.ws.send(JSON.stringify(m)); } catch (e) {} } }
+  function liveFlush() { liveSend(LV.cur ? { t: 'working', items: LV.cur } : { t: 'idle' }); }
+  function liveWorking(items) { LV.cur = (items || []).filter(function (x) { return x && x.entityId; }); if (!LV.cur.length) LV.cur = null; liveFlush(); }
+  function liveIdle() { if (!LV.cur) return; LV.cur = null; liveSend({ t: 'idle' }); }
+  /** Tarea de la bandeja en curso + avance en unidades (picking y recepción lo saben exacto). */
+  function liveTask() {
+    var t = task; if (!t) return;
+    var done = null, total = null;
+    if (t.type === 'PICK' && t.picklist) {
+      done = t.picklist.reduce(function (a, l) { return a + (l.pickedQty || 0); }, 0);
+      total = t.picklist.reduce(function (a, l) { return a + (l.qty || 0); }, 0);
+    } else if (t.type === 'RECEIVE' && t.receipt) {
+      done = (t.receipt.lines || []).reduce(function (a, l) { return a + (l.receivedQty || 0); }, 0);
+      total = (t.receipt.lines || []).reduce(function (a, l) { return a + (l.expectedQty || 0); }, 0);
+    } else {
+      done = t._done || 0; total = t.unitsEstimate || null;
+    }
+    liveWorking([{ type: t.type, entityId: t.entityId, ref: t.entityRef || null, sellerId: t.sellerId || null, done: done, total: total, unit: 'un' }]);
+  }
+
+
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  // ---- Producto = SKU + descripción, en TODAS las pantallas ------------------
+  // Las líneas de órdenes, recepciones, tareas, etc. solo traen el SKU; la descripción
+  // sale del maestro de productos del cliente (se trae una vez por cliente, incluidos los
+  // inactivos para no dejar huecos). `pdsc` pinta la descripción si ya se conoce y, si no,
+  // deja un hueco marcado que se rellena solo apenas llega el maestro.
+  var DESC = {}, DESC_PEND = {};
+  function learnSkus(sellerId, list) {
+    (list || []).forEach(function (k) {
+      if (!k || !k.sku) return;
+      var d = k.description || '';
+      if (sellerId) DESC[sellerId + '|' + k.sku] = d;
+      if (DESC['*|' + k.sku] == null) DESC['*|' + k.sku] = d;
+    });
+    fillDescs();
+  }
+  function wantSkus(sellerId) {
+    if (!sellerId || DESC_PEND[sellerId]) return;
+    DESC_PEND[sellerId] = 1;
+    skuList(sellerId).catch(function () { DESC_PEND[sellerId] = 0; });   // skuList alimenta DESC
+  }
+  function descOf(sku, sellerId) {
+    if (!sku) return '';
+    var d = sellerId ? DESC[sellerId + '|' + sku] : null;
+    if (d == null) d = DESC['*|' + sku];
+    if (d == null) { if (sellerId) wantSkus(sellerId); else (SELLERS || []).forEach(function (s) { wantSkus(s.id); }); }
+    return d || '';
+  }
+  /** Descripción del producto como elemento HTML (se auto-rellena si aún no está). */
+  function pdsc(sku, sellerId, cls) {
+    return '<span class="pdsc' + (cls ? ' ' + cls : '') + '" data-dsku="' + esc(sku) + '" data-dsel="' + esc(sellerId || '') + '">' + esc(descOf(sku, sellerId)) + '</span>';
+  }
+  /** «SKU · descripción» en texto plano (toasts, subtítulos). */
+  function skuTxt(sku, sellerId) { var d = descOf(sku, sellerId); return d ? sku + ' · ' + d : String(sku || ''); }
+  function fillDescs() {
+    Array.prototype.forEach.call(document.querySelectorAll('.pdsc'), function (el) {
+      if (el.textContent) return;
+      var d = descOf(el.getAttribute('data-dsku'), el.getAttribute('data-dsel') || null);
+      if (d) el.textContent = d;
+    });
+  }
+  /** SKU y cliente de una tarea por producto (guardado, re-slot, reposición, conteo por SKU). */
+  function taskSku(t) {
+    if (!t) return null;
+    var p = String(t.entityId || '').split(':');
+    if ((t.type === 'PUTAWAY' || t.type === 'RESLOT' || t.type === 'RESTOCK') && p.length >= 3) return { sellerId: p[0], sku: p[1] };
+    if (t.type === 'COUNT' && p.length >= 2 && !LOC_BY_ID[p.slice(1).join(':')]) return { sellerId: p[0], sku: p.slice(1).join(':') };
+    return null;
+  }
+  /** Línea de descripción para la tarjeta de una tarea (vacía si la tarea no es de un producto). */
+  function taskDesc(t) { var k = taskSku(t); return k ? '<div class="pdl">' + pdsc(k.sku, k.sellerId) + '</div>' : ''; }
 
   // ---- Service worker -------------------------------------------------------
   if ('serviceWorker' in navigator) {

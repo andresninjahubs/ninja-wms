@@ -155,7 +155,29 @@ export class OperationService {
     return updated;
   }
 
-  async list(): Promise<Operation[]> {
-    return this.operations.list();
+  /** Operaciones vigentes (sin las eliminadas). Con `includeDeleted` trae todas. */
+  async list(opts?: { includeDeleted?: boolean }): Promise<Operation[]> {
+    const all = await this.operations.list();
+    return opts?.includeDeleted ? all : all.filter((o) => !o.deletedAt);
+  }
+
+  /** Borrado lógico: se oculta y se desactiva. Los datos quedan para restaurar o auditar. */
+  async softDelete(operationId: string, by: string, at: string): Promise<Operation> {
+    const op = await this.operations.findById(operationId);
+    if (!op) throw new NotFoundError(`Operación no encontrada: ${operationId}`);
+    if (op.deletedAt) throw new ValidationError(`La operación ${op.name || op.id} ya está eliminada.`);
+    const updated: Operation = { ...op, active: false, deletedAt: at, deletedBy: by };
+    await this.operations.save(updated);
+    return updated;
+  }
+
+  /** Deshace el borrado lógico: vuelve a aparecer y queda activa. */
+  async restore(operationId: string): Promise<Operation> {
+    const op = await this.operations.findById(operationId);
+    if (!op) throw new NotFoundError(`Operación no encontrada: ${operationId}`);
+    if (!op.deletedAt) throw new ValidationError(`La operación ${op.name || op.id} no está eliminada.`);
+    const updated: Operation = { ...op, active: true, deletedAt: null, deletedBy: null };
+    await this.operations.save(updated);
+    return updated;
   }
 }

@@ -1322,6 +1322,23 @@
 .rimp-skus{display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow:auto}
 .rimp-sku{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2);white-space:nowrap}
 .rimp-sku b{color:var(--ink);font-weight:700}
+/* Tareas en vivo desde la app (WebSocket) */
+.tlbdg{display:inline-flex;vertical-align:middle;margin-left:6px}
+.tlbdg:empty{display:none}
+.tlb{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap;background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line)}
+.tlb.on{background:color-mix(in srgb,var(--primary) 14%,transparent);border-color:color-mix(in srgb,var(--primary) 45%,transparent);color:var(--ink)}
+.tlb.on i{width:7px;height:7px;border-radius:50%;background:var(--primary);animation:tlpulse 1.6s infinite}
+.tlb.run{background:#EAF1FF;border-color:#C9D9FB;color:#2453B8}
+.tlb.asg{background:var(--surface-2);color:var(--ink-3)}
+.tlbar{display:inline-block;width:46px;height:5px;border-radius:999px;background:color-mix(in srgb,var(--ink) 12%,transparent);overflow:hidden}
+.tlbar em{display:block;height:100%;background:var(--primary);border-radius:999px;transition:width .4s}
+@keyframes tlpulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--primary) 60%,transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.tl-dot{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface);font-size:11.5px;font-weight:700;color:var(--ink-2);white-space:nowrap}
+.tl-dot.hidden{display:none}
+.tl-dot .d{width:8px;height:8px;border-radius:50%;background:var(--primary);animation:tlpulse 1.8s infinite}
+.tl-dot.off .d{background:var(--ink-3);animation:none}
+@media(max-width:1560px){.tl-dot .lbl{display:none}.tl-dot{padding:0 11px}}
+[data-theme="dark"] .tlb.run{background:#1C2B4A;border-color:#2C4170;color:#9DB8F5}
 /* Deadlines automáticos */
 .dlp-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
 @media(max-width:1000px){.dlp-grid{grid-template-columns:1fr}}
@@ -1591,7 +1608,7 @@
       <div class="tb-title"><h2 id="pg-title">Dashboard</h2><div class="sub" id="pg-sub">Resumen operativo</div></div>
       <div class="sp"></div>
       <button class="nt-topbtn hide" id="nt-topbtn" title="Tutorial guiado de esta sección"><span class="pl"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg></span><span class="lbl">Tutorial</span></button>
-      <button class="live-btn hidden" id="live-btn" type="button"><span class="dot"></span><span class="lbl">al día</span></button>
+      <button class="live-btn hidden" id="live-btn" type="button"><span class="dot"></span><span class="lbl">al día</span></button><span class="tl-dot hidden" id="tl-dot" title="Tareas en vivo desde la app del operario (WebSocket)"><span class="d"></span><span class="lbl">En vivo</span></span>
       <div class="gsearch"><span class="i"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span><input id="gq" placeholder="Buscar SKU, orden, ubicación…" autocomplete="off"><div class="res" id="gres"></div></div>
       <div class="sel" id="sess-wrap"><label>Sesión</label>
         <select id="session">
@@ -2520,7 +2537,7 @@
 
       <!-- Operaciones (solo plataforma) -->
       <section class="page" data-pg="operations">
-        <div class="toolbar"><span class="muted">Cada operación es un mundo aislado: sus bodegas, clientes, usuarios e inventario.</span><div class="sp" style="flex:1"></div><input id="ops-q" class="ops-q" type="search" placeholder="Buscar operación, contacto o email…"><div class="viewtog" id="ops-view"><button class="vt" data-view="list" title="Ver como listado">☰ Listado</button><button class="vt" data-view="cards" title="Ver como tarjetas">▦ Tarjetas</button></div><button class="btn" id="ops-nuevas">Nuevas por revisar</button><button class="btn pri hidden" id="ops-new">＋ Nueva operación</button></div>
+        <div class="toolbar"><span class="muted">Cada operación es un mundo aislado: sus bodegas, clientes, usuarios e inventario.</span><div class="sp" style="flex:1"></div><input id="ops-q" class="ops-q" type="search" placeholder="Buscar operación, contacto o email…"><div class="viewtog" id="ops-view"><button class="vt" data-view="list" title="Ver como listado">☰ Listado</button><button class="vt" data-view="cards" title="Ver como tarjetas">▦ Tarjetas</button></div><button class="btn" id="ops-nuevas">Nuevas por revisar</button><button class="btn hidden" id="ops-trash" title="Operaciones eliminadas (se pueden restaurar)">🗑 Eliminadas</button><button class="btn pri hidden" id="ops-new">＋ Nueva operación</button></div>
         <div class="grid2" id="ops-grid"></div>
         <div class="card hidden" id="ops-listwrap"><div class="tablewrap"><table id="ops-table"><thead><tr><th>Operación</th><th>Alta</th><th>Tipo</th><th>Contacto</th><th>Celular</th><th>Email</th><th>Origen</th><th>Estado</th><th data-action></th></tr></thead><tbody id="ops-body"></tbody></table></div></div>
       </section>

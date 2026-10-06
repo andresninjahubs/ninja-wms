@@ -113,6 +113,9 @@
     .cam video{width:100%;height:100%;object-fit:cover}
     .cam .frame{position:absolute;inset:18% 12%;border:3px solid rgba(255,255,255,.85);border-radius:14px;box-shadow:0 0 0 2000px rgba(0,0,0,.25)}
     .cam .laser{position:absolute;left:12%;right:12%;top:50%;height:2px;background:var(--signal);box-shadow:0 0 10px var(--signal)}
+    .cam.dock{aspect-ratio:16/9;max-height:26vh;margin-bottom:12px}
+    .cam.dock .frame{inset:14% 10%}
+    .cam.hit .frame{border-color:var(--signal);box-shadow:0 0 0 2000px rgba(0,0,0,.25),0 0 18px var(--signal)}
     .cam .hint{position:absolute;left:0;right:0;bottom:10px;text-align:center;font-size:12.5px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6)}
 
     /* El campo de código: entrada principal con pistola. Grande y con foco de marca,
@@ -270,6 +273,14 @@
     .pp:active{border-color:var(--primary);background:var(--primary-wash)}
     .pp .pp-main{flex:1;min-width:0}
     .pp .pp-sku{font-weight:800;font-size:14.5px}
+    /* Producto = SKU + descripción en todas las pantallas */
+    .pdsc:empty{display:none}
+    .pdsc.blk{display:block;font-size:12px;font-weight:500;color:var(--ink-3);margin-top:1px;white-space:normal;text-align:left}
+    .pdsc.pp-d{display:block;font-size:12.5px;font-weight:500;color:var(--ink-2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .pdsc.cl-d{display:block;font-size:12.5px;font-weight:500;color:var(--ink-2);margin-top:2px}
+    .pdl{font-size:12.5px;color:var(--ink-2);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .pdl:has(.pdsc:empty){display:none}
+    #r-sku{text-align:right}
     .pp .pp-sub{font-size:12px;color:var(--ink-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .pp .pp-q{flex:none;font-weight:800;font-size:13px;color:var(--primary-ink);background:var(--primary-wash);border-radius:999px;padding:4px 10px}
     .pp.done{opacity:.45}
@@ -302,6 +313,15 @@
     .disp .mini{width:30px;height:32px;font-size:16px;flex:none}
     .locpick{display:flex;flex-wrap:wrap;gap:6px;width:100%}
     .locpick .chip{height:32px;font-size:12.5px}
+    .tsf{flex-wrap:wrap;overflow:visible}
+    .tsf .chip{height:30px;font-size:12px;padding:0 11px}
+    .tsf .chip.on{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+    .tsf .chip.zero{opacity:.5}
+    .loc.sug{border-color:var(--primary-line);background:var(--primary-wash)}
+    .loc.sug.top{border:2px solid var(--primary);box-shadow:0 10px 22px -18px color-mix(in srgb, var(--primary) 90%, transparent)}
+    .loc.sug .lz{color:var(--primary-ink);font-weight:800}
+    .loc .lwhy{font-size:11.5px;color:var(--ink-3);font-weight:500}
+    .loc.sug .lq{background:var(--primary);color:var(--on-primary);border-radius:999px;padding:4px 10px;font-weight:800;font-size:12px}
     .dlc{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:800;background:var(--surface-3);color:var(--ink-2)}
     .dlc.v{background:#FDECEC;color:#B4232A}.dlc.r{background:#FFF4E0;color:#A35A00}
     .pk-empty{text-align:center;color:var(--ink-3);padding:26px 10px;background:var(--surface);border:1px dashed var(--line-2);border-radius:16px}
@@ -460,6 +480,12 @@
           <button class="btn alt" id="btn-mresolve" type="submit">Buscar código</button>
         </form>
 
+        <!-- Acciones de la tarea: SIEMPRE a mano (no solo después de confirmar algo). -->
+        <div id="taskacts" style="display:none;flex-direction:column;gap:10px">
+          <button class="btn alt" id="ta-close" style="display:none">Cerrar recepción con faltante</button>
+          <button class="btn alt" id="ta-finish">Terminar y volver a mis tareas</button>
+        </div>
+
         <!-- Selección MANUAL del producto (sin escanear): se toca en la lista. -->
         <div id="prodpick" style="display:none"></div>
 
@@ -519,6 +545,8 @@
           <button class="chip on" data-tst="mine"><span id="ts-lmine">Asignadas a mí</span> · <span id="ts-cmine">0</span></button>
           <button class="chip" data-tst="free">Libres · <span id="ts-cfree">0</span></button>
         </div>
+        <!-- Filtro por tipo de tarea (solo en la estación de Guardado). -->
+        <div class="chips tsf" id="ts-types" style="display:none"></div>
         <div id="ts-list"></div>
         <button class="btn alt" id="ts-loose" style="margin-top:6px">—</button>
       </div>
@@ -625,6 +653,7 @@
         <button class="iconbtn" id="btn-pkcam" title="Leer con la cámara"></button>
       </header>
       <div class="body">
+        <div class="cam dock" id="pk-cam" style="display:none"><video playsinline muted></video><div class="frame"></div><div class="laser"></div><div class="hint">Iniciando cámara…</div></div>
         <form class="scanbar" id="pk-scan" autocomplete="off">
           <label for="pk-code" id="pk-label">Escanea o escribe el N° de orden</label>
           <div class="scanrow"><input id="pk-code" class="code" placeholder="N° de orden" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>

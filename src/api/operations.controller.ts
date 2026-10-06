@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { WmsFacade } from '../app/wms.facade';
 import { CreateOperationDto, DeadlineConfigDto, UpdateBrandingDto, UpdateOperationDto } from './dto';
 import { RequirePermission } from './auth/permissions.decorator';
@@ -39,6 +39,27 @@ export class OperationsController {
   reviewSignups(@Body() body: { ids?: string[] }, @CurrentUser() user: User) {
     const ids = Array.isArray(body?.ids) ? body.ids.filter((x) => typeof x === 'string').slice(0, 200) : [];
     return this.wms.markSignupsReviewed(ids, actorOf(user));
+  }
+
+  /** Papelera: operaciones eliminadas (solo plataforma). Ruta estática: va antes de :operationId. */
+  @Get('deleted')
+  @RequirePermission('operation:manage')
+  deleted() {
+    return this.wms.listDeletedOperations();
+  }
+
+  /** Eliminar una operación (borrado lógico; exige escribir su nombre en `confirm`). */
+  @Delete(':operationId')
+  @RequirePermission('operation:manage')
+  remove(@Param('operationId') operationId: string, @Body() body: { confirm?: string }, @CurrentUser() user: User | null) {
+    return this.wms.deleteOperation(operationId, user ? { id: user.id, operationId: user.operationId ?? null } : null, body?.confirm || '');
+  }
+
+  /** Restaurar una operación eliminada. */
+  @Post(':operationId/restore')
+  @RequirePermission('operation:manage')
+  restore(@Param('operationId') operationId: string) {
+    return this.wms.restoreOperation(operationId);
   }
 
   /** Editar nombre / activar-desactivar una operación (solo plataforma). */

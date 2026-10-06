@@ -233,7 +233,7 @@
     if(!email||!pass){$("#lg-err").textContent="Ingresa tu email y contraseña.";return;}
     api('/auth/login',{method:'POST',body:{email:email,password:pass}}).then(function(r){
       if(!r.authenticated){$("#lg-err").textContent=r.detail||"Email o contraseña incorrectos.";return;}
-      token=r.token; me=r.user; role=me.role;   // token = JWT firmado
+      token=r.token; me=r.user; role=me.role; setTimeout(tlConnect,500);   // token = JWT firmado
       $("#lg-pass").value="";
       entrarAlWms(function(){ $("#loginov").classList.add("off"); init(); });
     }).catch(function(e){$("#lg-err").textContent="No se pudo conectar: "+e.message;});
@@ -828,7 +828,7 @@
         .catch(function(e){$("#br-save").disabled=false;$("#br-err").textContent=e.message;});
     });
   }
-  $("#op").addEventListener("change",function(){op=this.value;seller=null;loadOp().catch(err);});
+  $("#op").addEventListener("change",function(){op=this.value;seller=null;tlSub();loadOp().catch(err);});
   $("#seller").addEventListener("change",function(){
     if(this.value==='__all__'){ mcEnter(); return; }
     mcMode=false; seller=this.value;
@@ -926,6 +926,89 @@
   setInterval(function(){ liveRefresh(false); paintLive(); },5000);
   document.addEventListener('visibilitychange',function(){ if(!document.hidden&&Date.now()-liveLast>8000)liveRefresh(true); });
   if($("#live-btn"))$("#live-btn").addEventListener('click',function(){ liveRefresh(true); });
+
+
+  // ---- Tareas EN VIVO (WebSocket) -------------------------------------------
+  // La app del operario avisa por WebSocket qué tarea tiene tomada y cuánto lleva; el
+  // servidor además difunde cada cambio de asignación. Aquí se guarda ese estado y se
+  // pinta un indicador en cada fila de los flujos (recepción, conteo, picking, packing,
+  // despacho, almacenado). No recarga tablas: solo rellena los <span data-lk>.
+  var TL={ws:null,asg:{},pres:{},retry:0,ok:false,closing:false};
+  var TL_VIEWER={ADMIN:1,SUPERVISOR:1,PLATFORM_ADMIN:1};
+  function tlConnect(){
+    if(!token||!TL_VIEWER[role]||typeof WebSocket==='undefined')return;
+    if(TL.ws&&(TL.ws.readyState===0||TL.ws.readyState===1))return;
+    TL.closing=false;
+    try{TL.ws=new WebSocket(API.replace(/^http/i,'ws')+'/ws?token='+encodeURIComponent(token));}catch(e){return;}
+    TL.ws.onopen=function(){TL.retry=0;TL.ok=true;tlSub();};
+    TL.ws.onmessage=function(ev){var m;try{m=JSON.parse(ev.data);}catch(e){return;}tlOnMsg(m);};
+    TL.ws.onclose=function(){TL.ws=null;TL.ok=false;TL.subOp=null;paintTaskLive();if(TL.closing||!token)return;setTimeout(tlConnect,Math.min(30000,2000*Math.pow(2,TL.retry++)));};
+  }
+  function tlClose(){TL.closing=true;if(TL.ws){try{TL.ws.close();}catch(e){}}TL.ws=null;TL.asg={};TL.pres={};}
+  /** Suscribe el panel a la operación que se está mirando (el super admin la elige arriba). */
+  function tlSub(){ if(TL.ws&&TL.ws.readyState===1&&op){TL.subOp=op;TL.asg={};TL.pres={};try{TL.ws.send(JSON.stringify({t:'sub',operationId:op}));}catch(e){}} }
+  // La operación puede quedar definida después de conectar (o cambiar): se resuscribe solo.
+  setInterval(function(){ if(TL.ws&&TL.ws.readyState===1&&op&&TL.subOp!==op)tlSub(); },2000);
+  function tlOnMsg(m){
+    if(!m||m.operationId&&m.operationId!==op)return;
+    if(m.t==='snap'){
+      TL.asg={}; (m.asignaciones||[]).forEach(function(a){TL.asg[a.key]=a;});
+      TL.pres={}; (m.presence||[]).forEach(function(p){TL.pres[p.operator]=p;});
+    }else if(m.t==='asg'){
+      if(m.status==='assigned'||m.status==='in_progress')TL.asg[m.key]=m; else delete TL.asg[m.key];
+    }else if(m.t==='pres'){
+      var sig=function(p){return p?(p.items||[]).map(function(i){return i.type+i.entityId+':'+i.done;}).join(','):'';};
+      var antes=sig(TL.pres[m.operator]);
+      if(!m.items||!m.items.length)delete TL.pres[m.operator]; else TL.pres[m.operator]=m;
+      paintTaskLive();
+      if(sig(TL.pres[m.operator])!==antes)tlKick();   // el latido sin cambios no recarga nada
+      return;
+    }else return;
+    paintTaskLive();
+    if(m.t!=='snap')tlKick();
+  }
+  // Un cambio en vivo (empezó, avanzó, terminó) también cambia estados y cantidades de
+  // la tabla: se recargan los datos de la página abierta, agrupando ráfagas en una sola.
+  var tlKickT=null;
+  function tlKick(){
+    clearTimeout(tlKickT);
+    tlKickT=setTimeout(function(){
+      var pg=activePg(); if(!pg||document.hidden)return;
+      if(document.querySelector('#modal.on,#drawer.on'))return;
+      if(document.activeElement&&/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)&&document.activeElement.closest('.content'))return;
+      if(pg==='orders'||pg==='pickqueue'){ if(typeof recargaOrdenes==='function')recargaOrdenes(); else loadSeller(); }
+      else if(pg==='inbound'||pg==='putaway'||pg==='counts'){ loadSeller(); }
+    },3000);
+  }
+  function tlHace(iso){var s=Math.max(0,Math.round((Date.now()-Date.parse(iso))/1000));return s<60?'recién':s<3600?Math.round(s/60)+' min':Math.round(s/3600)+' h';}
+  /** Estado en vivo de la primera clave que tenga algo (presencia manda sobre asignación). */
+  function tlFor(keys){
+    for(var i=0;i<keys.length;i++){
+      for(var op2 in TL.pres){var p=TL.pres[op2];for(var j=0;j<(p.items||[]).length;j++){var it=p.items[j];if(it.type+':'+it.entityId===keys[i])return {live:true,name:p.name,item:it,since:p.since};}}
+    }
+    for(var k=0;k<keys.length;k++){if(TL.asg[keys[k]])return {live:false,a:TL.asg[keys[k]]};}
+    return null;
+  }
+  var TL_VERBO={PICK:'pickeando',PACK:'empacando',SHIP:'despachando',RECEIVE:'recibiendo',COUNT:'contando',PUTAWAY:'guardando',RESTOCK:'reponiendo',RESLOT:'reubicando'};
+  function tlBadge(keys){
+    var r=tlFor(keys); if(!r)return '';
+    if(r.live){
+      var it=r.item, prog='', bar='';
+      if(it.done!=null&&it.total){var pct=Math.max(0,Math.min(100,Math.round(it.done*100/it.total)));prog=' · '+it.done+'/'+it.total+' '+esc(it.unit||'un');bar='<b class="tlbar"><em style="width:'+pct+'%"></em></b>';}
+      else if(it.done!=null&&it.done>0)prog=' · '+it.done+' '+esc(it.unit||'un');
+      return '<span class="tlb on" title="En vivo desde la app · desde hace '+esc(tlHace(r.since))+'"><i></i>'+esc(r.name)+' '+esc(TL_VERBO[it.type]||'trabajando')+prog+bar+'</span>';
+    }
+    var a=r.a;
+    return a.status==='in_progress'
+      ? '<span class="tlb run" title="Tarea en curso'+(a.startedAt?' desde hace '+esc(tlHace(a.startedAt)):'')+'">'+esc(a.name)+' · en curso</span>'
+      : '<span class="tlb asg" title="Asignada, aún sin empezar">Tomada por '+esc(a.name)+'</span>';
+  }
+  function tlSpan(keys){return '<span class="tlbdg" data-lk="'+esc(keys.join('|'))+'">'+tlBadge(keys)+'</span>';}
+  function paintTaskLive(){
+    $$('.tlbdg[data-lk]').forEach(function(el){var h=tlBadge(el.getAttribute('data-lk').split('|'));if(el.innerHTML!==h)el.innerHTML=h;});
+    var d=$("#tl-dot"); if(d){var n=Object.keys(TL.pres).length;d.classList.toggle('hidden',!TL_VIEWER[role]);d.classList.toggle('off',!TL.ok);d.querySelector('.lbl').textContent=TL.ok?(n?n+' operario(s) trabajando':'En vivo'):'Sin conexión en vivo';}
+  }
+  setInterval(paintTaskLive,30000);
 
   // ---- Render ---------------------------------------------------------------
   function renderAll(){ CG.cargadoDe=null; renderConsignees(); renderOpMetrics();renderAlerts();renderKpis();renderZone();renderActivity();renderMovements();renderInv();renderProducts();renderPackaging();renderOrdFilters();renderOrders();renderPickQueue();renderInbound();renderReturns();renderPutaway();renderAssembly();renderLocations();renderCounts();renderBilling();renderClients();renderUsers();renderOps();chatPoll();pollAnnouncement();syncWebhookNav();injectTableExporters();renderOnboarding(); }
@@ -4275,7 +4358,7 @@
         +'</div>';
       var selCell=bulkEnabled()?'<td class="selcol"><input type="checkbox" class="bulk-ck" data-bk="'+o.id+'" '+(bulkSel[o.id]?'checked':'')+' aria-label="Seleccionar orden"></td>':'';
       var cliCell=ordMulti()?'<td class="ordcli"><span class="ordcli-n">'+esc(ordSellerName(o))+'</span></td>':'';
-      return '<tr class="click'+(bulkSel[o.id]?' selected':'')+'" data-o="'+o.id+'">'+selCell+'<td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td>'+cliCell+'<td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td style="white-space:nowrap">'+dlChip(o)+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span></td><td style="text-align:right">'+acts+'</td></tr>';
+      return '<tr class="click'+(bulkSel[o.id]?' selected':'')+'" data-o="'+o.id+'">'+selCell+'<td class="mono2">'+esc(o.externalOrderId||o.id.slice(0,8))+'</td>'+cliCell+'<td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td style="white-space:nowrap">'+dlChip(o)+'</td><td>'+esc(CH_LABEL[o.salesChannel]||o.salesChannel)+'</td><td>'+esc((o.orderType||"").toUpperCase())+'</td><td>'+o.lines.length+' línea(s) · '+q+' un</td><td><span class="chip st-'+o.status+'"><span class="dot"></span>'+STN[o.status]+'</span>'+tlSpan(['PICK:'+o.id,'PACK:'+o.id,'SHIP:'+o.id])+'</td><td style="text-align:right">'+acts+'</td></tr>';
     }).join(""):'<tr><td colspan="'+((bulkEnabled()?9:8)+(ordMulti()?1:0))+'" class="empty">'+(ordDayFilter?'No hay órdenes con deadline '+(ordDayFilter==='SIN'?'sin definir':ordDayFilter==='PAST'?'en días anteriores':ordDayFilter==='LATER'?'más adelante':'el '+ordDiaLabel(ordDayFilter).toLowerCase())+' en este estado.':ordFilter==='DL_VENCIDO'?'Ninguna orden pendiente pasó su deadline. 🎉':ordFilter==='DL_RIESGO'?'Ninguna orden pendiente está cerca de su deadline.':'Sin órdenes en este estado.')+'</td></tr>';
     var selTh=$("#ord-selall"); if(selTh)selTh.closest('th').classList.toggle('hidden',!bulkEnabled());
     var selM=$("#ord-selall-m"); if(selM)selM.classList.toggle('hidden',!bulkEnabled()||!os.length);
@@ -4510,7 +4593,7 @@
       return '<div class="card" style="display:flex;align-items:center;gap:14px;padding:12px;margin-bottom:8px">'
         +'<div style="font-size:20px;font-weight:800;min-width:34px;text-align:center;color:var(--ink-3)">'+(i+1)+'</div>'
         +'<div style="flex:1"><div style="font-weight:700">'+esc(o.externalOrderId||o.id.slice(0,8))
-          +(inprog?' <span class="chip st-PICKING" style="font-size:10px">EN PICKING</span>':'')+'</div>'
+          +(inprog?' <span class="chip st-PICKING" style="font-size:10px">EN PICKING</span>':'')+tlSpan(['PICK:'+o.id])+'</div>'
           +'<div class="muted" style="font-size:12px">'
           +(o.carrier?('Courier: <b>'+esc(o.carrier)+'</b> · '):'Sin courier · ')
           +units+' un · '+(o.lines||[]).length+' línea(s) · '+esc(fmtDate(o.createdAt))
@@ -5839,7 +5922,7 @@
       var uCol=(o.status==="PENDING"||o.status==="ARRIVED")?('<span class="muted">0 / '+esperado+'</span>'):(recibido+' / '+esperado);
       return '<tr class="click" data-rrow="'+esc(o.id)+'"><td class="mono2">'+esc(o.id)+'</td><td>'+esc(o.supplier||"—")+'</td><td>'+esc(o.reference||"—")+'</td>'
         +'<td class="muted" style="white-space:nowrap">'+esc(fmtDate(o.createdAt))+'</td><td><span class="loc-chip">'+esc(code(o.locationId))+'</span></td>'
-        +'<td>'+(o.lines?o.lines.length:0)+'</td><td>'+recEstadoChip(o)+'</td><td class="num">'+uCol+'</td>'
+        +'<td>'+(o.lines?o.lines.length:0)+'</td><td>'+recEstadoChip(o)+tlSpan(['RECEIVE:'+o.id])+'</td><td class="num">'+uCol+'</td>'
         +'<td><div class="card-actions" style="justify-content:flex-end">'+acts+'</div></td></tr>';
     }).join(""):'<tr><td colspan="9" class="empty">Sin órdenes de recepción.</td></tr>';
     $$("#inb-body [data-rview]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openReceiptView(recById(b.getAttribute("data-rview")));});});
@@ -6938,8 +7021,9 @@
     $("#pw-count").textContent=rows.length?(rows.length+" SKU(s) por guardar · "+rows.reduce(function(a,r){return a+r.qty;},0)+" un"):"";
     if(!rows.length){$("#pw-body").innerHTML='<tr><td colspan="7" class="empty">No hay stock pendiente de guardar. ✓</td></tr>';return;}
     $("#pw-body").innerHTML=rows.map(function(r,i){
+      var pwk=(r.sellerId||seller)+':'+r.sku+':'+r.locationId;
       return '<tr>'
-        +'<td class="sku">'+esc(r.sku)+'</td>'
+        +'<td class="sku">'+esc(r.sku)+tlSpan(['PUTAWAY:'+pwk,'RESTOCK:'+pwk,'RESLOT:'+pwk])+'</td>'
         +'<td>'+esc(skuDesc(r.sku)||"")+'</td>'
         +'<td>'+esc(r.lot||"—")+'</td>'
         +'<td><span class="loc-chip">'+esc(code(r.locationId))+'</span></td>'
@@ -7553,7 +7637,7 @@
     var sel=D.sellers.filter(function(s){return s.id===seller;})[0];
     $("#cc-strat").textContent=sel?sel.cycleCountStrategy:"—";
     $("#cc-body").innerHTML=D.plan.length?D.plan.map(function(t){
-      return '<tr><td class="num" style="text-align:left">P'+t.priority+'</td><td>'+esc(t.label)+'</td><td class="muted">'+esc(t.reason)+'</td><td></td></tr>';
+      return '<tr><td class="num" style="text-align:left">P'+t.priority+'</td><td>'+esc(t.label)+tlSpan(['COUNT:'+seller+':'+t.ref])+'</td><td class="muted">'+esc(t.reason)+'</td><td></td></tr>';
     }).join(""):'<tr><td colspan="4" class="empty">Sin tareas de conteo.</td></tr>';
   }
 
@@ -7751,7 +7835,76 @@
     var inactive=o.active===false;
     return '<button class="mini" data-oedit="'+esc(o.id)+'">Editar</button>'
       +'<button class="mini" data-oadmin="'+esc(o.id)+'">＋ Admin</button>'
-      +(inactive?'<button class="mini" data-oact="'+esc(o.id)+'">Activar</button>':'<button class="mini danger" data-odeact="'+esc(o.id)+'">Desactivar</button>');
+      +(inactive?'<button class="mini" data-oact="'+esc(o.id)+'">Activar</button>':'<button class="mini danger" data-odeact="'+esc(o.id)+'">Desactivar</button>')
+      +'<button class="mini danger" data-odel="'+esc(o.id)+'" title="Eliminar la operación">Eliminar</button>';
+  }
+  // ---- Eliminar operación (solo super admin) -------------------------------
+  // Es un borrado LÓGICO: la operación sale de las listas, sus usuarios ya no entran y
+  // los agentes la ignoran, pero sus datos se conservan y se puede restaurar desde
+  // «Eliminadas». Para no borrar por un clic equivocado hay que escribir su nombre.
+  function openDeleteOp(o){
+    if(!o)return;
+    var nombre=o.name||o.id;
+    var mia=me&&me.operationId===o.id;
+    var html='<div class="form">'
+      +'<p style="margin:0">Vas a eliminar la operación <b>'+esc(nombre)+'</b> <span class="muted">('+esc(o.id)+')</span>.</p>'
+      +'<ul class="muted" style="margin:0;padding-left:18px;line-height:1.6">'
+      +'<li>Desaparece de la lista de operaciones y del selector.</li>'
+      +'<li>Sus usuarios (administradores, operarios y clientes) <b>ya no podrán entrar</b>, ni al panel ni a la app.</li>'
+      +'<li>Los agentes y procesos automáticos dejan de trabajar sobre ella.</li>'
+      +'<li>Inventario, órdenes, facturación y auditoría <b>se conservan</b>: puedes restaurarla desde «Eliminadas».</li></ul>'
+      +(mia?'<div class="ferr">No puedes eliminar la operación a la que pertenece tu usuario.</div>':'')
+      +'<div class="fld"><label>Para confirmar, escribe el nombre de la operación: <b>'+esc(nombre)+'</b></label><input id="od-confirm" autocomplete="off" placeholder="'+esc(nombre)+'"'+(mia?' disabled':'')+'></div>'
+      +'<div class="ferr" id="od-err"></div>'
+      +'<div class="acts"><span class="hint">Podrás restaurarla después.</span><div style="display:flex;gap:10px"><button class="btn" id="od-no">Cancelar</button><button class="btn danger" id="od-yes" disabled>Eliminar operación</button></div></div>'
+      +'</div>';
+    openModal("Eliminar operación",html);
+    var inp=$("#od-confirm"), yes=$("#od-yes");
+    function ok(){var t=(inp.value||'').trim().toLowerCase();return !mia&&t&&(t===String(nombre).trim().toLowerCase()||t===String(o.id).toLowerCase());}
+    inp.addEventListener('input',function(){yes.disabled=!ok();});
+    inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&ok()){e.preventDefault();yes.click();}});
+    if(!mia)setTimeout(function(){inp.focus();},50);
+    $("#od-no").addEventListener('click',closeModal);
+    yes.addEventListener('click',function(){
+      if(!ok())return;
+      yes.disabled=true; $("#od-err").textContent='';
+      api('/operations/'+encodeURIComponent(o.id),{method:'DELETE',body:{confirm:inp.value.trim()}})
+        .then(function(r){
+          closeModal();
+          toast('Operación «'+nombre+'» eliminada'+(r&&r.usuarios?' · '+r.usuarios+' usuario(s) sin acceso':''));
+          var eraActual=(op===o.id);
+          return reloadOps().then(function(){
+            if(eraActual&&D.ops&&D.ops.length){ var sel=$("#op"); sel.value=D.ops[0].id; sel.dispatchEvent(new Event('change')); }
+            pintaPapelera();
+          });
+        })
+        .catch(function(e){ yes.disabled=!ok(); $("#od-err").textContent=e.message; });
+    });
+  }
+  /** Contador del botón «Eliminadas» del toolbar de operaciones. */
+  function pintaPapelera(){
+    var b=$("#ops-trash"); if(!b)return;
+    if(role!=="PLATFORM_ADMIN"){b.classList.add('hidden');return;}
+    api('/operations/deleted').then(function(l){ D.opsDeleted=l||[]; b.classList.toggle('hidden',!D.opsDeleted.length); b.textContent='🗑 Eliminadas ('+D.opsDeleted.length+')'; }).catch(function(){ b.classList.add('hidden'); });
+  }
+  function openPapelera(){
+    var l=D.opsDeleted||[];
+    var html='<div class="form">'
+      +'<p class="muted" style="margin:0">Operaciones eliminadas. Sus datos se conservan; al restaurarla vuelve a la lista activa y sus usuarios pueden entrar de nuevo.</p>'
+      +(l.length?'<div class="tablewrap"><table><thead><tr><th>Operación</th><th>Eliminada</th><th>Por</th><th></th></tr></thead><tbody>'
+        +l.map(function(o){return '<tr><td><b>'+esc(o.name||o.id)+'</b><div class="muted" style="font-size:12px">'+esc(o.id)+'</div></td><td>'+esc(fmtDate(o.deletedAt))+'</td><td>'+esc(o.deletedByName||o.deletedBy||'—')+'</td><td style="text-align:right"><button class="mini pri" data-orest="'+esc(o.id)+'">Restaurar</button></td></tr>';}).join('')
+        +'</tbody></table></div>':'<div class="empty">No hay operaciones eliminadas.</div>')
+      +'<div class="acts"><span></span><button class="btn" id="op-trash-close">Cerrar</button></div></div>';
+    openModal("Operaciones eliminadas",html,true);
+    $("#op-trash-close").addEventListener('click',closeModal);
+    $$("#m-body [data-orest]").forEach(function(b){b.addEventListener('click',function(){
+      var id=b.getAttribute('data-orest'); b.disabled=true;
+      api('/operations/'+encodeURIComponent(id)+'/restore',{method:'POST',body:{}})
+        .then(function(r){ toast('Operación «'+((r&&r.name)||id)+'» restaurada'); return reloadOps(); })
+        .then(function(){ return api('/operations/deleted'); })
+        .then(function(nl){ D.opsDeleted=nl||[]; pintaPapelera(); if(D.opsDeleted.length)openPapelera(); else closeModal(); })
+        .catch(function(e){ b.disabled=false; toast(e.message); });
+    });});
   }
   function renderOps(){
     if(role!=="PLATFORM_ADMIN"){$("#ops-grid").innerHTML='<div class="empty">Solo la plataforma ve todas las operaciones.</div>';return;}
@@ -7781,12 +7934,15 @@
       var inactive=o.active===false;
       var acts='<div class="card-actions"><button class="mini" data-oedit="'+esc(o.id)+'">Editar</button>'
         +'<button class="mini" data-oadmin="'+esc(o.id)+'">＋ Admin</button>'
-        +(inactive?'<button class="mini" data-oact="'+esc(o.id)+'">Activar</button>':'<button class="mini danger" data-odeact="'+esc(o.id)+'">Desactivar</button>')+'</div>';
+        +(inactive?'<button class="mini" data-oact="'+esc(o.id)+'">Activar</button>':'<button class="mini danger" data-odeact="'+esc(o.id)+'">Desactivar</button>')
+        +'<button class="mini danger" data-odel="'+esc(o.id)+'">Eliminar</button></div>';
       return '<div class="card"'+(inactive?' style="opacity:.6"':'')+'><div class="opcard"><div class="oi">'+esc(inicialesOp(o))+'</div><div><div class="on">'+esc(o.name||o.id)+'</div><div class="om">'+esc(o.id)+(inactive?' · inactiva':'')+'</div></div></div>'+fichaAlta(o)+acts+'</div>';
     }).join("");
     $$("#ops-grid [data-oedit], #ops-body [data-oedit]").forEach(function(b){b.addEventListener("click",function(){openOpForm(byId(D.ops,b.getAttribute("data-oedit")));});});
     $$("#ops-grid [data-oadmin], #ops-body [data-oadmin]").forEach(function(b){b.addEventListener("click",function(){openUserForm(null,{operationId:b.getAttribute("data-oadmin"),role:"ADMIN"});});});
     $$("#ops-grid [data-odeact], #ops-body [data-odeact]").forEach(function(b){b.addEventListener("click",function(){var o=byId(D.ops,b.getAttribute("data-odeact"));openConfirm("Desactivar operación","La operación "+(o.name||o.id)+" quedará inactiva.",function(){api('/operations/'+o.id,{method:'PATCH',body:{active:false}}).then(function(){toast("Operación desactivada");reloadOps();}).catch(err);});});});
+    $$("#ops-grid [data-odel], #ops-body [data-odel]").forEach(function(b){b.addEventListener("click",function(){openDeleteOp(byId(D.ops,b.getAttribute("data-odel")));});});
+    if(!D.opsDeleted)pintaPapelera();
     $$("#ops-grid [data-oact], #ops-body [data-oact]").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-oact");api('/operations/'+id,{method:'PATCH',body:{active:true}}).then(function(){toast("Operación activada");reloadOps();}).catch(err);});});
   }
 
@@ -7796,6 +7952,7 @@
   function reloadUsers(){return api('/users').then(function(u){D.users=u;renderUsers();}).catch(err);}
   function reloadLocations(){return api('/operations/'+op+'/locations').then(function(ls){D.locations=ls;locByCode={};var _pd={};for(var _k in locById){if(locById[_k]&&locById[_k].deletedAt)_pd[_k]=locById[_k];}locById=_pd;ls.forEach(function(l){locByCode[l.code]=l;locById[l.id]=l;});renderLocations();renderKpis();renderZone();}).catch(err);}
   if($("#ops-nuevas"))$("#ops-nuevas").addEventListener('click',function(){ revisarNuevasOperaciones(true); });
+  if($("#ops-trash"))$("#ops-trash").addEventListener('click',openPapelera);
   $$("#ops-view .vt").forEach(function(b){ b.addEventListener('click',function(){ opsView=b.getAttribute('data-view'); try{ localStorage.setItem(OPS_VIEW_KEY,opsView); }catch(e){} renderOps(); }); });
   if($("#ops-q"))$("#ops-q").addEventListener('input',function(){ opsQ=$("#ops-q").value; renderOps(); });
   function reloadOps(){return api('/operations').then(function(ops){D.ops=ops;fill($("#op"),ops.map(function(o){return {v:o.id,t:o.name||o.id};}));$("#op").value=op;renderOps();}).catch(err);}
@@ -8926,6 +9083,7 @@
   $("#inv-move").addEventListener("click",function(){openPutawayForm();});
   // Salir vive al final del sidebar (antes estaba en la barra superior).
   function cerrarSesion(){
+    tlClose();
     token=null;me=null;role=null;op=null;seller=null;
     sesionCaida=false; // al volver a entrar, el aviso de sesión vencida se rearma
     $("#lg-email").value="";$("#lg-pass").value="";$("#lg-err").textContent="";
@@ -9080,7 +9238,7 @@
   })();
 
   // Aterrizaje común tras autenticarse (login o registro).
-  function afterAuth(r){ token=r.token; me=r.user; role=me.role; entrarAlWms(function(){ $("#loginov").classList.add("off"); init(); syncVerifyBar(); }); }
+  function afterAuth(r){ token=r.token; me=r.user; role=me.role; setTimeout(tlConnect,500); entrarAlWms(function(){ $("#loginov").classList.add("off"); init(); syncVerifyBar(); }); }
 
   // Crear cuenta
   function doRegister(){

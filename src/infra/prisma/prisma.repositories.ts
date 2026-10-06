@@ -305,6 +305,8 @@ export class PrismaOperationRepository implements OperationRepository {
       businessAbout: o.businessAbout ?? null,
       reviewedAt: o.reviewedAt ? (o.reviewedAt as Date).toISOString() : null,
       reviewedBy: o.reviewedBy ?? null,
+      deletedAt: o.deletedAt ? (o.deletedAt as Date).toISOString() : null,
+      deletedBy: o.deletedBy ?? null,
       createdAt: o.createdAt ? (o.createdAt as Date).toISOString() : null,
     };
   }
@@ -329,6 +331,8 @@ export class PrismaOperationRepository implements OperationRepository {
       businessAbout: op.businessAbout ?? null,
       reviewedAt: op.reviewedAt ? new Date(op.reviewedAt) : null,
       reviewedBy: op.reviewedBy ?? null,
+      deletedAt: op.deletedAt ? new Date(op.deletedAt) : null,
+      deletedBy: op.deletedBy ?? null,
       // `createdAt` NO viaja en el update: lo pone la base al crear y reescribirlo
       // desde el dominio movería la fecha de alta en cada guardado.
     };

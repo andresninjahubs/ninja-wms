@@ -86,7 +86,7 @@ export class AuthController {
     if (dto.email && dto.password) {
       const res = await this.wms.loginWithPassword(dto.email, dto.password);
       if (!res.authenticated) {
-        return { authenticated: false, detail: 'Email o contraseña incorrectos' };
+        return { authenticated: false, detail: res.motivo || 'Email o contraseña incorrectos' };
       }
       // Registra el login exitoso (auditoría + métricas de uso de plataforma).
       if (res.user) await this.wms.recordLogin(res.user.id, res.user.operationId ?? null);

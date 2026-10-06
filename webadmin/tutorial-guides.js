@@ -567,6 +567,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#ops-grid', place:'top', title:'Operaciones existentes', text:'Cada tarjeta resume clientes, usuarios y actividad. Selecciona una en la barra superior para administrarla como si fueras su admin.'},
       {el:'#ops-view', place:'bottom', title:'Listado o tarjetas', text:'Cambia entre <b>listado</b> (más denso, ideal para revisar muchas altas) y <b>tarjetas</b>. En ambas vistas las operaciones van de la <b>más nueva a la más antigua</b>, y el buscador filtra por nombre, contacto o email.'},
       {el:['#ops-grid','#ops-listwrap'], place:'top', title:'Ficha y edición', text:'Cada tarjeta muestra la ficha del alta (contacto, celular, email, tipo, fecha y campaña de origen), los indicadores de uso y el plan. Con <b>Editar</b> cambias nombre y contacto, y desde ahí la <b>activas o desactivas</b>.'},
+      {el:['#ops-body [data-odel]','#ops-grid [data-odel]','#ops-grid'], place:'left', title:'Eliminar una operación', text:'<b>Eliminar</b> saca la operación de la lista y bloquea el acceso de todos sus usuarios (panel y app). Para confirmar hay que escribir su nombre. Los datos se conservan: con <b>🗑 Eliminadas</b> en la barra superior la puedes <b>restaurar</b>. No se puede eliminar la operación a la que pertenece tu propio usuario.'},
     ]
   },
 

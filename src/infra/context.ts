@@ -7,6 +7,7 @@
  * La persistencia Prisma se importa de forma perezosa, así el modo "memory"
  * funciona aunque `prisma generate` no se haya corrido todavía.
  */
+import { withLiveAssignments } from './live-hub';
 import { InventoryService } from '../domain/inventory.service';
 import { OrderService } from '../domain/order.service';
 import { ReceiptOrderService } from '../domain/receipt.service';
@@ -235,7 +236,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     laborTasks = new PrismaLaborTaskRepository(db);
     costs = new PrismaCostRepository(db);
     aiAudit = new PrismaAiAuditRepository(db);
-    assignments = new PrismaWorkAssignmentRepository(db);
+    assignments = withLiveAssignments(new PrismaWorkAssignmentRepository(db));
     taskLedger = new PrismaWorkTaskRepository(db);
     agentRuleConfig = new PrismaAgentRuleConfigRepository(db);
     agentAlerts = new PrismaAgentAlertRepository(db);
@@ -285,7 +286,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     laborTasks = new InMemoryLaborTaskRepository();
     costs = new InMemoryCostRepository();
     aiAudit = new InMemoryAiAuditRepository();
-    assignments = new InMemoryWorkAssignmentRepository();
+    assignments = withLiveAssignments(new InMemoryWorkAssignmentRepository());
     taskLedger = new InMemoryWorkTaskRepository();
     agentRuleConfig = new InMemoryAgentRuleConfigRepository();
     agentAlerts = new InMemoryAgentAlertRepository();

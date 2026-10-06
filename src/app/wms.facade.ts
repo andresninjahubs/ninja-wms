@@ -2731,6 +2731,48 @@ export class WmsFacade {
   listOperations(): Promise<Operation[]> {
     return this.operationsService.list();
   }
+  /** Operaciones eliminadas (papelera del super admin), las más recientes primero. */
+  async listDeletedOperations(): Promise<Array<Operation & { deletedByName: string | null }>> {
+    const all = await this.operationsService.list({ includeDeleted: true });
+    const del = all.filter((o) => !!o.deletedAt).sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)));
+    // Quién la eliminó, con nombre legible (se guarda el id del usuario).
+    return Promise.all(del.map(async (o) => {
+      const u = o.deletedBy ? await this.usersService.getUser(o.deletedBy).catch(() => null) : null;
+      return { ...o, deletedByName: u ? (u.name || u.email) : (o.deletedBy || null) };
+    }));
+  }
+  /**
+   * Elimina una operación (solo plataforma). Es un borrado LÓGICO: la operación sale de
+   * las listas, queda inactiva, sus usuarios ya no pueden entrar y los agentes la ignoran,
+   * pero inventario, órdenes, facturación y auditoría se conservan y se puede restaurar.
+   *
+   * Para evitar un clic equivocado hay que escribir el nombre (o el id) de la operación,
+   * y nadie puede eliminar la operación a la que pertenece.
+   */
+  async deleteOperation(operationId: string, actor: { id: string; operationId?: string | null } | null, confirm: string): Promise<{ operation: Operation; clientes: number; usuarios: number }> {
+    const op = await this.operationsService.get(operationId);
+    if (!op) throw new NotFoundError(`Operación no encontrada: ${operationId}`);
+    const t = String(confirm || '').trim().toLowerCase();
+    if (!t || (t !== String(op.name || '').trim().toLowerCase() && t !== op.id.toLowerCase())) {
+      throw new ValidationError(`Para eliminarla escribe exactamente el nombre de la operación: «${op.name || op.id}».`);
+    }
+    if (actor?.operationId && actor.operationId === operationId) {
+      throw new ValidationError('No puedes eliminar la operación a la que pertenece tu propio usuario.');
+    }
+    const [sellers, users] = await Promise.all([this.listSellers(operationId).catch(() => []), this.usersService.listUsers(operationId).catch(() => [])]);
+    const deleted = await this.operationsService.softDelete(operationId, actor?.id || 'system', (this.clock ? this.clock.now() : new Date().toISOString()));
+    return { operation: deleted, clientes: sellers.length, usuarios: users.length };
+  }
+  /** Restaura una operación eliminada: vuelve a las listas y queda activa. */
+  restoreOperation(operationId: string): Promise<Operation> {
+    return this.operationsService.restore(operationId);
+  }
+  /** ¿El usuario pertenece a una operación eliminada? (no puede entrar ni usar su token). */
+  private async enOperacionEliminada(user: User): Promise<boolean> {
+    if (!user.operationId || user.role === UserRole.PLATFORM_ADMIN) return false;
+    const op = await this.operationsService.get(user.operationId).catch(() => null);
+    return !!(op && op.deletedAt);
+  }
   /** Edita nombre/estado de una operación (solo PLATFORM_ADMIN vía guard). */
   updateOperation(operationId: string, patch: { name?: string; active?: boolean; contactName?: string | null; contactEmail?: string | null; contactPhone?: string | null; contactWebsite?: string | null; businessAbout?: string | null }): Promise<Operation> {
     return this.operationsService.update(operationId, patch);
@@ -3488,9 +3530,12 @@ export class WmsFacade {
 
   // ---- Autenticación real (email + contraseña -> JWT) -----------------------
   /** Login con email y contraseña. Devuelve el JWT firmado y el usuario (sin hash). */
-  async loginWithPassword(email: string, password: string): Promise<{ authenticated: boolean; token?: string; user?: User }> {
+  async loginWithPassword(email: string, password: string): Promise<{ authenticated: boolean; token?: string; user?: User; motivo?: string }> {
     const user = await this.usersService.authenticateWithPassword(email, password);
     if (!user) return { authenticated: false };
+    // Credenciales correctas pero la operación fue eliminada: se dice tal cual, para que
+    // la persona no crea que olvidó su clave.
+    if (await this.enOperacionEliminada(user)) return { authenticated: false, motivo: 'La operación de tu cuenta fue eliminada. Contacta a soporte de Ninja Hubs si necesitas recuperarla.' };
     return { authenticated: true, token: signToken(user), user: safeUser(user) };
   }
   /** Fija/reemplaza la contraseña de un usuario (reset por admin o alta por invitación). */
@@ -3511,9 +3556,13 @@ export class WmsFacade {
       const payload = verifyToken(token);
       if (!payload) return null;
       const user = await this.usersService.getUser(payload.sub);
-      return user && user.active ? user : null;
+      if (!user || !user.active) return null;
+      return (await this.enOperacionEliminada(user)) ? null : user;
     }
-    if (allowDemo) return this.usersService.authenticate(token);
+    if (allowDemo) {
+      const u = await this.usersService.authenticate(token);
+      return u && !(await this.enOperacionEliminada(u)) ? u : null;
+    }
     return null;
   }
   /** Compat: login skeleton por id/email (solo modo demo). */
@@ -4682,6 +4731,11 @@ export class WmsFacade {
       }
     }
     return a;
+  }
+
+  /** Asignaciones abiertas de la operación (foto inicial del canal en vivo del panel). */
+  liveOpenAssignments(operationId: string): Promise<WorkAssignment[]> {
+    return this.assignments ? this.assignments.listOpen(operationId) : Promise.resolve([]);
   }
 
   /** Libera una asignación (vuelve al pool sin asignatario). */
