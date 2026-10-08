@@ -389,6 +389,14 @@
       body: { operationId: opIdOrNull(), type: t.type, entityId: t.entityId, clientAt: new Date().toISOString() },
     }).catch(function (e) {
       if (e && e.status === 401) return;          // ya se avisó y se volvió al login
+      // El servidor rechaza tareas que ya no corresponden (p. ej. picking de una orden ya
+      // despachada) o que no son de este operario: se sale del flujo y se refresca la lista.
+      if (e && e.status >= 400 && e.status < 500) {
+        toast(e.message || 'Esta tarea ya no está disponible', false);
+        if (task && task.entityId === t.entityId) { stopCamera(); liveIdle(); volverDeFlujo(); }
+        if (typeof loadBoard === 'function') loadBoard();
+        return;
+      }
       toast('No se pudo marcar la tarea como iniciada: ' + (e && e.message || 'sin conexión'), false);
     });
     task = t;

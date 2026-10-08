@@ -4098,6 +4098,8 @@ export class WmsFacade {
       try {
         if (laborEmpty) await this.deriveLaborFromLedger(op.id);
       } catch { /* best-effort */ }
+      // Repara tareas que quedaron abiertas sobre órdenes/recepciones que ya avanzaron.
+      try { await this.conciliarTareasVencidas(op.id); } catch { /* best-effort */ }
       // G7: reclasifica ABC desde la velocidad real observada.
       try { await this.recomputeAbc(op.id); } catch { /* best-effort */ }
     }
@@ -4686,6 +4688,14 @@ export class WmsFacade {
     // copiloto, MCP y la app), por eso se revisa aunque se omita la verificación de arriba.
     if (uOp && !puedeHacer(uOp, input.type)) {
       throw new ValidationError(`${uOp.name} no tiene habilitada la actividad ${OPERATOR_TASK_LABEL[input.type] || input.type}. Cambia sus habilidades en Usuarios o asígnala a otro operario.`);
+    }
+    // No se asigna trabajo de una etapa que la orden/recepción ya superó.
+    {
+      const v = await this.tareaVencida(input.type, input.entityId, input.sellerId ?? null);
+      if (v) {
+        await this.cerrarTareaVencida(operationId, input.type, input.entityId, v);
+        throw new ValidationError(`No se puede asignar ${WmsFacade.ETAPA_ES[input.type] || input.type}: ${v.motivo}.`);
+      }
     }
     const id = `${input.type}:${input.entityId}`;
     // Quién la tenía antes, para saber si esto es una primera entrega o un rebote.
@@ -5696,6 +5706,7 @@ export class WmsFacade {
     try {
       const barrido = await this.runAgentSweep(operationId, { autonomous: true });
       // Orden de ejecución de las bandejas de los operarios (courier, SLA, instrucciones, tipo).
+      try { await this.conciliarTareasVencidas(operationId); } catch { /* best-effort */ }
       try { this.prioritiesAt.set(operationId, Date.now()); await this.recomputeAssignmentPriorities(operationId); } catch { /* best-effort */ }
       let llm: { ran: boolean; text?: string | null; actions?: number; error?: string | null } = { ran: false };
       // El LLM solo se consulta dentro de la ventana: es el gasto que se quiere acotar.
@@ -5956,6 +5967,16 @@ export class WmsFacade {
   async startTask(operationId: string, operator: string, input: { type: WorkTaskType; entityId: string; /** Hora del aparato del operario, si la app la manda. */ clientAt?: string | null }): Promise<{ ok: true; assignment: WorkAssignment | null }> {
     if (!this.assignments) return { ok: true, assignment: null };
     const a = await this.assignments.get(`${input.type}:${input.entityId}`);
+    // Nunca se empieza una tarea cuya etapa ya pasó (p. ej. picking de una orden ya
+    // despachada): se cierra sola y el operario recibe el motivo.
+    {
+      const sid = (a && a.sellerId) || (await this.taskIdDe(operationId, input.type as WorkTaskStage, input.entityId).catch(() => ({ sellerId: null } as any))).sellerId || null;
+      const v = await this.tareaVencida(input.type, input.entityId, sid);
+      if (v) {
+        await this.cerrarTareaVencida(operationId, input.type, input.entityId, v);
+        throw new ValidationError(`Esta tarea de ${WmsFacade.ETAPA_ES[input.type] || input.type} ya no corresponde: ${v.motivo}. Se cerró y salió de tu bandeja.`);
+      }
+    }
     if (a && a.operator !== operator && (await this.getAssignmentMode(operationId)) === 'strict') throw new ForbiddenError('Tarea asignada a otro operario (modo estricto).');
     // `startedAt` se escribe una sola vez: si el operario vuelve a entrar a una tarea
     // que ya había empezado, la marca original manda. Si no, un reingreso borraría
@@ -5982,6 +6003,8 @@ export class WmsFacade {
   private async ensureAssignmentPriorities(operationId: string): Promise<void> {
     const now = Date.now();
     if ((this.prioritiesAt.get(operationId) || 0) > now - 60000) return;
+    this.prioritiesAt.set(operationId, now);
+    try { await this.conciliarTareasVencidas(operationId); } catch { /* best-effort */ }
     this.prioritiesAt.set(operationId, now);
     try { await this.recomputeAssignmentPriorities(operationId); } catch { /* best-effort */ }
   }
@@ -6081,6 +6104,107 @@ export class WmsFacade {
   }
 
   /** Marca como completadas las asignaciones abiertas de estas tareas (hook de ejecución). */
+  // ---- Coherencia tarea ↔ entidad -------------------------------------------
+  // Una tarea solo tiene sentido mientras su orden/recepción está en la etapa que la
+  // tarea ejecuta. Si la orden avanzó por cualquier camino (panel, app, agente, API,
+  // datos de versiones antiguas), la tarea de una etapa ya superada NO puede seguir
+  // abierta ni volver a empezarse: se cierra sola, dejando constancia en su historia.
+  private static ESTADO_ORDEN_ES: Record<string, string> = { RECEIVED: 'Ingresada', ALLOCATED: 'Reservada', PICKING: 'En picking', PICKED: 'Pickeada', PACKED: 'Empacada', SHIPPED: 'Despachada', CANCELLED: 'Cancelada' };
+  private static ETAPA_ES: Record<string, string> = { PICK: 'picking', PACK: 'empaque', SHIP: 'despacho', RECEIVE: 'recepción' };
+  /**
+   * ¿La tarea `type` sobre `entityId` ya no corresponde? Devuelve el motivo (para el
+   * operario y el historial) y si la etapa quedó HECHA (la orden la superó) o
+   * CANCELADA (la entidad se anuló o ya no existe); `null` si sigue vigente.
+   */
+  private async tareaVencida(type: WorkTaskType, entityId: string, sellerId: string | null): Promise<{ motivo: string; cierre: 'done' | 'cancelled' } | null> {
+    if (type !== 'PICK' && type !== 'PACK' && type !== 'SHIP' && type !== 'RECEIVE') return null;
+    if (!sellerId) return null;
+    if (type === 'RECEIVE') {
+      // Ante cualquier duda (no existe, error de lectura) NO se cierra nada: solo se
+      // cierra lo que se SABE superado.
+      const r = await this.getReceipt(sellerId, entityId).catch(() => null);
+      if (!r) return null;
+      if (r.status === ReceiptOrderStatus.RECEIVED) return { motivo: `la recepción ${r.reference || r.id} ya está recibida`, cierre: 'done' };
+      if (r.status === ReceiptOrderStatus.CANCELLED) return { motivo: `la recepción ${r.reference || r.id} fue anulada`, cierre: 'cancelled' };
+      return null;
+    }
+    const o = await this.orders.getOrder(sellerId, entityId).catch(() => null);
+    if (!o) return null;
+    const ref = o.externalOrderId || o.id;
+    const est = WmsFacade.ESTADO_ORDEN_ES[o.status] || o.status;
+    if (o.status === OrderStatus.CANCELLED) return { motivo: `la orden ${ref} fue cancelada`, cierre: 'cancelled' };
+    const superada: Record<string, OrderStatus[]> = {
+      PICK: [OrderStatus.PICKED, OrderStatus.PACKED, OrderStatus.SHIPPED],
+      PACK: [OrderStatus.PACKED, OrderStatus.SHIPPED],
+      SHIP: [OrderStatus.SHIPPED],
+    };
+    if ((superada[type] || []).includes(o.status)) return { motivo: `la orden ${ref} ya está ${est}`, cierre: 'done' };
+    return null;
+  }
+  /** Cierra la asignación y la tarea del ledger de una etapa que ya no corresponde. */
+  private async cerrarTareaVencida(operationId: string, type: WorkTaskType, entityId: string, v: { motivo: string; cierre: 'done' | 'cancelled' }): Promise<boolean> {
+    let cerro = false;
+    const by = 'sistema';
+    const nota = `Cerrada por el sistema: ${v.motivo}.`;
+    try {
+      if (this.assignments) {
+        const a = await this.assignments.get(`${type}:${entityId}`);
+        if (a && a.operationId === operationId && (a.status === 'assigned' || a.status === 'in_progress')) {
+          await this.assignments.save({ ...a, status: v.cierre === 'done' ? 'done' : 'released', completedAt: this.clockNow(), completedBy: by, note: nota });
+          cerro = true;
+        }
+      }
+      const t = this.taskLedger ? await this.taskLedger.findOpen(operationId, type as WorkTaskStage, entityId).catch(() => null) : null;
+      if (t) {
+        await this.advanceTask(operationId, type as WorkTaskStage, entityId, { state: v.cierre, by, evento: null });
+        await this.emitTaskEvent(operationId, {
+          type: v.cierre === 'done' ? 'DONE' : 'CANCELLED', stage: type as WorkTaskStage, entityId, entityRef: t.entityRef,
+          taskId: t.id, assignmentId: t.assignmentId ?? null, sellerId: t.sellerId, actor: by, reason: nota,
+        });
+        cerro = true;
+      }
+    } catch { /* best-effort */ }
+    if (cerro) this.prioritiesAt.delete(operationId);
+    return cerro;
+  }
+  /** Tras un cambio de estado de una orden: cierra lo que esa orden ya dejó atrás. */
+  private async conciliarTareasDeOrden(operationId: string | null, sellerId: string, orderId: string): Promise<void> {
+    if (!operationId) return;
+    for (const type of ['PICK', 'PACK', 'SHIP'] as WorkTaskType[]) {
+      const v = await this.tareaVencida(type, orderId, sellerId).catch(() => null);
+      if (v) await this.cerrarTareaVencida(operationId, type, orderId, v);
+    }
+  }
+  /**
+   * Barrido de toda la operación: asignaciones abiertas y tareas abiertas del ledger
+   * (picking, empaque, despacho, recepción) cuya entidad ya avanzó, se canceló o no
+   * existe. Repara también datos viejos. Corre con la bandeja (cada ≥60 s), con el
+   * ciclo del agente y al arrancar el servidor.
+   */
+  async conciliarTareasVencidas(operationId: string): Promise<{ cerradas: number }> {
+    let cerradas = 0;
+    const vistos = new Set<string>();
+    const revisar = async (type: WorkTaskType, entityId: string, sellerId: string | null) => {
+      const k = `${type}:${entityId}`; if (vistos.has(k)) return; vistos.add(k);
+      const v = await this.tareaVencida(type, entityId, sellerId).catch(() => null);
+      if (v && await this.cerrarTareaVencida(operationId, type, entityId, v)) cerradas++;
+    };
+    const tipos = ['PICK', 'PACK', 'SHIP', 'RECEIVE'] as WorkTaskType[];
+    if (this.assignments) {
+      for (const a of await this.assignments.listOpen(operationId).catch(() => [] as WorkAssignment[])) {
+        if (tipos.includes(a.type)) await revisar(a.type, a.entityId, a.sellerId ?? null);
+      }
+    }
+    if (this.taskLedger) {
+      for (const state of ['pending', 'assigned', 'in_progress'] as WorkTaskState[]) {
+        for (const t of await this.taskLedger.list(operationId, { state, limit: 5000 }).catch(() => [] as WorkTask[])) {
+          if (tipos.includes(t.type as WorkTaskType)) await revisar(t.type as WorkTaskType, t.entityId, t.sellerId ?? null);
+        }
+      }
+    }
+    return { cerradas };
+  }
+
   private async completeAssignments(type: WorkTaskType, entityIds: string[], completedBy: string): Promise<void> {
     if (!this.assignments) return;
     for (const entityId of entityIds) {
@@ -7597,7 +7721,7 @@ export class WmsFacade {
     if (this.packaging && prepared.movements.length) await this.packaging.commit(prepared.movements);
     this.fireOrderWebhook(sellerId, packed); // order.packed → OMS
     if (opId) {
-      await this.completeAssignments('PACK', [orderId], actor || 'system'); await this.continuousHook(opId, 'PACK', null);
+      await this.completeAssignments('PACK', [orderId], actor || 'system'); await this.conciliarTareasDeOrden(opId, sellerId, orderId); await this.continuousHook(opId, 'PACK', null);
       // Ledger: PACK completo → cierra PACK y abre SHIP.
       await this.advanceTask(opId, 'PACK', packed.id, { state: 'done', by: actor || 'system' });
       await this.openTask(opId, { type: 'SHIP', sellerId, orderId: packed.id, orderRef: packed.externalOrderId || packed.id, entityId: packed.id, entityRef: packed.externalOrderId || packed.id, unitsEstimate: (packed.lines || []).reduce((s, l) => s + l.qty, 0), by: actor || 'system' });
@@ -7689,7 +7813,7 @@ export class WmsFacade {
     const order = await this.orders.ship(sellerId, orderId, input, actor);
     this.fireOrderWebhook(sellerId, order); // order.shipped
     if (opId) {
-      await this.completeAssignments('SHIP', [orderId], actor || 'system'); await this.continuousHook(opId, 'SHIP', null);
+      await this.completeAssignments('SHIP', [orderId], actor || 'system'); await this.conciliarTareasDeOrden(opId, sellerId, orderId); await this.continuousHook(opId, 'SHIP', null);
       await this.advanceTask(opId, 'SHIP', order.id, { state: 'done', by: actor || 'system' }); // ledger: despacho completo
     }
     return order;

@@ -2508,6 +2508,46 @@ async function run() {
     assert.equal(r.threshold, 6); assert.equal(r.enabled, false);
   });
 
+  await test('tareas: una etapa ya superada no se empieza, no se asigna y se cierra sola', async () => {
+    const { facade } = buildFacade();
+    const F: any = facade;
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 1000 });
+    await facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await facade.receive('acme', { sku: 'CAM', qty: 100, locationId: stg.id });
+    const pedro = await facade.createUser({ id: 'pedro', name: 'Pedro', email: 'pedro@op1.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    const nueva = async (ref: string) => { const o = await facade.createOrder('acme', { externalOrderId: ref, salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 1 }] }, 'ana'); await facade.allocateOrder('acme', o.id, 'ana'); return o; };
+    // 1) La orden avanza por un camino que NO cierra la tarea (dato viejo / atajo):
+    const o1 = await nueva('PED-1');
+    await facade.assignTask('op1', { type: 'PICK', entityId: o1.id, entityRef: 'PED-1', sellerId: 'acme', operator: pedro.id, unitsEstimate: 1, by: 'ana' });
+    await F.orders.confirmPick('acme', o1.id, 'x');   // salta los ganchos del facade
+    await expectThrows(() => facade.startTask('op1', pedro.id, { type: 'PICK', entityId: o1.id }), ValidationError);
+    const a1 = await F.assignments.get(`PICK:${o1.id}`);
+    assert.equal(a1.status, 'done', 'la asignación vencida se cierra sola al intentar empezarla');
+    assert.equal(await F.taskLedger.findOpen('op1', 'PICK', o1.id), null, 'y su tarea del ledger también');
+    // 2) No se puede asignar picking a una orden ya pickeada.
+    await expectThrows(() => facade.assignTask('op1', { type: 'PICK', entityId: o1.id, entityRef: 'PED-1', sellerId: 'acme', operator: pedro.id, unitsEstimate: 1, by: 'ana' }), ValidationError);
+    // 3) El barrido repara lo que quedó abierto, sin que nadie lo toque.
+    const o2 = await nueva('PED-2');
+    await facade.assignTask('op1', { type: 'PICK', entityId: o2.id, entityRef: 'PED-2', sellerId: 'acme', operator: pedro.id, unitsEstimate: 1, by: 'ana' });
+    await F.orders.confirmPick('acme', o2.id, 'x');
+    const r = await facade.conciliarTareasVencidas('op1');
+    assert.equal(r.cerradas, 1, 'una tarea vencida cerrada');
+    assert.equal((await facade.getOperatorTasks('op1', pedro.id)).length, 0, 'la bandeja del operario queda limpia');
+    // 4) Empacar cierra también el picking que hubiera quedado abierto.
+    const o3 = await nueva('PED-3');
+    await facade.assignTask('op1', { type: 'PICK', entityId: o3.id, entityRef: 'PED-3', sellerId: 'acme', operator: pedro.id, unitsEstimate: 1, by: 'ana' });
+    await F.orders.confirmPick('acme', o3.id, 'x');
+    await facade.packOrder('acme', o3.id, { bultos: 1 } as any, 'ana');
+    assert.equal((await F.assignments.get(`PICK:${o3.id}`)).status, 'done', 'empacar cierra el picking colgado');
+    // 5) Una tarea vigente se empieza normal.
+    const o4 = await nueva('PED-4');
+    await facade.assignTask('op1', { type: 'PICK', entityId: o4.id, entityRef: 'PED-4', sellerId: 'acme', operator: pedro.id, unitsEstimate: 1, by: 'ana' });
+    const ok = await facade.startTask('op1', pedro.id, { type: 'PICK', entityId: o4.id });
+    assert.equal(ok.ok, true);
+  });
+
   await test('agente: detecta operario inactivo con carga, deduplica y se descarta', async () => {
     const { facade } = buildFacade();
     await facade.createOperation({ id: 'op1', name: 'Op 1' });
