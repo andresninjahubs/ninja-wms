@@ -777,6 +777,9 @@
 
   function setupQty() {
     stopCamera();
+    // Con el producto y la ubicación ya leídos, el visor apagado solo era un recuadro
+    // negro ocupando media pantalla: se oculta (startCamera lo vuelve a mostrar).
+    var camBox = $('cam'); if (camBox) camBox.style.display = 'none';
     $('picklist').style.display = 'none';
     $('qty-lbl').textContent = captured.resolved.isBase ? 'Cantidad de unidades' : ('Cantidad de packs (' + (captured.resolved.label || captured.resolved.code) + ')');
     $('prodpick').style.display = 'none';

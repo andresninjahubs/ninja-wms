@@ -5373,12 +5373,20 @@ export class WmsFacade {
       // A diferencia de las otras dos reglas de órdenes, esta no mide tiempo transcurrido
       // sino HOLGURA contra el compromiso de salida: avisa ANTES de incumplir.
       const r = await this.getOrdersDueSoon(operationId, { sellerId: sid, withinHours: cfg.threshold, limit: 100 });
+      // Hora del compromiso en la hora de la BODEGA (no en UTC) y estado en español.
+      const off = (await this.getDeadlineConfig(operationId).catch(() => ({} as DeadlineConfig))).offsetHoras ?? -3;
+      const horaBodega = (iso: string) => {
+        const d = new Date(Date.parse(iso) + off * 3600000), hoy = new Date(Date.now() + off * 3600000);
+        const hh = d.toISOString().slice(11, 16);
+        return d.toISOString().slice(0, 10) === hoy.toISOString().slice(0, 10) ? `hoy ${hh}` : `${d.toISOString().slice(8, 10)}-${d.toISOString().slice(5, 7)} ${hh}`;
+      };
+      const EST: Record<string, string> = { RECEIVED: 'ingresada', ALLOCATED: 'reservada, sin pickear', PICKING: 'en picking', PICKED: 'pickeada, sin empacar', PACKED: 'empacada, sin despachar' };
       return r.items.map((i) => ({
         sellerId: i.sellerId, entityRef: i.orden, entityType: 'ORDER' as const,
         title: i.vencida
           ? `Orden ${i.orden} pasada de su deadline (${i.texto})`
-          : `Orden ${i.orden} ${i.texto} y sigue en ${i.estado}`,
-        detail: `${cl(i.sellerId)} · ${i.unidades} un${i.courier ? ' · ' + i.courier : ''} · compromiso ${i.dueAt.slice(0, 16).replace('T', ' ')} (${i.dueSource || 'manual'}).`,
+          : `Orden ${i.orden} ${i.texto} y sigue ${EST[i.estado] || i.estado}`,
+        detail: `${cl(i.sellerId)} · ${i.unidades} un${i.courier ? ' · ' + i.courier : ''} · compromiso ${horaBodega(i.dueAt)} (${i.dueSource || 'manual'}).`,
         action: i.estado === 'RECEIVED' ? 'Reserva su stock ahora: es lo único que falta para que entre a la cola.'
           : i.estado === 'PACKED' ? 'Despáchala: está lista y el courier pasa pronto.'
           : 'Ponla adelante en la cola y asígnala a un operario disponible.',

@@ -8913,7 +8913,7 @@
             return '<tr>'
               +'<td data-label="Acción"><b>'+esc(x.a.etiqueta||x.a.herramienta||'—')+'</b></td>'
               +'<td data-label="Regla">'+esc(x.a.regla||'—')+'</td>'
-              +'<td data-label="Sobre">'+esc(x.a.entidad||'—')+'</td>'
+              +'<td data-label="Sobre">'+esc((function(e){var u=e&&byId(D.users||[],e);return u?(u.name||e):(e||'—');})(x.a.entidad))+'</td>'
               +'<td data-label="Estado"><span class="agj-est" style="color:'+e.c+'">'+esc(e.t)+'</span></td>'
               +'<td data-label="Resultado" class="agj-res">'+esc(x.a.resultado||'—')+'</td>'
               +'</tr>';
