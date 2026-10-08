@@ -7646,6 +7646,156 @@ export class WmsFacade {
   }
 
   /** Inicia el picking de una orden reservada: ALLOCATED → PICKING (sin recolectar aún). */
+  // ---- Ruta de picking (un pedido o un lote) ----------------------------------
+  // El operario recorre UBICACIONES, no pedidos: en cada parada toma todo lo que
+  // corresponde ahí (de uno o de varios pedidos), y la app lo lleva a la siguiente.
+  // En lote se pickea todo junto y la separación por pedido ocurre en empaque.
+  private async ordenesDeRuta(operationId: string, refs: Array<{ sellerId: string; orderId: string }>): Promise<{ ordenes: SalesOrder[]; omitidas: Array<{ ref: string; motivo: string }> }> {
+    const ordenes: SalesOrder[] = []; const omitidas: Array<{ ref: string; motivo: string }> = [];
+    const vistos = new Set<string>();
+    for (const r of refs || []) {
+      if (!r || !r.sellerId || !r.orderId || vistos.has(r.sellerId + ':' + r.orderId)) continue;
+      vistos.add(r.sellerId + ':' + r.orderId);
+      const op = await this.operationOfSeller(r.sellerId).catch(() => null);
+      if (op !== operationId) { omitidas.push({ ref: r.orderId, motivo: 'no es de esta operación' }); continue; }
+      const o = await this.orders.getOrder(r.sellerId, r.orderId).catch(() => null);
+      if (!o) { omitidas.push({ ref: r.orderId, motivo: 'no existe' }); continue; }
+      if (o.status !== OrderStatus.ALLOCATED && o.status !== OrderStatus.PICKING) {
+        omitidas.push({ ref: o.externalOrderId || o.id, motivo: `está ${WmsFacade.ESTADO_ORDEN_ES[o.status] || o.status}` }); continue;
+      }
+      ordenes.push(o);
+    }
+    // Prioridad de reparto: lo que vence antes recibe primero.
+    ordenes.sort((a, b) => {
+      const da = a.dueAt ? Date.parse(a.dueAt) : Infinity, db = b.dueAt ? Date.parse(b.dueAt) : Infinity;
+      return da !== db ? da - db : String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+    });
+    return { ordenes, omitidas };
+  }
+
+  /**
+   * Ruta consolidada de picking para uno o varios pedidos: paradas (ubicaciones) en
+   * orden de recorrido y, en cada una, lo que hay que tomar por producto (total y
+   * desglose por pedido).
+   */
+  async pickRoute(operationId: string, refs: Array<{ sellerId: string; orderId: string }>) {
+    const { ordenes, omitidas } = await this.ordenesDeRuta(operationId, refs);
+    const locs = await this.locations.listByOperation(operationId);
+    const L = new Map(locs.map((l) => [l.id, l] as [string, typeof locs[number]]));
+    type Item = { sellerId: string; sku: string; lot: string | null; qty: number; picked: number; porOrden: Array<{ orderId: string; ref: string; qty: number; picked: number }> };
+    const stops = new Map<string, { locationId: string; code: string; zoneType: string; rank: number; x: number | null; y: number | null; items: Map<string, Item> }>();
+    for (const o of ordenes) {
+      const ref = o.externalOrderId || o.id;
+      for (const line of o.lines || []) for (const a of line.allocations || []) {
+        const sku = a.sku ?? line.sku; const lot = a.lot ?? null;
+        const l = L.get(a.locationId);
+        let st = stops.get(a.locationId);
+        if (!st) { st = { locationId: a.locationId, code: l ? l.code : a.locationId, zoneType: l ? String(l.zoneType) : '', rank: l && l.pickRank != null ? l.pickRank : 999, x: l && l.x != null ? l.x : null, y: l && l.y != null ? l.y : null, items: new Map() }; stops.set(a.locationId, st); }
+        const k = `${o.sellerId}|${sku}|${lot ?? ''}`;
+        let it = st.items.get(k);
+        if (!it) { it = { sellerId: o.sellerId, sku, lot, qty: 0, picked: 0, porOrden: [] }; st.items.set(k, it); }
+        it.qty += a.qty; it.picked += a.pickedQty ?? 0;
+        const po = it.porOrden.find((x) => x.orderId === o.id);
+        if (po) { po.qty += a.qty; po.picked += a.pickedQty ?? 0; } else it.porOrden.push({ orderId: o.id, ref, qty: a.qty, picked: a.pickedQty ?? 0 });
+      }
+    }
+    // Orden de recorrido: el orden de picking de cada ubicación y, a igualdad, el código
+    // (P-01 < P-02 < P-10). Si TODAS las paradas tienen coordenadas, vecino más cercano
+    // partiendo de la de menor orden: siempre hacia adelante, sin volver.
+    const natural = (a: string, b: string) => a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' });
+    let lista = [...stops.values()].sort((a, b) => (a.rank - b.rank) || natural(a.code, b.code));
+    if (lista.length > 2 && lista.every((s) => s.x != null && s.y != null)) {
+      const out = [lista[0]]; const rest = lista.slice(1);
+      while (rest.length) {
+        const c = out[out.length - 1]; let bi = 0, bd = Infinity;
+        rest.forEach((s, i) => { const d = Math.hypot((s.x as number) - (c.x as number), (s.y as number) - (c.y as number)); if (d < bd) { bd = d; bi = i; } });
+        out.push(rest.splice(bi, 1)[0]);
+      }
+      lista = out;
+    }
+    const descr = new Map<string, string>();
+    for (const sid of [...new Set(ordenes.map((o) => o.sellerId))]) {
+      try { for (const k of await this.listSkus(sid)) descr.set(sid + '|' + k.sku, k.description || ''); } catch { /* sin descripción */ }
+    }
+    return {
+      ordenes: ordenes.map((o) => ({ orderId: o.id, sellerId: o.sellerId, ref: o.externalOrderId || o.id, status: o.status, dueAt: o.dueAt ?? null, carrier: o.carrier ?? null,
+        unidades: (o.lines || []).reduce((t, l) => t + (l.allocations || []).reduce((u, a) => u + a.qty, 0), 0),
+        pickeadas: (o.lines || []).reduce((t, l) => t + (l.allocations || []).reduce((u, a) => u + (a.pickedQty ?? 0), 0), 0) })),
+      omitidas,
+      paradas: lista.map((s, i) => ({ n: i + 1, locationId: s.locationId, code: s.code, zoneType: s.zoneType,
+        items: [...s.items.values()].map((it) => ({ ...it, description: descr.get(it.sellerId + '|' + it.sku) || '' })) })),
+    };
+  }
+
+  /**
+   * Pickeo consolidado: toma `qty` unidades de un producto en una ubicación y las
+   * reparte entre los pedidos del recorrido, primero los que vencen antes. Cada parte
+   * pasa por el picking dirigido normal (stock, ledger, productividad, tareas).
+   */
+  async pickConsolidated(operationId: string, input: { sellerId: string; sku: string; locationId: string; lot?: string | null; qty: number; orderIds: string[] }, actor?: string) {
+    const qty = Math.round(Number(input.qty));
+    if (!(qty > 0)) throw new ValidationError('Cantidad de picking inválida');
+    const { ordenes } = await this.ordenesDeRuta(operationId, (input.orderIds || []).map((orderId) => ({ sellerId: input.sellerId, orderId })));
+    const lot = input.lot ?? null;
+    const plan: Array<{ o: SalesOrder; take: number }> = [];
+    let falta = qty;
+    for (const o of ordenes) {
+      if (falta <= 0) break;
+      let rem = 0;
+      for (const l of o.lines || []) for (const a of l.allocations || []) if ((a.sku ?? l.sku) === input.sku && a.locationId === input.locationId && (a.lot ?? null) === lot) rem += a.qty - (a.pickedQty ?? 0);
+      if (rem <= 0) continue;
+      const take = Math.min(rem, falta); plan.push({ o, take }); falta -= take;
+    }
+    if (falta > 0) throw new ValidationError(`Sobran ${falta} un: en esta ubicación solo quedan ${qty - falta} de ${input.sku} para estos pedidos.`);
+    const porOrden: Array<{ orderId: string; ref: string; qty: number; status: string }> = [];
+    for (const p of plan) {
+      const r = await this.pickTask(input.sellerId, p.o.id, { sku: input.sku, locationId: input.locationId, lot, qty: p.take }, actor);
+      porOrden.push({ orderId: r.id, ref: r.externalOrderId || r.id, qty: p.take, status: r.status });
+    }
+    return { pickeadas: qty, porOrden };
+  }
+
+  /**
+   * Faltante en picking: lo pickeado queda registrado, lo que falta queda pendiente
+   * (la orden NO pasa a Pickeada) y el supervisor recibe una alerta crítica del agente.
+   */
+  async reportPickShortage(operationId: string, input: { sellerId: string; sku: string; locationId: string; lot?: string | null; qty: number; orderIds: string[]; nota?: string | null }, actor: string) {
+    const qty = Math.max(1, Math.round(Number(input.qty) || 1));
+    const { ordenes } = await this.ordenesDeRuta(operationId, (input.orderIds || []).map((orderId) => ({ sellerId: input.sellerId, orderId })));
+    const lot = input.lot ?? null;
+    const loc = await this.locations.findById(input.locationId).catch(() => null);
+    const code = loc ? loc.code : input.locationId;
+    const quien = await this.usersService.getUser(actor).then((u) => (u && (u.name || u.email)) || actor).catch(() => actor);
+    const afectadas: string[] = [];
+    for (const o of ordenes) {
+      let rem = 0;
+      for (const l of o.lines || []) for (const a of l.allocations || []) if ((a.sku ?? l.sku) === input.sku && a.locationId === input.locationId && (a.lot ?? null) === lot) rem += a.qty - (a.pickedQty ?? 0);
+      if (rem <= 0) continue;
+      const ref = o.externalOrderId || o.id; afectadas.push(ref);
+      await this.orders.addEvent(o.sellerId, o.id, 'FALTANTE', actor, `Faltante en picking: ${input.sku} en ${code} (pendientes ${rem} un)${input.nota ? ' · ' + input.nota : ''}`).catch(() => null);
+    }
+    if (!afectadas.length) throw new ValidationError('No queda nada pendiente de ese producto en esa ubicación.');
+    let alertaId: string | null = null;
+    if (this.agentAlertRepo) {
+      const dedupeKey = `faltante_picking:${input.sellerId}:${input.sku}:${input.locationId}:${lot ?? ''}`;
+      const ya = await this.agentAlertRepo.findOpenByDedupe(operationId, dedupeKey).catch(() => null);
+      const desc = await this.listSkus(input.sellerId).then((l) => (l.find((k) => k.sku === input.sku) || { description: '' }).description).catch(() => '');
+      const title = `Faltante en picking: ${input.sku}${desc ? ' · ' + desc : ''} en ${code}`;
+      const detail = `${afectadas.join(', ')} · faltan ${qty} un${lot ? ' · lote ' + lot : ''} · reportado por ${quien}${input.nota ? ' · «' + input.nota + '»' : ''}.`;
+      if (ya) { await this.agentAlertRepo.save({ ...ya, title, detail, createdAt: this.clockNow() }); alertaId = ya.id; }
+      else {
+        const a = await this.agentAlertRepo.create({
+          operationId, sellerId: input.sellerId, ruleKey: 'faltante_picking', severity: 'crit' as AgentRuleSeverity, title, detail,
+          action: 'Revisa la ubicación: cuenta el stock y ajústalo, o reserva desde otra ubicación. El pedido queda en picking hasta resolverlo.',
+          link: 'inventory', entityRef: afectadas[0], entityType: 'ORDER', dedupeKey, status: 'open' as any,
+          actionTool: null, actionLabel: null, actionStatus: 'none' as any, actionResult: null, createdAt: this.clockNow(), ackAt: null, ackBy: null,
+        });
+        alertaId = a.id;
+      }
+    }
+    return { ok: true, pedidos: afectadas, alertaId };
+  }
+
   async startPicking(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
     const order = await this.orders.startPicking(sellerId, orderId, actor);
     this.fireOrderWebhook(sellerId, order); // order.picking

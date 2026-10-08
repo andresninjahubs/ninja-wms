@@ -123,6 +123,43 @@
     .cam video{width:100%;height:100%;object-fit:cover}
     .cam .frame{position:absolute;inset:18% 12%;border:3px solid rgba(255,255,255,.85);border-radius:14px;box-shadow:0 0 0 2000px rgba(0,0,0,.25)}
     .cam .laser{position:absolute;left:12%;right:12%;top:50%;height:2px;background:var(--signal);box-shadow:0 0 10px var(--signal)}
+    /* Recorrido de picking */
+    .pr-top{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+    .pr-stopcard{border-radius:18px;padding:16px 18px;background:#0B1220;color:#fff;display:flex;align-items:center;gap:14px}
+    .pr-stopcard .k{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9FB0C8}
+    .pr-stopcard .c{font-family:var(--mono,ui-monospace),monospace;font-size:40px;font-weight:800;letter-spacing:.02em;line-height:1.05}
+    .pr-stopcard .z{font-size:13px;color:#C9D4E5;margin-top:2px}
+    .pr-stopcard.ok{background:var(--primary);color:var(--on-primary)}
+    .pr-stopcard.ok .k,.pr-stopcard.ok .z{color:inherit;opacity:.8}
+    .pr-stopcard .n{margin-left:auto;text-align:right;font-weight:800;font-size:13px;opacity:.85}
+    .pr-bar{height:8px;border-radius:99px;background:var(--surface-3);overflow:hidden}
+    .pr-bar i{display:block;height:100%;background:var(--primary);border-radius:99px;transition:width .25s}
+    .pr-meta{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-3);font-weight:600}
+    .pr-item{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
+    .pr-item+.pr-item{margin-top:10px}
+    .pr-item.done{border-color:var(--primary);background:var(--primary-wash)}
+    .pr-item.short{border-color:var(--crit);background:color-mix(in srgb,var(--crit) 6%,#fff)}
+    .pr-item .row{display:flex;gap:12px;align-items:center}
+    .pr-item .sku{font-weight:800;font-size:16px}
+    .pr-item .ds{font-size:13px;color:var(--ink-2);margin-top:1px}
+    .pr-item .lt{font-size:12px;color:var(--ink-3);margin-top:2px}
+    .pr-item .qn{margin-left:auto;text-align:right;flex:none}
+    .pr-item .qn b{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+    .pr-item .qn span{display:block;font-size:11.5px;color:var(--ink-3);font-weight:700}
+    .pr-item .acts{display:flex;gap:8px}
+    .pr-item .acts button{flex:1;height:44px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface);font-weight:800;font-size:14px;color:var(--ink)}
+    .pr-item .acts button.pri{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+    .pr-item .acts button.warn{color:var(--crit)}
+    .pr-item .ords{font-size:12px;color:var(--ink-3)}
+    .pr-next{margin-top:12px;font-size:13px;color:var(--ink-3);text-align:center}
+    .pr-tap{width:100%;text-align:left;background:none;border:0;padding:0;color:inherit}
+    .batchbar{position:sticky;bottom:calc(10px + env(safe-area-inset-bottom));margin-top:12px;display:flex;align-items:center;gap:12px;padding:10px 10px 10px 16px;border-radius:16px;background:#0B1220;color:#fff;box-shadow:0 12px 30px -10px rgba(0,0,0,.5);z-index:5}
+    .batchbar span{flex:1;font-weight:800}
+    .batchbar .btn{width:auto;min-height:44px;padding:0 18px}
+    .selbox{flex:none;width:26px;height:26px;border-radius:8px;border:2px solid var(--line-2);background:var(--surface);display:grid;place-items:center;color:transparent;font-weight:900;font-size:16px;line-height:1}
+    .selbox.on{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+    .selall{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    .selall button{background:none;border:0;color:var(--primary-ink);font-weight:800;font-size:13px;padding:6px 0}
     .cam.dock{aspect-ratio:16/9;max-height:26vh;margin-bottom:12px}
     .cam.dock .frame{inset:14% 10%}
     .cam.hit .frame{border-color:var(--signal);box-shadow:0 0 0 2000px rgba(0,0,0,.25),0 0 18px var(--signal)}
@@ -254,8 +291,8 @@
     .op.wide{grid-column:1/-1;flex-direction:row;justify-content:center;padding:14px}
     .op[data-op="packst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 16l2 2 4-4 M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14 M3.29 7 12 12l8.71-5 M12 22V12 M7.5 4.27l9 5.15'/%3E%3C/svg%3E")}
     .op[data-op="shipst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2 M15 18H9 M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62l-3.48-4.35A1 1 0 0 0 17.52 8H14 M17 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z'/%3E%3C/svg%3E")}
-    #btn-rcback,#btn-piback,#btn-pkback,#btn-shback{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E")}
-    #btn-pkcam,#btn-shcam{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7V5a2 2 0 0 1 2-2h2 M17 3h2a2 2 0 0 1 2 2v2 M21 17v2a2 2 0 0 1-2 2h-2 M7 21H5a2 2 0 0 1-2-2v-2 M7 8v8 M11 8v8 M15 8v8 M18 8v8'/%3E%3C/svg%3E")}
+    #btn-rcback,#btn-piback,#btn-pkback,#btn-shback,#btn-prback{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E")}
+    #btn-pkcam,#btn-shcam,#btn-prcam{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7V5a2 2 0 0 1 2-2h2 M17 3h2a2 2 0 0 1 2 2v2 M21 17v2a2 2 0 0 1-2 2h-2 M7 21H5a2 2 0 0 1-2-2v-2 M7 8v8 M11 8v8 M15 8v8 M18 8v8'/%3E%3C/svg%3E")}
     .scanbar{display:flex;flex-direction:column;gap:6px}
     .scanrow{display:flex;gap:8px}
     .scanrow input{flex:1;min-width:0}
@@ -408,6 +445,7 @@
         <div id="pane-mine" class="pane on">
           <div id="board-next"></div>
           <div id="board-list"></div>
+          <div class="batchbar" id="home-batch" style="display:none"><span id="home-batch-n">0 pedidos</span><button class="btn" id="home-batch-go">Pickear juntos</button></div>
           <div id="board-empty" class="card" style="display:none;text-align:center;padding:26px 16px">
             <div aria-hidden="true"></div>
             <div style="font-weight:700;margin-top:6px">Sin tareas asignadas</div>
@@ -652,6 +690,26 @@
         </div>
         <div id="pi-list"></div>
         <button class="btn alt" id="pi-loose" style="margin-top:6px">Picking suelto (sin pedido)</button>
+        <div class="batchbar" id="pi-batch" style="display:none"><span id="pi-batch-n">0 pedidos</span><button class="btn" id="pi-batch-go">Pickear juntos</button></div>
+      </div>
+    </section>
+
+    <!-- RECORRIDO DE PICKING (un pedido o un lote): ubicación → productos → siguiente ubicación. -->
+    <section id="pickrun" class="screen">
+      <header>
+        <button class="iconbtn" id="btn-prback" title="Volver"></button>
+        <div><div class="title" id="pr-title">Picking</div><div class="sub" id="pr-sub">Cargando recorrido…</div></div>
+        <div class="spacer"></div>
+        <button class="iconbtn" id="btn-prcam" title="Cámara"></button>
+      </header>
+      <div class="body">
+        <div class="pr-top" id="pr-top"></div>
+        <div class="cam dock" id="pr-cam" style="display:none"><video playsinline webkit-playsinline muted autoplay></video><div class="frame"></div><div class="laser"></div><div class="hint">Iniciando cámara…</div></div>
+        <form class="scanbar" id="pr-scan" autocomplete="off">
+          <label for="pr-code" id="pr-label">Escanea la ubicación</label>
+          <div class="scanrow"><input id="pr-code" class="code" placeholder="Código" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go"><button class="btn alt" type="submit">OK</button></div>
+        </form>
+        <div id="pr-body"></div>
       </div>
     </section>
 

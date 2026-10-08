@@ -208,7 +208,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#pq-body', title:'Las órdenes en fila', text:'Cada tarjeta muestra la posición, el courier, unidades y líneas. Solo aparecen órdenes <b>reservadas</b> o <b>en picking</b>: si la cola está vacía, primero reserva órdenes desde la sección Órdenes.'},
       {el:'#pq-body [data-pqgo]', place:'left', title:'Preparar en cadena', text:'Pulsa <b>Preparar</b> para abrir el picking guiado: el sistema indica de qué ubicación tomar cada SKU. Al terminar, te lleva automáticamente a la siguiente orden de la cola.'}
     ],
-    tips:['Configura la prioridad de courier en Clientes → editar cliente.','Un pedido «en picking» conserva su lugar en la fila hasta terminarse.']
+    tips:['Configura la prioridad de courier en Clientes → editar cliente.','Un pedido «en picking» conserva su lugar en la fila hasta terminarse.','En la app del operario el picking va por ubicación: escanea la ubicación, luego cada unidad del producto, y la app lo lleva a la siguiente parada en orden de recorrido (según el «orden de picking» de cada ubicación).','Picking en lote: en la app, marca varios pedidos (Picking → Asignados o Libres, o en Mis tareas) y «Pickear juntos». Se recorre una sola vez la bodega y los pedidos se separan en Empaque.','Si el operario marca «Falta», el pedido queda en picking y te llega una alerta crítica «Faltante en picking» en Alertas activas.']
   },
 
   inbound: {

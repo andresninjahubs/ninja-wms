@@ -35,6 +35,7 @@ import { OrdersMaintenanceController } from './orders-maintenance.controller';
 import { EventsController } from './events.controller';
 import { AnalyticsController } from './analytics.controller';
 import { AssignmentsController } from './assignments.controller';
+import { PickingController } from './picking.controller';
 import { AgentController } from './agent.controller';
 import { CostsController } from './costs.controller';
 import { SellersController } from './sellers.controller';
@@ -80,6 +81,7 @@ import type { WmsContext } from '../infra/context';
     EventsController,
     AnalyticsController,
     AssignmentsController,
+    PickingController,
     AgentController,
     CostsController,
   ],

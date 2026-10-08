@@ -2508,6 +2508,44 @@ async function run() {
     assert.equal(r.threshold, 6); assert.equal(r.enabled, false);
   });
 
+  await test('picking por ruta: paradas en orden de recorrido, reparto por deadline, lote y faltante', async () => {
+    const { facade } = buildFacade();
+    const F: any = facade;
+    await facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    // Dos ubicaciones de picking con orden de recorrido explícito (P-10 va ANTES que P-02).
+    const p2 = await facade.createLocation({ operationId: 'op1', code: 'P-02', zoneType: ZoneType.PICKING, capacity: 1000, pickRank: 5 });
+    const p10 = await facade.createLocation({ operationId: 'op1', code: 'P-10', zoneType: ZoneType.PICKING, capacity: 1000, pickRank: 1 });
+    await facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await facade.createSku('acme', { sku: 'PAN', description: 'Pantalón' });
+    await facade.receive('acme', { sku: 'CAM', qty: 10, locationId: p2.id });
+    await facade.receive('acme', { sku: 'PAN', qty: 10, locationId: p10.id });
+    const mk = async (ref: string, lines: any[], dueH: number | null) => { const o = await facade.createOrder('acme', { externalOrderId: ref, salesChannel: 'web', shipTo: { name: 'x' }, lines, dueAt: dueH == null ? null : new Date(Date.parse('2026-01-01T00:00:00.000Z') + dueH * 3600000).toISOString() } as any, 'ana'); await facade.allocateOrder('acme', o.id, 'ana'); return o; };
+    const tarde = await mk('PED-TARDE', [{ sku: 'CAM', qty: 2 }, { sku: 'PAN', qty: 1 }], 10);
+    const urgente = await mk('PED-URGE', [{ sku: 'CAM', qty: 1 }], 1);
+    const r = await facade.pickRoute('op1', [{ sellerId: 'acme', orderId: tarde.id }, { sellerId: 'acme', orderId: urgente.id }]);
+    assert.deepEqual(r.paradas.map((p: any) => p.code), ['P-10', 'P-02'], 'la ruta sigue el orden de recorrido, no el alfabético');
+    const cam: any = r.paradas[1].items.find((i: any) => i.sku === 'CAM');
+    assert.equal(cam.qty, 3, 'en lote se consolida: 3 camisas para dos pedidos');
+    assert.equal(cam.description, 'Camisa');
+    assert.equal(r.ordenes[0].ref, 'PED-URGE', 'el que vence antes va primero');
+    // Tomar 1 camisa: va al urgente, que queda completo.
+    const p1 = await facade.pickConsolidated('op1', { sellerId: 'acme', sku: 'CAM', locationId: p2.id, qty: 1, orderIds: [tarde.id, urgente.id] }, 'pedro');
+    assert.equal(p1.porOrden[0].ref, 'PED-URGE');
+    assert.equal(p1.porOrden[0].status, OrderStatus.PICKED, 'el urgente queda pickeado');
+    // No se puede tomar más de lo que queda.
+    await expectThrows(() => facade.pickConsolidated('op1', { sellerId: 'acme', sku: 'CAM', locationId: p2.id, qty: 5, orderIds: [tarde.id, urgente.id] }, 'pedro'), ValidationError);
+    // Faltante: lo pendiente queda en el pedido y hay alerta crítica.
+    await facade.pickConsolidated('op1', { sellerId: 'acme', sku: 'CAM', locationId: p2.id, qty: 1, orderIds: [tarde.id] }, 'pedro');
+    const sh = await facade.reportPickShortage('op1', { sellerId: 'acme', sku: 'CAM', locationId: p2.id, qty: 1, orderIds: [tarde.id] }, 'pedro');
+    assert.deepEqual(sh.pedidos, ['PED-TARDE']);
+    const alertas = (await facade.agentAlerts('op1')).abiertas.filter((a: any) => a.ruleKey === 'faltante_picking');
+    assert.equal(alertas.length, 1, 'el supervisor recibe una alerta de faltante');
+    const o = await F.orders.getOrder('acme', tarde.id);
+    assert.equal(o.status, OrderStatus.PICKING, 'con faltante, la orden NO pasa a pickeada');
+    assert.ok((o.events || []).some((e: any) => e.type === 'FALTANTE'), 'y queda el evento en su historia');
+  });
+
   await test('tareas: una etapa ya superada no se empieza, no se asigna y se cierra sola', async () => {
     const { facade } = buildFacade();
     const F: any = facade;

@@ -87,6 +87,13 @@ export class OrderService {
   private ev(type: string, actor?: string, detail?: string | null): OrderEvent {
     return { type, at: this.clock.now(), actor: actor || 'system', detail: detail ?? null };
   }
+  /** Agrega un evento de auditoría a la orden (p. ej. un faltante reportado en picking). */
+  async addEvent(sellerId: string, orderId: string, type: string, actor?: string, detail?: string | null): Promise<SalesOrder> {
+    const order = await this.mustGet(sellerId, orderId);
+    order.events = (order.events || []).concat(this.ev(type, actor, detail ?? null));
+    await this.orders.save(order);
+    return order;
+  }
   private unitsOf(order: SalesOrder): number {
     return order.lines.reduce((a, l) => a + l.qty, 0);
   }

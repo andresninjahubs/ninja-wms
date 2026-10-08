@@ -151,7 +151,7 @@
 
   // ---- Navegación -----------------------------------------------------------
   function show(id) {
-    ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship', 'pickst', 'recvst', 'taskst', 'count', 'ret', 'kit'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
+    ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship', 'pickst', 'pickrun', 'recvst', 'taskst', 'count', 'ret', 'kit'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
     if (id !== 'scan') stopCamera();
     if (typeof camDockStop === 'function') camDockStop();
     // Pantallas de lista o menú: el operario no está trabajando en nada concreto.
@@ -331,21 +331,32 @@
     $('tab-available').style.display = board.selfPickup ? '' : 'none';
     // Siguiente
     var nx = $('board-next'), ls = $('board-list'), em = $('board-empty');
-    if (!mine.length) { nx.innerHTML = ''; ls.innerHTML = ''; em.style.display = ''; return; }
+    if (!mine.length) { nx.innerHTML = ''; ls.innerHTML = ''; em.style.display = ''; SEL.home = {}; selBar('home'); return; }
     em.style.display = 'none';
     var n = mine[0];
-    nx.innerHTML = '<div class="next"><div class="lbl">' + (n.estado === 'in_progress' ? '▶ En curso' : '▶ Siguiente') + '</div>'
+    var hsel = function (t) { return t.type === 'PICK' ? '<button type="button" class="selbox' + (SEL.home[t.entityId] ? ' on' : '') + '" data-hsel="' + esc(t.entityId) + '" aria-label="Sumar al lote">✓</button>' : ''; };
+    nx.innerHTML = '<div class="next"><div class="lbl" style="display:flex;align-items:center;gap:10px">' + hsel(n) + (n.estado === 'in_progress' ? '▶ En curso' : '▶ Siguiente') + '</div>'
       + '<div class="tt">' + taskTitle(n) + ' · <span class="ref">' + esc(n.entityRef || n.entityId) + '</span></div>' + taskDesc(n)
       + '<div class="meta">' + esc(n.cliente || '') + (n.unitsEstimate ? ' · ' + n.unitsEstimate + ' un' : '') + '</div>'
       + (n.priorityReason ? '<div class="why">' + esc(n.priorityReason) + '</div>' : '')
       + '<button class="btn" data-start="0">' + (n.estado === 'in_progress' ? 'Continuar' : 'Iniciar') + '</button></div>';
     ls.innerHTML = mine.slice(1).map(function (t, i) {
-      return '<div class="task' + (t.estado === 'in_progress' ? ' running' : '') + '"><div class="num">' + (t.position || (i + 2)) + '</div>'
+      return '<div class="task' + (t.estado === 'in_progress' ? ' running' : '') + '">' + hsel(t) + '<div class="num">' + (t.position || (i + 2)) + '</div>'
         + '<div style="flex:1;min-width:0"><div class="tt"><span class="typechip ' + esc(t.type) + '">' + esc(TL[t.type] || t.type) + '</span><span class="ref">' + esc(t.entityRef || t.entityId) + '</span></div>' + taskDesc(t)
         + '<div class="meta">' + esc(t.cliente || '') + (t.unitsEstimate ? ' · ' + t.unitsEstimate + ' un' : '') + (t.estado === 'in_progress' ? ' · en curso' : '') + '</div>'
         + (t.priorityReason ? '<div class="why">' + esc(t.priorityReason) + '</div>' : '') + '</div>'
         + '<div class="act"><button data-start="' + (i + 1) + '">' + (t.estado === 'in_progress' ? 'Continuar' : 'Iniciar') + '</button></div></div>';
     }).join('');
+    // Limpia selecciones de pedidos que ya no están en la bandeja.
+    Object.keys(SEL.home).forEach(function (k) { if (!mine.some(function (t) { return t.entityId === k && t.type === 'PICK'; })) delete SEL.home[k]; });
+    selBar('home');
+    Array.prototype.forEach.call(document.querySelectorAll('#pane-mine [data-hsel]'), function (b) {
+      b.addEventListener('click', function () {
+        var id = b.getAttribute('data-hsel'), t = mine.filter(function (x) { return x.entityId === id && x.type === 'PICK'; })[0];
+        if (SEL.home[id]) delete SEL.home[id]; else if (t) SEL.home[id] = { entityId: id, sellerId: t.sellerId, entityRef: t.entityRef, libre: false };
+        b.classList.toggle('on', !!SEL.home[id]); selBar('home');
+      });
+    });
     Array.prototype.forEach.call(document.querySelectorAll('#pane-mine [data-start]'), function (b) {
       b.addEventListener('click', function () { startAssigned(mine[parseInt(b.getAttribute('data-start'), 10)]); });
     });
@@ -394,6 +405,7 @@
       if (e && e.status >= 400 && e.status < 500) {
         toast(e.message || 'Esta tarea ya no está disponible', false);
         if (task && task.entityId === t.entityId) { stopCamera(); liveIdle(); volverDeFlujo(); }
+        else if ($('pickrun').classList.contains('on') && PR.orders.length <= 1) prExit();
         if (typeof loadBoard === 'function') loadBoard();
         return;
       }
@@ -402,7 +414,8 @@
     task = t;
     if (t.sellerId) { cfg.seller = t.sellerId; save(); }
     liveTask();
-    if (t.type === 'PICK') { startOp('pick'); loadTaskPicklist(); return; }
+    // Picking: recorrido por ubicación (ubicación → productos → siguiente ubicación).
+    if (t.type === 'PICK') { var volverA = PI.back ? 'pickst' : 'home'; PI.back = false; openPickRun([{ sellerId: t.sellerId, orderId: t.entityId }], { back: volverA }); return; }
     if (t.type === 'RESTOCK') {
       // Reposición: la mercadería está en la ubicación DEV-REPOSICION y hay que devolverla
       // a su sitio. Origen preseleccionado; el destino viene sugerido pero se puede cambiar.
@@ -1895,7 +1908,8 @@
     var btn = libre
       ? '<button class="oc-act" data-pitake="' + esc(t.entityId) + '">Tomar</button>'
       : '<button class="oc-act' + (t._first ? '' : ' alt') + '" data-pistart="' + esc(t.entityId) + '">' + (run ? 'Continuar' : 'Empezar') + '</button>';
-    return '<div class="ordc' + (run ? ' run' : '') + '"><div class="oc-main"><div class="oc-ref">' + esc(t.entityRef || oRef(o)) + ' ' + (run ? '<span class="tagrun">En curso</span> ' : '') + dlChipHtml(o) + '</div>'
+    var sel = !!SEL.pi[t.entityId];
+    return '<div class="ordc' + (run ? ' run' : '') + '"><button type="button" class="selbox' + (sel ? ' on' : '') + '" data-pisel="' + esc(t.entityId) + '" data-libre="' + (libre ? 1 : 0) + '" aria-label="Seleccionar para lote">✓</button><div class="oc-main"><div class="oc-ref">' + esc(t.entityRef || oRef(o)) + ' ' + (run ? '<span class="tagrun">En curso</span> ' : '') + dlChipHtml(o) + '</div>'
       + '<div class="oc-meta">' + esc(t.cliente || o.sellerName || '') + (lineas ? ' · ' + lineas + ' línea(s)' : '') + (un ? ' · ' + un + ' un' : '') + (o.status === 'PICKING' && !run ? ' · picking a medias' : '') + '</div>'
       + (!libre && t.priorityReason ? '<div class="oc-meta" style="color:var(--ink-2)">' + esc(t.priorityReason) + '</div>' : '')
       + '</div>' + btn + '</div>';
@@ -1911,16 +1925,17 @@
       html = '<div class="pk-empty">Tu usuario no tiene habilitado el <b>picking</b>. Pídele al administrador que lo active en tus habilidades.</div>';
     } else if (PI.tab === 'mine') {
       html = mine.length
-        ? '<div class="sec" style="margin-bottom:8px">En el orden en que debes hacerlos</div>' + mine.map(function (t, i) { t._first = i === 0; return piCard(t, false); }).join('')
+        ? '<div class="selall"><div class="sec">En el orden en que debes hacerlos</div><button type="button" data-piselall="mine">Seleccionar todos</button></div>' + mine.map(function (t, i) { t._first = i === 0; return piCard(t, false); }).join('')
         : '<div class="pk-empty">No tienes pedidos de picking asignados.' + (b.selfPickup && free.length ? ' Revisa <b>Libres</b> para tomar uno.' : '') + '</div>';
     } else {
       html = !b.selfPickup
         ? '<div class="pk-empty">El administrador no permite tomar pedidos desde la app. Espera a que te asignen, o pídele que active <b>«Tomar tareas»</b> en Asignaciones.</div>'
         : (free.length
-          ? '<div class="sec" style="margin-bottom:8px">Más urgentes primero · toca Tomar para agregarlo a tu lista</div>' + free.map(function (t) { return piCard(t, true); }).join('')
+          ? '<div class="selall"><div class="sec">Más urgentes primero · marca varios para pickearlos juntos</div><button type="button" data-piselall="free">Seleccionar todos</button></div>' + free.map(function (t) { return piCard(t, true); }).join('')
           : '<div class="pk-empty">No hay pedidos libres para pickear ahora. 🎉</div>');
     }
     $('pi-list').innerHTML = html;
+    selBar('pi');
   }
   $('pi-tabs').addEventListener('click', function (e) {
     var c = e.target.closest('[data-pit]'); if (!c) return;
@@ -1945,7 +1960,22 @@
       })
       .catch(function (e) { PI.busy = false; bip(false); toast(e.message, false); loadPickStation(); });
   }
+  function piItem(id) {
+    var b = PI.board || {}; var m = (b.mine || []).filter(function (x) { return x.entityId === id; })[0];
+    if (m) return { entityId: id, sellerId: m.sellerId, entityRef: m.entityRef, libre: false };
+    var f = (b.available || []).filter(function (x) { return x.entityId === id; })[0];
+    return f ? { entityId: id, sellerId: f.sellerId, entityRef: f.entityRef, libre: true } : null;
+  }
   $('pi-list').addEventListener('click', function (e) {
+    var sb = e.target.closest('[data-pisel]');
+    if (sb) { var id = sb.getAttribute('data-pisel'); if (SEL.pi[id]) delete SEL.pi[id]; else { var it = piItem(id); if (it) SEL.pi[id] = it; } renderPickStation(); return; }
+    var sa = e.target.closest('[data-piselall]');
+    if (sa) {
+      var lst = sa.getAttribute('data-piselall') === 'mine' ? (PI.board.mine || []) : (PI.board.available || []);
+      var todos = lst.every(function (t) { return SEL.pi[t.entityId]; });
+      lst.forEach(function (t) { if (todos) delete SEL.pi[t.entityId]; else { var it = piItem(t.entityId); if (it) SEL.pi[t.entityId] = it; } });
+      renderPickStation(); return;
+    }
     var s = e.target.closest('[data-pistart]');
     if (s) { var t = ((PI.board && PI.board.mine) || []).filter(function (x) { return x.entityId === s.getAttribute('data-pistart'); })[0]; if (t) piStart(t); return; }
     var k = e.target.closest('[data-pitake]');
@@ -1970,6 +2000,12 @@
     enfoca('pi-code');
   });
   $('btn-pirefresh').addEventListener('click', function () { loadPickStation(); toast('Actualizado', true); });
+  $('home-batch-go').addEventListener('click', function () { startBatch(Object.keys(SEL.home).map(function (k) { return SEL.home[k]; }), 'home'); });
+  $('pi-batch-go').addEventListener('click', function () {
+    var items = Object.keys(SEL.pi).map(function (k) { return SEL.pi[k]; });
+    if (items.some(function (x) { return x.libre; }) && !(PI.board && PI.board.selfPickup)) { toast('El administrador no permite tomar pedidos libres desde la app', false); return; }
+    startBatch(items, 'pickst');
+  });
   $('btn-piback').addEventListener('click', function () { PI.back = false; show('home'); });
   $('pi-loose').addEventListener('click', function () {
     // El picking suelto saca stock reservado sin ligarlo a un pedido: queda como
@@ -1980,6 +2016,213 @@
   });
 
 
+
+
+  // =====================================================================
+  // RECORRIDO DE PICKING (un pedido o un LOTE de pedidos)
+  // ---------------------------------------------------------------------
+  // El operario recorre UBICACIONES: en cada parada escanea (o confirma) la ubicación,
+  // luego escanea el producto una vez por unidad (o lo toca; la caja/DUN suma su
+  // factor; «Tomar todas» toma lo que falta) y la app lo lleva a la siguiente parada.
+  // En lote, todo se pickea junto y la separación por pedido ocurre en EMPAQUE.
+  // Cada toma se registra al instante (en cola, en orden) y el servidor la reparte
+  // entre los pedidos, primero los que vencen antes.
+  // =====================================================================
+  var PR = { orders: [], stops: [], i: 0, phase: 'loc', queue: [], busy: false, back: null, est: {}, done: {} };
+  function prPend(it) { return Math.max(0, it.qty - it.picked - (it.local || 0) - (it.shortQty || 0)); }
+  function prStopPend(s) { return (s.items || []).reduce(function (a, it) { return a + prPend(it); }, 0); }
+  function prTotals() {
+    var tot = 0, hech = 0;
+    PR.stops.forEach(function (s) { s.items.forEach(function (it) { tot += it.qty; hech += it.picked + (it.local || 0); }); });
+    return { tot: tot, hech: hech };
+  }
+  function prLive() {
+    liveWorking(PR.orders.map(function (o) { return { type: 'PICK', entityId: o.orderId, ref: o.ref + (PR.orders.length > 1 ? ' · lote de ' + PR.orders.length : ''), sellerId: o.sellerId, done: PR.done[o.orderId] || 0, total: o.unidades, unit: 'un' }; }));
+  }
+  /** refs: [{sellerId, orderId}] · opts.back: a dónde volver al terminar ('pickst' | 'home'). */
+  function openPickRun(refs, opts) {
+    opts = opts || {};
+    task = null; PR = { orders: [], stops: [], i: 0, phase: 'loc', queue: [], busy: false, back: opts.back || 'home', est: {}, done: {} };
+    show('pickrun');
+    $('pr-title').textContent = refs.length > 1 ? 'Picking en lote · ' + refs.length + ' pedidos' : 'Picking';
+    $('pr-sub').textContent = 'Armando el recorrido…'; $('pr-top').innerHTML = ''; $('pr-body').innerHTML = '';
+    api('/picking/route', { method: 'POST', body: { operationId: opIdOrNull(), orders: refs } }).then(function (r) {
+      PR.orders = r.ordenes || [];
+      PR.orders.forEach(function (o) { PR.est[o.orderId] = o.status; PR.done[o.orderId] = o.pickeadas || 0; learnSkus(o.sellerId, []); });
+      PR.stops = (r.paradas || []).map(function (s) { s.items.forEach(function (it) { it.local = 0; it.shortQty = 0; if (it.description) { DESC[it.sellerId + '|' + it.sku] = it.description; } }); return s; });
+      if ((r.omitidas || []).length) toast('Fuera del recorrido: ' + r.omitidas.map(function (x) { return x.ref + ' (' + x.motivo + ')'; }).join(', '), false);
+      if (!PR.orders.length) { $('pr-sub').textContent = 'Nada que pickear'; $('pr-body').innerHTML = '<div class="pk-empty">Ninguno de estos pedidos tiene picking pendiente.</div>'; return; }
+      PR.i = prNextStop(0); PR.phase = 'loc';
+      if (PR.i < 0) { prFinish(); return; }
+      camDockStart('pr-cam', onPrCode, 'Escanea la ubicación');
+      prLive(); renderPickRun();
+    }).catch(function (e) { $('pr-sub').textContent = 'Error'; $('pr-body').innerHTML = '<div class="pk-empty">No pude armar el recorrido: ' + esc(e.message) + '</div>'; });
+  }
+  function prNextStop(from) { for (var k = from; k < PR.stops.length; k++) if (prStopPend(PR.stops[k]) > 0) return k; for (k = 0; k < from; k++) if (prStopPend(PR.stops[k]) > 0) return k; return -1; }
+  function renderPickRun() {
+    var s = PR.stops[PR.i]; if (!s) return;
+    var tt = prTotals(), pct = tt.tot ? Math.round(100 * tt.hech / tt.tot) : 0;
+    var restantes = PR.stops.filter(function (x) { return prStopPend(x) > 0; }).length;
+    $('pr-sub').textContent = (PR.orders.length > 1 ? PR.orders.length + ' pedidos · ' : (PR.orders[0] ? PR.orders[0].ref + ' · ' : '')) + tt.hech + ' de ' + tt.tot + ' un';
+    var enLoc = PR.phase === 'loc';
+    $('pr-top').innerHTML = '<div class="pr-stopcard' + (enLoc ? '' : ' ok') + '"><div><div class="k">' + (enLoc ? 'Ve a la ubicación' : '✓ Estás en') + '</div><div class="c">' + esc(s.code) + '</div><div class="z">' + esc(zoneName(s.zoneType)) + '</div></div>'
+      + '<div class="n">Parada ' + (PR.i + 1) + ' de ' + PR.stops.length + '<br>' + restantes + ' por visitar</div></div>'
+      + '<div class="pr-bar"><i style="width:' + pct + '%"></i></div><div class="pr-meta"><span>' + tt.hech + ' / ' + tt.tot + ' unidades</span><span>' + pct + '%</span></div>';
+    $('pr-label').textContent = enLoc ? 'Escanea la ubicación ' + s.code : 'Escanea el producto (una vez por unidad)';
+    $('pr-code').placeholder = enLoc ? 'Código de ubicación' : 'EAN / DUN del producto';
+    camDockHint(enLoc ? 'Escanea la ubicación ' + s.code : 'Escanea cada unidad');
+    var html = '';
+    if (enLoc) html += '<button class="btn" id="pr-here">Estoy en ' + esc(s.code) + ' (confirmar sin escanear)</button><div class="sec" style="margin:14px 0 8px">Aquí vas a tomar</div>';
+    html += s.items.map(function (it, ix) {
+      var p = prPend(it), hecho = it.picked + (it.local || 0), done = p <= 0;
+      var ords = it.porOrden.length > 1 ? '<div class="ords">Para ' + it.porOrden.length + ' pedidos: ' + it.porOrden.map(function (o) { return esc(o.ref) + ' (' + o.qty + ')'; }).join(' · ') + '</div>'
+        : (PR.orders.length > 1 ? '<div class="ords">Para ' + esc(it.porOrden[0].ref) + '</div>' : '');
+      return '<div class="pr-item' + (done ? (it.shortQty ? ' short' : ' done') : '') + '">'
+        + '<button type="button" class="pr-tap" data-prtap="' + ix + '"' + (enLoc || done ? ' disabled' : '') + '><div class="row"><div style="min-width:0"><div class="sku">' + esc(it.sku) + (done && !it.shortQty ? ' ✓' : '') + '</div>'
+        + '<div class="ds">' + esc(it.description || descOf(it.sku, it.sellerId)) + '</div>' + (it.lot ? '<div class="lt">Lote ' + esc(it.lot) + '</div>' : '') + ords + '</div>'
+        + '<div class="qn"><b>' + hecho + '/' + it.qty + '</b><span>' + (it.shortQty ? 'faltan ' + it.shortQty : (done ? 'listo' : 'toca o escanea')) + '</span></div></div></button>'
+        + (!enLoc && !done ? '<div class="acts"><button type="button" data-pradd="' + ix + '">+1</button><button type="button" class="pri" data-prall="' + ix + '">' + (p === 1 ? 'Tomar 1' : 'Tomar las ' + p) + '</button><button type="button" class="warn" data-prshort="' + ix + '">Falta</button></div>' : '')
+        + '</div>';
+    }).join('');
+    var sig = prNextStop(PR.i + 1);
+    if (sig >= 0 && sig !== PR.i) html += '<div class="pr-next">Después: ' + esc(PR.stops[sig].code) + '</div>';
+    $('pr-body').innerHTML = html;
+    if ($('pr-here')) $('pr-here').addEventListener('click', function () { prArrive(); });
+    enfoca('pr-code');
+  }
+  function prArrive() { PR.phase = 'items'; bip(true); renderPickRun(); }
+  function prAdd(ix, n) {
+    var s = PR.stops[PR.i], it = s && s.items[ix]; if (!it) return;
+    var p = prPend(it); if (p <= 0) { bip(false); toast('Ya tomaste todas las de ' + it.sku, false); return; }
+    n = Math.min(n, p);
+    it.local = (it.local || 0) + n;
+    PR.queue.push({ stop: PR.i, ix: ix, n: n });
+    bip(true); renderPickRun(); prFlush(); prCheckStop();
+  }
+  function prFlush() {
+    if (PR.busy || !PR.queue.length) return;
+    var q = PR.queue.shift();
+    while (PR.queue.length && PR.queue[0].stop === q.stop && PR.queue[0].ix === q.ix) q.n += PR.queue.shift().n;   // tomas seguidas del mismo producto van juntas
+    var s = PR.stops[q.stop], it = s.items[q.ix];
+    PR.busy = true;
+    api('/picking/pick', { method: 'POST', body: { operationId: opIdOrNull(), sellerId: it.sellerId, sku: it.sku, locationId: s.locationId, lot: it.lot || null, qty: q.n, orderIds: it.porOrden.map(function (o) { return o.orderId; }) } })
+      .then(function (r) {
+        it.picked += q.n; it.local -= q.n;
+        (r.porOrden || []).forEach(function (x) { PR.est[x.orderId] = x.status; PR.done[x.orderId] = (PR.done[x.orderId] || 0) + x.qty; var po = it.porOrden.filter(function (o) { return o.orderId === x.orderId; })[0]; if (po) po.picked += x.qty; });
+        prLive();
+      })
+      .catch(function (e) { it.local -= q.n; bip(false); toast('No se registró: ' + (e && e.message || 'sin conexión'), false); })
+      .then(function () { PR.busy = false; if ($('pickrun').classList.contains('on')) renderPickRun(); if (PR.queue.length) prFlush(); else prCheckStop(); });
+  }
+  function prCheckStop() {
+    var s = PR.stops[PR.i]; if (!s || PR.phase !== 'items') return;
+    if (prStopPend(s) > 0) return;
+    if (PR.queue.length || PR.busy) return;   // espera a que lo de esta parada quede registrado
+    var sig = prNextStop(PR.i + 1);
+    toast('✓ ' + s.code + ' lista' + (sig >= 0 ? ' · sigue ' + PR.stops[sig].code : ''), true);
+    if (sig < 0) { prFinish(); return; }
+    PR.i = sig; PR.phase = 'loc'; renderPickRun();
+  }
+  function prFinish() {
+    camDockStop(); $('pr-cam').style.display = 'none'; $('pr-scan').style.display = 'none';
+    liveIdle();
+    var ok = PR.orders.filter(function (o) { return PR.est[o.orderId] === 'PICKED'; });
+    var pend = PR.orders.filter(function (o) { return PR.est[o.orderId] !== 'PICKED'; });
+    $('pr-top').innerHTML = ''; $('pr-sub').textContent = 'Recorrido terminado';
+    $('pr-body').innerHTML = '<div class="resbox"><div class="rb-t">' + (pend.length ? '⚠️ ' : '✓ ') + ok.length + ' de ' + PR.orders.length + ' pedido(s) pickeado(s)</div>'
+      + (ok.length ? '<div class="muted">' + ok.map(function (o) { return esc(o.ref); }).join(' · ') + (PR.orders.length > 1 ? ' · se separan por pedido en Empaque.' : ' · listo para empaque.') + '</div>' : '')
+      + (pend.length ? '<div class="banner" style="margin:0"><b>Quedan pendientes</b> (avisamos al supervisor): ' + pend.map(function (o) { return esc(o.ref); }).join(' · ') + '</div>' : '')
+      + '</div><button class="btn" id="pr-more">' + (PR.back === 'pickst' ? 'Volver a picking' : 'Volver a mis tareas') + '</button>';
+    $('pr-more').addEventListener('click', prExit);
+    bip(!pend.length);
+  }
+  function prExit() {
+    camDockStop(); liveIdle();
+    $('pr-scan').style.display = '';
+    if (PR.back === 'pickst') openPickStation(); else { show('home'); loadBoard(); }
+  }
+  function prShort(ix) {
+    var s = PR.stops[PR.i], it = s && s.items[ix]; if (!it) return;
+    var p = prPend(it);
+    var n = window.prompt('¿Cuántas unidades de ' + it.sku + ' faltan en ' + s.code + '?', String(p));
+    if (n == null) return;
+    n = Math.max(1, Math.min(p, parseInt(n, 10) || p));
+    api('/picking/shortage', { method: 'POST', body: { operationId: opIdOrNull(), sellerId: it.sellerId, sku: it.sku, locationId: s.locationId, lot: it.lot || null, qty: n, orderIds: it.porOrden.map(function (o) { return o.orderId; }) } })
+      .then(function () { it.shortQty = (it.shortQty || 0) + n; bip(true); toast('Faltante registrado: avisamos al supervisor', true); renderPickRun(); prCheckStop(); })
+      .catch(function (e) { bip(false); toast(e.message, false); });
+  }
+  /** Código leído (pistola, cámara o teclado) durante el recorrido. */
+  function onPrCode(code) {
+    var s = PR.stops[PR.i]; if (!s || !code) return;
+    var loc = findLocByCode(code);
+    if (PR.phase === 'loc') {
+      if (loc && loc.id === s.locationId) { prArrive(); return; }
+      bip(false);
+      toast(loc ? 'Esa es ' + loc.code + '. Ve a ' + s.code : 'Primero escanea la ubicación ' + s.code + ' (o toca «Estoy en ' + s.code + '»)', false);
+      return;
+    }
+    if (loc) { if (loc.id !== s.locationId) { bip(false); toast('Aún te falta tomar productos en ' + s.code, false); } return; }
+    var sellers = []; s.items.forEach(function (it) { if (sellers.indexOf(it.sellerId) < 0) sellers.push(it.sellerId); });
+    (function intenta(k) {
+      if (k >= sellers.length) { bip(false); toast('Ese producto no va en ' + s.code + ': ' + code, false); return; }
+      resolveCode(sellers[k], code).then(function (r) {
+        var ix = -1; s.items.forEach(function (it, j) { if (ix < 0 && it.sellerId === sellers[k] && it.sku === r.sku && prPend(it) > 0) ix = j; });
+        if (ix < 0) {
+          var hay = s.items.some(function (it) { return it.sellerId === sellers[k] && it.sku === r.sku; });
+          if (hay) { bip(false); toast('Ya tomaste todas las de ' + skuTxt(r.sku, sellers[k]), false); return; }
+          intenta(k + 1); return;
+        }
+        prAdd(ix, r.factor || 1);
+      }).catch(function () { intenta(k + 1); });
+    })(0);
+  }
+  $('pr-scan').addEventListener('submit', function (e) {
+    e.preventDefault(); var el = $('pr-code'), c = (el.value || '').trim(); el.value = ''; if (!c) return; onPrCode(c); enfoca('pr-code');
+  });
+  $('pr-body').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-prtap],[data-pradd],[data-prall],[data-prshort]'); if (!b || b.disabled) return;
+    if (b.hasAttribute('data-prshort')) { prShort(+b.getAttribute('data-prshort')); return; }
+    if (b.hasAttribute('data-prall')) { var ix = +b.getAttribute('data-prall'); prAdd(ix, prPend(PR.stops[PR.i].items[ix])); return; }
+    prAdd(+(b.getAttribute('data-pradd') || b.getAttribute('data-prtap')), 1);
+  });
+  $('btn-prback').addEventListener('click', function () {
+    if (PR.queue.length || PR.busy) { toast('Registrando lo último que tomaste…', true); setTimeout(prExit, 900); return; }
+    prExit();
+  });
+  $('btn-prcam').addEventListener('click', function () { camDockToggle('pr-cam', onPrCode, PR.phase === 'loc' ? 'Escanea la ubicación' : 'Escanea cada unidad'); enfoca('pr-code'); });
+
+  // ---- Selección para picking EN LOTE (estación de picking y «Mis tareas») ----
+  var SEL = { pi: {}, home: {} };
+  function selCount(k) { return Object.keys(SEL[k]).length; }
+  function selBar(k) {
+    var bar = $(k === 'pi' ? 'pi-batch' : 'home-batch'), n = selCount(k);
+    if (!bar) return;
+    bar.style.display = n ? '' : 'none';
+    $(k === 'pi' ? 'pi-batch-n' : 'home-batch-n').textContent = n + (n === 1 ? ' pedido' : ' pedidos');
+    $(k === 'pi' ? 'pi-batch-go' : 'home-batch-go').textContent = n > 1 ? 'Pickear ' + n + ' juntos' : 'Pickear';
+  }
+  /** Arranca un lote: toma los libres, marca todo como iniciado y abre el recorrido. */
+  function startBatch(items, back) {
+    if (!items.length) return;
+    var oid = opIdOrNull(), ok = [], fail = [];
+    var paso = function (i) {
+      if (i >= items.length) {
+        if (fail.length) toast('No se pudieron sumar: ' + fail.join(', '), false);
+        if (!ok.length) { if (back === 'pickst') loadPickStation(); else loadBoard(); return; }
+        ok.forEach(function (t) { api('/assignments/start', { method: 'POST', body: { operationId: oid, type: 'PICK', entityId: t.entityId, clientAt: new Date().toISOString() } }).catch(function () {}); });
+        SEL.pi = {}; SEL.home = {}; selBar('pi'); selBar('home');
+        openPickRun(ok.map(function (t) { return { sellerId: t.sellerId, orderId: t.entityId }; }), { back: back });
+        return;
+      }
+      var t = items[i];
+      if (!t.libre) { ok.push(t); paso(i + 1); return; }
+      api('/assignments/take', { method: 'POST', body: { operationId: oid, type: 'PICK', entityId: t.entityId } })
+        .then(function (a) { ok.push({ entityId: t.entityId, sellerId: (a && a.sellerId) || t.sellerId }); })
+        .catch(function (e) { fail.push((t.entityRef || t.entityId) + ' (' + (e && e.message || 'error') + ')'); })
+        .then(function () { paso(i + 1); });
+    };
+    paso(0);
+  }
 
   // ---- Selección MANUAL del producto -----------------------------------------
   // Cuando el código no se puede leer (etiqueta rota, sin EAN, sin pistola) el operario
