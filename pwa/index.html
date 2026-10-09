@@ -382,6 +382,18 @@
     .pkl .pl-q b{min-width:52px;text-align:center;font-size:16px}
     .mini{width:36px;height:36px;border-radius:10px;border:1px solid var(--line-2);background:var(--surface);font-size:18px;font-weight:800;color:var(--ink)}
     .mini:disabled{opacity:.3;cursor:not-allowed}
+    #pa-panel{margin:4px 0 14px}
+    .pa-card{background:var(--surface);border:1.5px solid var(--good,#12B76A);border-radius:16px;padding:14px 16px;margin-bottom:12px}
+    .pa-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+    .pa-top .k{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+    .pa-n b{font-size:30px;font-weight:900;line-height:1}
+    .pa-n small{font-size:13px;color:var(--muted);font-weight:600;margin-left:4px}
+    .pa-sku{margin:6px 0 10px;font-weight:800}
+    .pa-route{margin-top:10px;font-size:15px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .pa-chg{margin-left:auto;background:none;border:0;color:var(--accent,#0B7A4B);font-weight:700;font-size:13px;text-decoration:underline;padding:4px 0}
+    .pa-acts{display:grid;grid-template-columns:1fr 1.4fr;gap:10px}
+    .pa-acts .btn{margin:0}
+    .pa-hint{margin:12px 0 6px;font-size:13px}
     .bar{height:8px;border-radius:999px;background:var(--surface-3);overflow:hidden;margin:6px 0 2px}
     .bar>i{display:block;height:100%;background:var(--primary);border-radius:999px;transition:width .2s}
     .sec{font-size:11.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin:6px 0 -2px}
@@ -548,6 +560,21 @@
         <div id="picklist" style="display:none"></div>
 
         <div id="bins" style="display:none"></div>
+
+        <!-- Guardado: unidades por guardar de este SKU en el origen (de a una o todas). -->
+        <div id="pa-panel" style="display:none">
+          <div class="pa-card">
+            <div class="pa-top"><span class="k">Por guardar</span><span class="pa-n"><b id="pa-quedan">0</b> <small id="pa-de">un</small></span></div>
+            <div class="pa-sku" id="pa-sku"></div>
+            <div class="pr-bar"><i id="pa-bar" style="width:0"></i></div>
+            <div class="pa-route" id="pa-route"></div>
+          </div>
+          <div class="pa-acts">
+            <button type="button" class="btn alt" id="pa-one">Guardar 1</button>
+            <button type="button" class="btn good" id="pa-all">Guardar todas</button>
+          </div>
+          <div class="muted pa-hint">Escanea el producto para guardar de a una, o indica otra cantidad:</div>
+        </div>
 
         <div id="qtywrap" style="display:none">
           <label id="qty-lbl">Cantidad de packs</label>

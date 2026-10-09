@@ -576,7 +576,9 @@
     $('picklist').style.display = 'none'; $('picklist').innerHTML = '';
     $('bins').style.display = 'none'; $('bins').innerHTML = '';
     $('qtywrap').style.display = 'none';
-    $('btn-confirm').style.display = 'none';
+    $('btn-confirm').style.display = 'none'; $('btn-confirm').textContent = 'Confirmar';
+    PA.on = false; $('pa-panel').style.display = 'none';
+    $('btn-again').textContent = 'Siguiente producto de esta tarea';
     $('result').style.display = 'none';
     // El campo de código NO se esconde. Venía de cuando era el plan B de la cámara:
     // en un iPhone (sin lector nativo) y con pistola era la única entrada posible, y
@@ -739,7 +741,7 @@
   function onDetect(raw) {
     if (navigator.vibrate) navigator.vibrate(60);
     var s = steps[stepIdx];
-    if (!s) return;
+    if (!s) { if (op === 'putaway' && PA.on) paScan(raw); return; }
     if (s === 'product') {
       api('/sellers/' + encodeURIComponent(cfg.seller) + '/barcodes/' + encodeURIComponent(raw))
         .then(function (pack) {
@@ -813,7 +815,123 @@
     updatePreview();
     $('qtywrap').style.display = ''; $('btn-confirm').style.display = '';
     if (op === 'receive') setupLotFields();
+    if (op === 'putaway') paSetup();
   }
+
+  // =====================================================================
+  // GUARDADO EN PARTES: «Por guardar N un»
+  // ---------------------------------------------------------------------
+  // Con el producto, el origen y el destino ya definidos, la pantalla muestra cuántas
+  // unidades quedan por guardar de ese SKU en esa ubicación de origen. El operario puede
+  // guardar de a una (escaneando el producto o con «Guardar 1»), todas de una vez, u
+  // otra cantidad con el contador. Cada guardado se registra al instante y la pantalla
+  // sigue abierta hasta vaciar el origen; puede cambiar el destino a mitad de camino.
+  // =====================================================================
+  var PA = { on: false, quedan: 0, total: 0, busy: false };
+  function paLoc() { return findLocByCode(captured.from); }
+  function paSetup() {
+    PA.on = true; PA.busy = false;
+    $('pa-panel').style.display = '';
+    $('qty-lbl').textContent = 'Otra cantidad' + (captured.resolved && !captured.resolved.isBase ? ' (packs de ' + (captured.resolved.label || captured.resolved.code) + ')' : '');
+    $('btn-confirm').textContent = 'Guardar esta cantidad';
+    // El código y la cámara siguen activos: escanear el producto guarda 1 unidad.
+    $('manual').style.display = '';
+    var lbl = $('m-label'); if (lbl) lbl.textContent = 'Escanea el producto para guardar de a una' + (avisoCamara ? ' · ' + avisoCamara : '');
+    var inp = $('m-code'); if (inp) inp.placeholder = 'EAN / DUN del producto';
+    startCamera(); $('cam-hint').textContent = 'Escanea cada unidad para guardarla';
+    PA.quedan = captured.maxBase != null ? captured.maxBase : 0;
+    paRender();
+    var l = paLoc(), sku = captured.resolved.sku;
+    api('/sellers/' + encodeURIComponent(cfg.seller) + '/inventory?sku=' + encodeURIComponent(sku)).then(function (rows) {
+      var q = 0;
+      (rows || []).forEach(function (b) { if (b.state === 'AVAILABLE' && l && b.locationId === l.id) q += b.qty; });
+      PA.quedan = q; if (!captured.paTotal) captured.paTotal = q;
+      captured.maxBase = q;
+      paRender(); updatePreview();
+    }).catch(function () { paRender(); });
+    enfocaCodigo();
+  }
+  function paRender() {
+    var tot = Math.max(captured.paTotal || 0, PA.quedan), hechas = tot - PA.quedan;
+    $('pa-quedan').textContent = PA.quedan;
+    $('pa-de').textContent = tot > PA.quedan ? 'de ' + tot + ' · guardadas ' + hechas : 'un';
+    $('pa-bar').style.width = (tot ? Math.round(100 * hechas / tot) : 0) + '%';
+    $('pa-route').innerHTML = '<span class="code">' + esc(captured.from || '') + '</span> → <b class="code">' + esc(captured.to || '') + '</b>'
+      + ' <button type="button" class="pa-chg" id="pa-chg">Cambiar destino</button>';
+    $('pa-sku').innerHTML = esc(captured.resolved.sku) + pdsc(captured.resolved.sku, cfg.seller, 'blk');
+    $('pa-one').disabled = PA.busy || PA.quedan < 1;
+    $('pa-all').disabled = PA.busy || PA.quedan < 1;
+    $('pa-all').textContent = PA.quedan > 1 ? 'Guardar todas (' + PA.quedan + ')' : 'Guardar todas';
+    $('pa-chg').addEventListener('click', paCambiarDestino);
+  }
+  function paCambiarDestino() {
+    stopCamera();
+    PA.on = false; $('pa-panel').style.display = 'none';
+    $('qtywrap').style.display = 'none'; $('btn-confirm').style.display = 'none';
+    captured.to = null; renderBins();
+    stepIdx = steps.indexOf('to'); enterStep(); startCamera();
+  }
+  /** Un escaneo del producto en «Por guardar» = guardar 1 (o la caja completa si es DUN). */
+  function paScan(raw) {
+    if (PA.busy) return;
+    api('/sellers/' + encodeURIComponent(cfg.seller) + '/barcodes/' + encodeURIComponent(raw)).then(function (pack) {
+      if (pack.sku !== captured.resolved.sku) { tono(false); toast('Ese es ' + skuTxt(pack.sku, cfg.seller) + '. Aquí estás guardando ' + skuTxt(captured.resolved.sku, cfg.seller), false); return; }
+      var f = pack.factor || 1;
+      if (f > PA.quedan) { tono(false); toast('Esa caja trae ' + f + ' un y solo quedan ' + PA.quedan + ' por guardar', false); return; }
+      paPost(raw, 1);
+    }).catch(function () { tono(false); toast('Código no reconocido', false); });
+  }
+  /** Guarda `units` unidades BASE (botones «Guardar 1» / «Guardar todas»). */
+  function paUnidades(units) {
+    if (!(units > 0)) return;
+    if (units > PA.quedan) { toast('Solo quedan ' + PA.quedan + ' por guardar', false); return; }
+    paPost('SKU:' + captured.resolved.sku, units);
+  }
+  function paPost(barcode, packCount) {
+    if (PA.busy) return;
+    PA.busy = true; paRender(); $('btn-confirm').disabled = true;
+    var base = '/sellers/' + encodeURIComponent(cfg.seller);
+    api(base + '/scan/putaway', { method: 'POST', body: { productBarcode: barcode, packCount: packCount, fromLocationCode: captured.from, toLocationCode: captured.to } })
+      .then(function (r) {
+        var q = r.scan.baseQty;
+        bip(true);
+        if (task) { task._done = (task._done || 0) + q; liveTask(); }
+        if (opId && taskStartAt) {
+          laborCapture({ operationId: opId, sellerId: cfg.seller, operator: (user && user.id) || cfg.email, type: 'PUTAWAY', startAt: taskStartAt, endAt: new Date().toISOString(), units: q,
+            orderRef: (task && (task.entityRef || task.entityId)) || null, locationId: laborLocationId('putaway') });
+          taskStartAt = new Date().toISOString();
+        }
+        PA.quedan = typeof r.quedan === 'number' ? r.quedan : Math.max(0, PA.quedan - q);
+        captured.maxBase = PA.quedan;
+        $('q-count').value = 1;
+        if (PA.quedan > 0) {
+          toast('Guardadas ' + q + ' en ' + captured.to + ' · quedan ' + PA.quedan, true);
+          PA.busy = false; paRender(); updatePreview(); enfocaCodigo();
+          return;
+        }
+        paDone();
+      })
+      .catch(function (e) { bip(false); toast(e.message, false); PA.busy = false; paRender(); updatePreview(); });
+  }
+  function paDone() {
+    stopCamera(); var cam = $('cam'); if (cam) cam.style.display = 'none';
+    PA.on = false; PA.busy = false;
+    var tot = captured.paTotal || 0;
+    $('pa-panel').style.display = 'none';
+    $('qtywrap').style.display = 'none'; $('btn-confirm').style.display = 'none';
+    $('manual').style.display = 'none';
+    $('res-big').textContent = '✓ Guardado completo';
+    $('res-sub').textContent = (tot ? tot + ' un de ' : '') + skuTxt(captured.resolved.sku, cfg.seller) + ' guardadas desde ' + captured.from + '.';
+    $('result').style.display = ''; $('after').style.display = 'flex';
+    $('btn-closercpt').style.display = 'none';
+    $('btn-finish').textContent = textoVolver(true);
+    toast('Guardado completo', true);
+    if (task) finishTask('La tarea salió de tu bandeja.');
+    else { $('btn-again').style.display = ''; $('btn-again').textContent = 'Guardar otro producto'; }
+    paintTaskActs();
+  }
+  $('pa-one').addEventListener('click', function () { paUnidades(1); });
+  $('pa-all').addEventListener('click', function () { paUnidades(PA.quedan); });
 
   // ---- Lote / vencimiento en la recepción -----------------------------------
   // Se piden SI Y SOLO SI el producto los controla (y entonces son obligatorios): el
@@ -880,6 +998,7 @@
     var packCount = parseInt($('q-count').value, 10);
     if (!(packCount > 0)) { toast('Cantidad inválida', false); return; }
     var falta = lotFaltante(); if (falta) { toast(falta, false); return; }
+    if (op === 'putaway' && PA.on) { paPost(captured.product, packCount); return; }
     var seller = encodeURIComponent(cfg.seller), base = '/sellers/' + seller;
     var call;
     // Lote / vencimiento: solo viajan si el producto los controla.

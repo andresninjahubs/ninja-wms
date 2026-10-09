@@ -33,7 +33,7 @@ import { CycleCountService } from '../domain/cyclecount.service';
 import { CreateUserInput, UpdateUserInput, UserService, OPERATOR_TASK_TYPES, OPERATOR_TASK_LABEL, normalizarHabilidades, puedeHacer } from '../domain/user.service';
 import { OperationService } from '../domain/operation.service';
 import { BarcodeService, RegisterPackInput } from '../domain/barcode.service';
-import { ForbiddenError, NotFoundError, PlanLimitError, ValidationError } from '../domain/errors';
+import { ForbiddenError, InsufficientStockError, NotFoundError, PlanLimitError, ValidationError } from '../domain/errors';
 import { esTelefonoPlausible } from '../domain/phone';
 import { Consignee, ConsigneeInput, direccionPrincipal, formatearRut, normalizarConsignee } from '../domain/consignee';
 import { ApiKey, ApiKeyScope, apiKeyPublica, llaveVigente, nuevoSecreto, prefijoVisible } from '../domain/api-key';
@@ -3331,28 +3331,66 @@ export class WmsFacade {
       lot?: string | null;
       actor?: string;
     },
-  ): Promise<{ scan: ScanResult; movements: StockMovement[] }> {
+  ): Promise<{ scan: ScanResult; movements: StockMovement[]; quedan: number }> {
     const scan = await this.scanToBaseUnits(sellerId, input.productBarcode, input.packCount);
     const opId = await this.operationOfSeller(sellerId);
     const from = await this.mustLocationByCode(opId, input.fromLocationCode);
     const to = await this.mustLocationByCode(opId, input.toLocationCode);
-    const movements = await this.inventory.putaway(sellerId, {
-      sku: scan.sku,
-      qty: scan.baseQty,
-      fromLocationId: from.id,
-      toLocationId: to.id,
-      lot: input.lot ?? null,
-      reference: `SCAN-PUTAWAY ${scan.packCount}x${scan.code}`,
-      actor: input.actor,
-    });
+    // Sin lote indicado, se toma de lo que haya en el origen (primero sin lote, luego por
+    // lote): así el guardado de a una o de todas funciona igual con productos por lote.
+    const tramos: Array<{ lot: string | null; qty: number }> = [];
+    if (input.lot != null && input.lot !== '') tramos.push({ lot: input.lot, qty: scan.baseQty });
+    else {
+      const enOrigen = await this.disponibleEnOrigen(sellerId, scan.sku, from.id);
+      const total = enOrigen.reduce((a, b) => a + b.qty, 0);
+      if (total < scan.baseQty) {
+        throw new InsufficientStockError(total > 0
+          ? `Solo quedan ${total} un de ${scan.sku} por guardar en ${from.code} (intentaste ${scan.baseQty}).`
+          : `No queda stock de ${scan.sku} por guardar en ${from.code}.`);
+      }
+      let falta = scan.baseQty;
+      for (const b of enOrigen) { if (falta <= 0) break; const q = Math.min(falta, b.qty); tramos.push({ lot: b.lot, qty: q }); falta -= q; }
+    }
+    const movements: StockMovement[] = [];
+    for (const t of tramos) {
+      movements.push(...await this.inventory.putaway(sellerId, {
+        sku: scan.sku,
+        qty: t.qty,
+        fromLocationId: from.id,
+        toLocationId: to.id,
+        lot: t.lot,
+        reference: `SCAN-PUTAWAY ${scan.packCount}x${scan.code}`,
+        actor: input.actor,
+      }));
+    }
     // G5: ¿se siguió la recomendación de guardado para este SKU?
     await this.markPutawayRecommendationTaken(opId, sellerId, scan.sku, to.id, to.code);
-    // Camino B: cierra la asignación de guardado o de re-slotting (según origen).
-    await this.completeAssignments('PUTAWAY', [`${sellerId}:${scan.sku}:${from.id}`], input.actor || 'system');
-    await this.completeAssignments('RESLOT', [`${sellerId}:${scan.sku}:${from.id}`], input.actor || 'system');
-    await this.completeAssignments('RESTOCK', [`${sellerId}:${scan.sku}:${from.id}`], input.actor || 'system');
-    await this.continuousHook(opId, 'PUTAWAY', null); await this.continuousHook(opId, 'RESLOT', null);
-    return { scan, movements };
+    const quedan = (await this.disponibleEnOrigen(sellerId, scan.sku, from.id)).reduce((a, b) => a + b.qty, 0);
+    await this.cerrarGuardadoSiVacio(opId, `${sellerId}:${scan.sku}:${from.id}`, quedan, input.actor || 'system');
+    return { scan, movements, quedan };
+  }
+
+  /** Stock DISPONIBLE de un SKU en una ubicación, por lote (sin lote primero). */
+  private async disponibleEnOrigen(sellerId: string, sku: string, locationId: string): Promise<Array<{ lot: string | null; qty: number }>> {
+    const bal = await this.inventory.getStock({ sellerId, sku, locationId });
+    return bal
+      .filter((b) => b.sku === sku && b.locationId === locationId && b.state === StockState.AVAILABLE && b.qty > 0)
+      .map((b) => ({ lot: b.lot ?? null, qty: b.qty }))
+      .sort((a, b) => (a.lot === null ? -1 : b.lot === null ? 1 : a.lot.localeCompare(b.lot)));
+  }
+
+  /**
+   * Guardado y reposición: la tarea es «guardar TODO lo que hay de este SKU en el origen».
+   * Mientras quede algo, sigue abierta (el operario puede guardar de a una); se cierra
+   * cuando el origen queda vacío. El re-slot se cierra con el movimiento, como siempre.
+   */
+  private async cerrarGuardadoSiVacio(opId: string, entityId: string, quedan: number, actor: string) {
+    if (quedan <= 0) {
+      await this.completeAssignments('PUTAWAY', [entityId], actor);
+      await this.completeAssignments('RESTOCK', [entityId], actor);
+    }
+    await this.completeAssignments('RESLOT', [entityId], actor);
+    await this.continuousHook(opId, 'PUTAWAY', null); await this.continuousHook(opId, 'RESLOT', null); await this.continuousHook(opId, 'RESTOCK', null);
   }
 
   /**
@@ -7088,8 +7126,12 @@ export class WmsFacade {
     const entityId = `${sellerId}:${cmd.sku}:${cmd.fromLocationId}`;
     if (opId) { await this.assertAssignmentAllowed(opId, 'PUTAWAY', entityId, cmd.actor || 'system'); await this.assertAssignmentAllowed(opId, 'RESLOT', entityId, cmd.actor || 'system'); }
     const movs = await this.inventory.putaway(sellerId, cmd);
-    // Un guardado desde recepción cierra PUTAWAY; un movimiento entre almacenaje cierra RESLOT.
-    if (opId) { await this.completeAssignments('PUTAWAY', [entityId], cmd.actor || 'system'); await this.completeAssignments('RESLOT', [entityId], cmd.actor || 'system'); await this.completeAssignments('RESTOCK', [entityId], cmd.actor || 'system'); await this.continuousHook(opId, 'PUTAWAY', null); await this.continuousHook(opId, 'RESLOT', null); await this.continuousHook(opId, 'RESTOCK', null); }
+    // Un guardado desde recepción cierra PUTAWAY cuando el origen queda vacío (se puede
+    // guardar en partes); un movimiento entre almacenaje cierra RESLOT.
+    if (opId) {
+      const quedan = (await this.disponibleEnOrigen(sellerId, cmd.sku, cmd.fromLocationId)).reduce((a, b) => a + b.qty, 0);
+      await this.cerrarGuardadoSiVacio(opId, entityId, quedan, cmd.actor || 'system');
+    }
     return movs;
   }
 

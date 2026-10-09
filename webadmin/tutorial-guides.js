@@ -247,7 +247,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:['#pw-body td:last-child','#pw-body'], place:'left', title:'Guardar', text:'Pulsa Guardar, confirma la cantidad y la ubicación. El movimiento queda en el kardex como <b>Guardado</b> y el stock pasa a estar disponible para reservar.'},
       {el:['#pw-body [data-pwall]','#pw-body'], place:'left', title:'Guardar todo aquí', text:'Si aceptas la sugerencia, <b>Guardar todo aquí</b> mueve toda la cantidad de una vez. Si prefieres repartirla, elige otra ubicación y una cantidad parcial.', roles:['ADMIN','SUPERVISOR','OPERATOR','PLATFORM_ADMIN']},
     ],
-    tips:['Los operarios pueden hacer el putaway desde la app móvil escaneando la ubicación.',{t:'Las sugerencias aceptadas o rechazadas alimentan la Auditoría IA.',mod:'aiaudit'}]
+    tips:['Los operarios pueden hacer el putaway desde la app móvil escaneando la ubicación.','En la app, el guardado muestra «Por guardar N un» del SKU en esa ubicación: se guarda de a una (escaneando cada unidad o «Guardar 1»), todas de una vez («Guardar todas») u otra cantidad, y se puede cambiar el destino a mitad de camino. La tarea sigue en la bandeja del operario hasta que el origen queda vacío.',{t:'Las sugerencias aceptadas o rechazadas alimentan la Auditoría IA.',mod:'aiaudit'}]
   },
 
   assembly: {

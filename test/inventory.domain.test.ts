@@ -620,6 +620,40 @@ async function run() {
     assert.ok(!(await f.facade.getOperatorTasks('op1', 'opa')).some((t: any) => t.type === 'RESTOCK'), 'salió de la bandeja');
   });
 
+  await test('guardado en partes: de a una o todas; la tarea sigue abierta hasta vaciar el origen', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const recv = await f.facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 1 });
+    await f.facade.createLocation({ operationId: 'op1', code: 'A-02', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 2 });
+    await f.facade.createUser({ id: 'opa', name: 'Op A', email: 'opa@x.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa', barcode: 'EAN-CAM' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 6, locationId: recv.id });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 4, locationId: recv.id, lot: 'L-1' } as any);
+    const pool = await f.facade.getTaskPool('op1', 'PUTAWAY');
+    assert.equal(pool.length, 1); assert.equal(pool[0].unidades, 10);
+    await f.facade.assignTask('op1', { type: 'PUTAWAY', entityId: pool[0].entityId, entityRef: pool[0].entityRef, sellerId: 'acme', operator: 'opa', unitsEstimate: 10, by: 'sup' });
+    const abierta = async () => (await f.facade.getOperatorTasks('op1', 'opa')).some((t: any) => t.type === 'PUTAWAY');
+
+    // De a una: guarda 1, quedan 9 y la tarea sigue en la bandeja.
+    const r1 = await f.facade.scanPutaway('acme', { productBarcode: 'EAN-CAM', packCount: 1, fromLocationCode: 'RECV-01', toLocationCode: 'A-01', actor: 'opa' });
+    assert.equal(r1.quedan, 9);
+    assert.ok(await abierta(), 'un guardado parcial no cierra la tarea');
+    // Más de lo que queda: se rechaza con un mensaje claro.
+    await expectThrows(() => f.facade.scanPutaway('acme', { productBarcode: 'SKU:CAM', packCount: 10, fromLocationCode: 'RECV-01', toLocationCode: 'A-01', actor: 'opa' }), InsufficientStockError, 'Solo quedan 9');
+    // Parte a otra ubicación, cruzando del stock sin lote al lote L-1.
+    const r2 = await f.facade.scanPutaway('acme', { productBarcode: 'SKU:CAM', packCount: 7, fromLocationCode: 'RECV-01', toLocationCode: 'A-02', actor: 'opa' });
+    assert.equal(r2.quedan, 2);
+    assert.ok(await abierta());
+    // Todas: vacía el origen y la tarea se cierra.
+    const r3 = await f.facade.scanPutaway('acme', { productBarcode: 'SKU:CAM', packCount: 2, fromLocationCode: 'RECV-01', toLocationCode: 'A-02', actor: 'opa' });
+    assert.equal(r3.quedan, 0);
+    assert.ok(!(await abierta()), 'con el origen vacío la tarea sale de la bandeja');
+    const en = async (code: string) => { const l = (await f.facade.listLocations('op1')).find((x) => x.code === code)!; return (await f.facade.getStock({ sellerId: 'acme', sku: 'CAM', locationId: l.id })).reduce((a: number, b: any) => a + b.qty, 0); };
+    assert.equal(await en('A-01'), 1); assert.equal(await en('A-02'), 9); assert.equal(await en('RECV-01'), 0);
+  });
+
   await test('una orden DESPACHADA no se cancela: corresponde una devolución', async () => {
     const f = buildOrderFixture();
     await seedSellerA(f);
