@@ -4657,13 +4657,22 @@ async function run() {
     const packSin = await f.facade.packOrder('acme', sin.id, { bultos: 1 }, 'pedro');
     assert.equal(packSin.packing?.verification, null);
 
-    // 4) El panel consolidado lo convierte en precisión de preparación: 1 de 2 con error.
+    // 3b) Operario (exigirVerificacion): sin verificar o con diferencias NO empaca; exacto sí.
+    const ex = await prep('V-4');
+    await expectThrows(() => f.facade.packOrder('acme', ex.id, { bultos: 1, exigirVerificacion: true } as any, 'pedro'), ValidationError, 'verificar cada producto');
+    await expectThrows(() => f.facade.packOrder('acme', ex.id, { bultos: 1, verify: [{ sku: 'CAM', qty: 2 }, { sku: 'PAN', qty: 2 }], exigirVerificacion: true } as any, 'pedro'), ValidationError, 'faltan 1 de CAM');
+    await expectThrows(() => f.facade.packOrder('acme', ex.id, { bultos: 1, verify: [{ sku: 'CAM', qty: 4 }, { sku: 'PAN', qty: 2 }], exigirVerificacion: true } as any, 'pedro'), ValidationError, 'sobran 1 de CAM');
+    const exOk = await f.facade.packOrder('acme', ex.id, { bultos: 1, verify: [{ sku: 'CAM', qty: 3 }, { sku: 'PAN', qty: 2 }], exigirVerificacion: true } as any, 'pedro');
+    assert.equal(exOk.status, OrderStatus.PACKED);
+    assert.equal(exOk.packing?.verification?.ok, true);
+
+    // 4) El panel consolidado lo convierte en precisión de preparación: 1 de 3 con error.
     const dash: any = await f.facade.operationDashboard('op1', { window: '24h' });
-    assert.equal(dash.precision.pedidosVerificados, 2);
+    assert.equal(dash.precision.pedidosVerificados, 3);
     assert.equal(dash.precision.pedidosConError, 1);
-    assert.equal(dash.precision.pct, 50);
-    assert.equal(dash.precision.empacadosEnVentana, 3);
-    assert.equal(dash.precision.coberturaPct, 66.7, 'dos de cada tres empaques se verificaron');
+    assert.equal(dash.precision.pct, 66.7);
+    assert.equal(dash.precision.empacadosEnVentana, 4);
+    assert.equal(dash.precision.coberturaPct, 75, 'tres de cada cuatro empaques se verificaron');
   });
 
   await test('panel consolidado: suma toda la operación y explica lo que todavía no mide', async () => {

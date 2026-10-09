@@ -7853,7 +7853,7 @@ export class WmsFacade {
   async packOrder(
     sellerId: string,
     orderId: string,
-    input: { bultos?: number; materials?: { sku: string; qty: number }[]; verify?: Array<{ sku: string; lot?: string | null; qty: number }> | null } = {},
+    input: { bultos?: number; materials?: { sku: string; qty: number }[]; verify?: Array<{ sku: string; lot?: string | null; qty: number }> | null; exigirVerificacion?: boolean } = {},
     actor?: string,
   ): Promise<SalesOrder> {
     // Insumos de embalaje consumidos (opcional). Se validan ANTES de empacar; el stock
@@ -7867,7 +7867,7 @@ export class WmsFacade {
       if (!seller) throw new NotFoundError(`Seller no encontrado: ${sellerId}`);
       prepared = await this.packaging.resolveUse(seller.operationId, sellerId, orderId, input.materials, actor);
     }
-    const packed = await this.orders.packOrder(sellerId, orderId, { bultos: input.bultos, materials: prepared.used, verify: input.verify ?? null }, actor);
+    const packed = await this.orders.packOrder(sellerId, orderId, { bultos: input.bultos, materials: prepared.used, verify: input.verify ?? null, exigirVerificacion: !!input.exigirVerificacion }, actor);
     if (this.packaging && prepared.movements.length) await this.packaging.commit(prepared.movements);
     this.fireOrderWebhook(sellerId, packed); // order.packed → OMS
     if (opId) {

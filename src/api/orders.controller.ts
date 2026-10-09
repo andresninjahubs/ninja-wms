@@ -202,6 +202,8 @@ export class OrdersController {
       bultos: dto.bultos,
       materials: (dto.materials ?? []).map((m) => ({ sku: m.sku, qty: m.qty })),
       verify: dto.verify ? dto.verify.map((v) => ({ sku: v.sku, lot: v.lot ?? null, qty: v.qty })) : null,
+      // Un OPERARIO (app) solo empaca verificado y exacto contra lo pickeado.
+      exigirVerificacion: !!user && String(user.role) === 'OPERATOR',
     }, actorOf(user));
   }
 

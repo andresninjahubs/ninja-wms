@@ -614,7 +614,7 @@ export class OrderService {
   async packOrder(
     sellerId: string,
     orderId: string,
-    input: { bultos?: number; materials?: { sku: string; name: string; qty: number }[]; verify?: Array<{ sku: string; lot?: string | null; qty: number }> | null } = {},
+    input: { bultos?: number; materials?: { sku: string; name: string; qty: number }[]; verify?: Array<{ sku: string; lot?: string | null; qty: number }> | null; exigirVerificacion?: boolean } = {},
     actor?: string,
   ): Promise<SalesOrder> {
     const order = await this.mustGet(sellerId, orderId);
@@ -624,6 +624,14 @@ export class OrderService {
     const bultos = Math.max(1, Math.floor(input.bultos ?? 1));
     const materials = input.materials ?? [];
     const verification = input.verify ? this.verifyPack(order, input.verify, actor) : null;
+    // El operario solo empaca lo que se pickeó: ni una unidad menos, ni una más.
+    if (input.exigirVerificacion) {
+      if (!verification) throw new ValidationError('Para empacar hay que verificar cada producto escaneándolo (o tocándolo) hasta completar lo pickeado.');
+      if (!verification.ok) {
+        const det = verification.diferencias.map((d) => d.contado < d.esperado ? `faltan ${d.esperado - d.contado} de ${d.sku}` : `sobran ${d.contado - d.esperado} de ${d.sku}`).join(', ');
+        throw new ValidationError(`No se puede empacar con diferencias: ${det}. Debe calzar exacto con lo pickeado.`);
+      }
+    }
     const packing: PackingInfo = {
       packedAt: this.clock.now(),
       bultos,

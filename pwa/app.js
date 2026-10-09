@@ -796,6 +796,7 @@
     if (rows.length) { $('bins').innerHTML = '<div class="card">' + rows.join('') + '</div>'; $('bins').style.display = ''; }
   }
 
+  function esRecepcion() { return op === 'receive' || !!(task && task.type === 'RECEIVE'); }
   function setupQty() {
     stopCamera();
     // Con el producto y la ubicación ya leídos, el visor apagado solo era un recuadro
@@ -804,7 +805,8 @@
     $('picklist').style.display = 'none';
     $('qty-lbl').textContent = captured.resolved.isBase ? 'Cantidad de unidades' : ('Cantidad de packs (' + (captured.resolved.label || captured.resolved.code) + ')');
     $('prodpick').style.display = 'none';
-    $('q-count').value = 1;
+    // Recepción: el contador parte en CERO (se cuenta lo que llegó, no se asume lo pedido).
+    $('q-count').value = esRecepcion() ? 0 : 1;
     captured.ctl = { lot: false, exp: false };
     $('q-lot').value = ''; $('q-exp').value = '';
     $('lotwrap').style.display = 'none'; $('lot-f').style.display = 'none'; $('exp-f').style.display = 'none';
@@ -870,7 +872,7 @@
     $('btn-confirm').disabled = over || !(n > 0) || !!lotFaltante();
   }
   $('q-plus').addEventListener('click', function () { $('q-count').value = (parseInt($('q-count').value, 10) || 0) + 1; updatePreview(); });
-  $('q-minus').addEventListener('click', function () { $('q-count').value = Math.max(1, (parseInt($('q-count').value, 10) || 1) - 1); updatePreview(); });
+  $('q-minus').addEventListener('click', function () { $('q-count').value = Math.max(esRecepcion() ? 0 : 1, (parseInt($('q-count').value, 10) || 0) - 1); updatePreview(); });
   $('q-count').addEventListener('input', updatePreview);
 
   // ---- Confirmar operación --------------------------------------------------
@@ -1593,10 +1595,10 @@
     var total = oUnits(o), cont = pkContado(), pct = total ? Math.min(100, Math.round(cont * 100 / total)) : 0;
     var lines = (o.lines || []).map(function (l) {
       var c = PK.counts[l.lineNo] || 0;
-      var cls = c === l.qty ? ' done' : (c > l.qty ? ' over' : '');
+      var cls = c >= l.qty ? ' done' : '';
       return '<div class="pkl' + cls + '"><div style="min-width:0"><div class="pl-sku">' + esc(l.sku) + (c === l.qty ? ' ✓' : '') + '</div>' + pdsc(l.sku, o.sellerId, 'blk')
         + '<div class="pl-sub">' + (l.lot ? 'Lote ' + esc(l.lot) + ' · ' : '') + 'pide ' + l.qty + '</div></div>'
-        + '<div class="pl-q"><button class="mini" data-pkm="' + l.lineNo + '">−</button><b>' + c + '/' + l.qty + '</b><button class="mini" data-pkp="' + l.lineNo + '">+</button></div></div>';
+        + '<div class="pl-q"><button class="mini" data-pkm="' + l.lineNo + '"' + (c <= 0 ? ' disabled' : '') + '>−</button><b>' + c + '/' + l.qty + '</b><button class="mini" data-pkp="' + l.lineNo + '"' + (c >= l.qty ? ' disabled' : '') + '>+</button></div></div>';
     }).join('');
     var mats = PK.materials.length
       ? PK.materials.map(function (m) {
@@ -1606,7 +1608,8 @@
         }).join('')
       : '<div class="muted" style="font-size:13px">Esta bodega no tiene insumos de embalaje cargados.</div>';
     var faltan = total - cont;
-    var btnTxt = cont === 0 ? 'Empacar sin verificar' : (faltan !== 0 || (o.lines || []).some(function (l) { return (PK.counts[l.lineNo] || 0) !== l.qty; }) ? 'Empacar con diferencias' : 'Empacar y traer etiquetas');
+    // Solo se empaca lo pickeado, exacto: el botón se habilita cuando cada producto está verificado.
+    var btnTxt = faltan > 0 ? 'Verifica ' + faltan + ' un más para empacar' : 'Empacar y traer etiquetas';
     var ok = cont > 0 && (o.lines || []).every(function (l) { return (PK.counts[l.lineNo] || 0) === l.qty; });
     $('pk-order').innerHTML =
       '<div class="card"><div class="kv"><span>Orden</span><b class="code">' + esc(oRef(o)) + '</b></div>'
@@ -1618,8 +1621,8 @@
       + '<div class="sec" style="margin-top:6px">Bultos</div>'
       + '<div class="qtybar"><button id="pk-bm">−</button><input id="pk-bultos" type="number" inputmode="numeric" min="1" value="' + PK.bultos + '"><button id="pk-bp">+</button></div>'
       + '<div class="sec" style="margin-top:6px">Embalaje usado (opcional)</div><div class="card" style="padding:4px 14px">' + mats + '</div>'
-      + '<button class="btn ' + (ok ? 'good' : (PK.armado ? 'warn' : 'good')) + '" id="pk-go">' + (PK.armado && !ok ? 'Confirmar: ' + btnTxt.toLowerCase() : btnTxt) + '</button>'
-      + (PK.armado && !ok ? '<div class="banner" style="margin:0">' + (cont === 0 ? 'No escaneaste ningún producto: la orden se empaca sin verificación.' : 'Lo contado no calza con lo pedido. Se empaca igual y la diferencia queda registrada en la orden (cuenta en la precisión de preparación).') + '</div>' : '')
+      + '<button class="btn good" id="pk-go"' + (ok ? '' : ' disabled') + '>' + btnTxt + '</button>'
+      + (!ok ? '<div class="muted" style="font-size:12.5px;text-align:center;margin-top:-4px">Escanea (o toca +) cada producto hasta completar lo pickeado. No se puede empacar ni de menos ni de más.</div>' : '')
       + '<button class="btn alt" id="pk-other">Elegir otra orden</button>';
     $('pk-bultos').addEventListener('input', function () { PK.bultos = Math.max(1, parseInt(this.value, 10) || 1); });
     $('pk-bm').addEventListener('click', function () { PK.bultos = Math.max(1, PK.bultos - 1); $('pk-bultos').value = PK.bultos; });
@@ -1629,7 +1632,11 @@
   }
   $('pk-order').addEventListener('click', function (e) {
     var b = e.target.closest('[data-pkp],[data-pkm],[data-mtp],[data-mtm]'); if (!b) return;
-    if (b.hasAttribute('data-pkp')) { var n = +b.getAttribute('data-pkp'); PK.counts[n] = (PK.counts[n] || 0) + 1; }
+    if (b.hasAttribute('data-pkp')) {
+      var n = +b.getAttribute('data-pkp'), ln = (PK.order.lines || []).filter(function (x) { return x.lineNo === n; })[0];
+      if (ln && (PK.counts[n] || 0) >= ln.qty) { bip(false); toast('Ya están las ' + ln.qty + ' de ' + skuTxt(ln.sku, PK.order.sellerId), false); return; }
+      PK.counts[n] = (PK.counts[n] || 0) + 1;
+    }
     else if (b.hasAttribute('data-pkm')) { var m = +b.getAttribute('data-pkm'); PK.counts[m] = Math.max(0, (PK.counts[m] || 0) - 1); }
     else if (b.hasAttribute('data-mtp')) { var s = b.getAttribute('data-mtp'); PK.mats[s] = (PK.mats[s] || 0) + 1; }
     else { var s2 = b.getAttribute('data-mtm'); PK.mats[s2] = Math.max(0, (PK.mats[s2] || 0) - 1); }
@@ -1649,6 +1656,8 @@
       if (!ls.length) { bip(false); toast('El producto ' + (sku ? skuTxt(sku, o.sellerId) : code) + ' NO es de esta orden', false); return; }
       var l = ls.filter(function (x) { return (PK.counts[x.lineNo] || 0) < x.qty; })[0];
       if (!l) { bip(false); toast('Ya están todas las unidades de ' + skuTxt(sku, o.sellerId) + '. Revisa si sobra una.', false); return; }
+      var resta = l.qty - (PK.counts[l.lineNo] || 0);
+      if (f > resta) { bip(false); toast('Esa caja trae ' + f + ' un y solo faltan ' + resta + ' de ' + skuTxt(sku, o.sellerId) + '. Escanea las unidades sueltas.', false); return; }
       PK.counts[l.lineNo] = (PK.counts[l.lineNo] || 0) + f;
       bip(true);
       toast(skuTxt(sku, o.sellerId) + ' +' + f + (f > 1 ? ' (' + (r.label || 'pack') + ')' : ''), true);
@@ -1659,10 +1668,10 @@
     var o = PK.order; if (!o) return;
     var cont = pkContado();
     var ok = cont > 0 && (o.lines || []).every(function (l) { return (PK.counts[l.lineNo] || 0) === l.qty; });
-    if (!ok && !PK.armado) { PK.armado = true; renderPackOrder(); return; }   // segundo toque confirma
+    if (!ok) { bip(false); toast('Verifica cada producto hasta completar lo pickeado antes de empacar', false); return; }
     var materials = Object.keys(PK.mats).filter(function (k) { return PK.mats[k] > 0; }).map(function (k) { return { sku: k, qty: PK.mats[k] }; });
     var body = { bultos: PK.bultos, materials: materials };
-    if (cont > 0) body.verify = (o.lines || []).map(function (l) { return { sku: l.sku, lot: l.lot || null, qty: PK.counts[l.lineNo] || 0 }; });
+    body.verify = (o.lines || []).map(function (l) { return { sku: l.sku, lot: l.lot || null, qty: PK.counts[l.lineNo] || 0 }; });
     var btn = $('pk-go'); btn.disabled = true; btn.textContent = 'Empacando…';
     api('/sellers/' + encodeURIComponent(o.sellerId) + '/orders/' + encodeURIComponent(o.id) + '/pack', { method: 'POST', body: body })
       .then(function (r) {
@@ -2317,7 +2326,8 @@
         advance();
       }
       // "Una o varias unidades": se propone lo que falta (si se sabe) y se ajusta con − / +.
-      if ($('qtywrap').style.display !== 'none' && it.pend > 0) { $('q-count').value = it.pend; updatePreview(); }
+      // En recepción NO: ahí el contador parte en cero y el operario cuenta lo que llegó.
+      if ($('qtywrap').style.display !== 'none' && it.pend > 0 && !esRecepcion()) { $('q-count').value = it.pend; updatePreview(); }
     });
   }
 
