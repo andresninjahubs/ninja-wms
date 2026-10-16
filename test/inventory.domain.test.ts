@@ -654,6 +654,37 @@ async function run() {
     assert.equal(await en('A-01'), 1); assert.equal(await en('A-02'), 9); assert.equal(await en('RECV-01'), 0);
   });
 
+  await test('copiloto: el contexto refleja al instante los cambios hechos en el portal', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await f.facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    await f.facade.createUser({ id: 'opa', name: 'Op A', email: 'opa@x.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    await f.facade.createUser({ id: 'sup', name: 'Sofía Sup', email: 'sup@x.cl', role: UserRole.ADMIN, operationId: 'op1' });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    const ctx = async () => (await f.facade.copilotContextPreview('op1', null)).context;
+
+    // 1) Auto-balanceo: el perfil ya no queda cacheado con el valor viejo.
+    assert.match(await ctx(), /auto-balanceo continuo OFF/);
+    await f.facade.setAutoBalanceContinuous('op1', true, 'sup');
+    let c = await ctx();
+    assert.match(c, /auto-balanceo continuo ON/, 'se ve al instante');
+    assert.match(c, /CAMBIOS RECIENTES[\s\S]*Auto-balanceo continuo ACTIVADO.*\(por Sofía Sup\)/);
+    await f.facade.setAutoBalanceContinuous('op1', false, 'sup');
+    assert.match(await ctx(), /auto-balanceo continuo OFF/);
+
+    // 2) Recepción eliminada: sale del contexto y su tarea asignada se cierra.
+    const rc = await f.facade.createReceipt('acme', { supplier: 'Prov', reference: 'OC-77', lines: [{ sku: 'CAM', qty: 5 }] } as any, 'sup');
+    await f.facade.assignTask('op1', { type: 'RECEIVE', entityId: rc.id, entityRef: 'OC-77', sellerId: 'acme', operator: 'opa', unitsEstimate: 5, by: 'sup' });
+    assert.match(await ctx(), /Recepciones abiertas 1/);
+    assert.ok((await f.facade.getOperatorTasks('op1', 'opa')).some((t: any) => t.type === 'RECEIVE'));
+    await f.facade.deleteReceipt('acme', rc.id, 'sup');
+    c = await ctx();
+    assert.match(c, /Recepciones abiertas 0/);
+    assert.match(c, /ELIMINADA/);
+    assert.ok(!(await f.facade.getOperatorTasks('op1', 'opa')).some((t: any) => t.type === 'RECEIVE'), 'la tarea de la recepción eliminada salió de la bandeja');
+  });
+
   await test('una orden DESPACHADA no se cancela: corresponde una devolución', async () => {
     const f = buildOrderFixture();
     await seedSellerA(f);

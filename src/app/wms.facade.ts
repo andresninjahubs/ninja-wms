@@ -802,9 +802,9 @@ export class WmsFacade {
     // Con IA: en la primera pregunta se calcula la respuesta determinista y se le
     // pasa al modelo como dato de partida (es exacta y sale gratis). En los
     // seguimientos manda el hilo.
-    const pista = (history && history.length > 0)
-      ? null
-      : await this.copilotDeterministicAnswer(operationId, sellerId, question).catch(() => null);
+    // Se calcula en CADA pregunta (no solo en la primera): en un hilo largo, el dato
+    // fresco es justamente lo que evita que el modelo repita una cifra vieja del hilo.
+    const pista = await this.copilotDeterministicAnswer(operationId, sellerId, question).catch(() => null);
     return this.copilotLlmAnswer(operationId, sellerId, question, history || [], cred, actor, pista);
   }
 
@@ -970,6 +970,7 @@ export class WmsFacade {
       'NO uses tablas, NO uses encabezados (#, ##), NO uses listas con viñetas salvo que el usuario lo pida explícitamente; si enumeras pocas cosas, hazlo dentro de una frase separadas por comas.',
       'Cuando propongas un siguiente paso, hazlo como una pregunta u ofrecimiento natural (ej: "¿Quieres que revise…?") para invitar a continuar la conversación.',
       'Tienes HERRAMIENTAS para consultar datos en vivo del WMS (kardex, línea de tiempo de órdenes, facturación, canal de voz, etc.). Úsalas cuando necesites un dato que no esté en el resumen. Responde SOLO con datos reales (del resumen o de las herramientas); nunca inventes cifras.',
+      'DATOS FRESCOS — REGLA CLAVE: el RESUMEN de abajo se recalcula en ESTE momento, en cada pregunta. La bodega cambia mientras conversan: el usuario u otras personas activan o desactivan automatismos, crean o eliminan recepciones, cancelan órdenes, asignan tareas desde el portal o la app. Por eso las cifras y estados que aparecen en tus respuestas ANTERIORES de esta conversación pueden estar desactualizados: NUNCA los repitas sin verificarlos contra el resumen actual o una herramienta consultada ahora. Si el resumen o una herramienta contradice algo que dijiste antes, manda el dato actual y dilo con naturalidad («ahora el auto-balanceo está desactivado», «esa recepción ya no existe»). Revisa también la sección de CAMBIOS RECIENTES si aparece.',
     ].join(' ');
     const canWrite = this.copilotCanWrite(actor?.role);
     const canManage = this.copilotCanManage(actor?.role);
@@ -1175,7 +1176,7 @@ export class WmsFacade {
       if (!canWrite) return { error: 'No tienes permisos para configurar automatismos.' };
       try {
         const on = args?.activar !== false && args?.activar !== 'false';
-        const r = await this.setAutoBalanceContinuous(operationId, on);
+        const r = await this.setAutoBalanceContinuous(operationId, on, actor?.id ? actor.id : 'copiloto');
         await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `auto-balanceo continuo ${on ? 'ON' : 'OFF'}`, actor: actor?.id || 'copiloto', orderRef: null, result: 'ok', recommendationId: null });
         return { ok: true, autoBalanceo: on ? 'activado' : 'desactivado', asignadasInicial: (r as any)?.asignadasInicial ?? 0 };
       } catch (e: any) { return { error: (e && e.message) || 'no se pudo cambiar el auto-balanceo' }; }
@@ -1184,7 +1185,7 @@ export class WmsFacade {
       if (!canWrite) return { error: 'No tienes permisos para configurar automatismos.' };
       try {
         const modo = args?.modo === 'strict' || args?.modo === 'estricto' ? 'strict' : 'advisory';
-        await this.setAssignmentMode(operationId, modo);
+        await this.setAssignmentMode(operationId, modo, actor?.id ? actor.id : 'copiloto');
         await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `modo asignación ${modo}`, actor: actor?.id || 'copiloto', orderRef: null, result: 'ok', recommendationId: null });
         return { ok: true, modoAsignacion: modo };
       } catch (e: any) { return { error: (e && e.message) || 'no se pudo fijar el modo' }; }
@@ -2144,7 +2145,7 @@ export class WmsFacade {
     const s = this.copilotSettings ? await this.copilotSettings.get(operationId).catch(() => null) : null;
     return effectiveAgentSettings(s, operationId);
   }
-  async updateAgentSettings(operationId: string, patch: Partial<Omit<CopilotSettings, 'operationId'>>, actor?: string): Promise<Required<CopilotSettings>> {
+  private async updateAgentSettingsImpl(operationId: string, patch: Partial<Omit<CopilotSettings, 'operationId'>>, actor?: string): Promise<Required<CopilotSettings>> {
     if (!this.copilotSettings) throw new ValidationError('Ajustes no disponibles');
     const cur = await this.agentSettings(operationId);
     const lvl = patch.autonomyLevel != null ? Math.max(0, Math.min(3, Math.round(patch.autonomyLevel))) as 0 | 1 | 2 | 3 : cur.autonomyLevel;
@@ -2425,9 +2426,149 @@ export class WmsFacade {
 
   // ---- Contexto en capas para el LLM y el agente (Fase 1 agente autónomo) ----------------
 
+  /** Anota un cambio manual para el copiloto (best-effort, nunca rompe la operación). */
+  private async anotarCambio(operationId: string | null | undefined, texto: string, actor?: string | null): Promise<void> {
+    try {
+      let quien: string | null = actor ?? null;
+      if (quien && quien !== 'system' && quien !== 'sistema') { const u = await this.usersService.getUser(quien).catch(() => null); if (u) quien = u.name || u.email || quien; }
+      this.registrarCambio(operationId, texto, quien === 'system' ? 'sistema' : quien);
+    } catch { /* best-effort */ }
+  }
+  private async anotarCambioSeller(sellerId: string, texto: string, actor?: string | null): Promise<void> {
+    const opId = await this.operationOfSeller(sellerId).catch(() => null);
+    const sel = await this.sellers.findById(sellerId).catch(() => null);
+    await this.anotarCambio(opId, `${texto} · cliente ${sel?.name || sellerId}`, actor);
+  }
+
+  // ---- Envolturas que anotan cambios manuales para el copiloto ----------------
+  async updateAgentSettings(operationId: string, patch: Partial<Omit<CopilotSettings, 'operationId'>>, actor?: string): Promise<Required<CopilotSettings>> {
+    const r = await this.updateAgentSettingsImpl(operationId, patch, actor);
+    const d: string[] = [];
+    if (patch.paused != null) d.push(patch.paused ? 'agente PAUSADO' : 'agente REANUDADO');
+    if (patch.autonomyLevel != null) d.push(`nivel de autonomía ${r.autonomyLevel}`);
+    if (patch.shadowMode != null) d.push(patch.shadowMode ? 'modo sombra ON' : 'modo sombra OFF');
+    if (patch.actionMode != null) d.push(`copiloto en modo ${r.actionMode === 'direct' ? 'directo' : 'confirmación'}`);
+    if (patch.llmPlanning != null) d.push(patch.llmPlanning ? 'planificación con IA ON' : 'planificación con IA OFF');
+    await this.anotarCambio(operationId, 'Ajustes del agente: ' + (d.join(', ') || 'actualizados'), actor);
+    return r;
+  }
+
+  async setOperatorSkills(operationId: string, operator: string, actividades: unknown, actor?: string): Promise<{ ok: true; operario: string; nombre: string; todas: boolean; habilidades: string[]; tareasFueraDeHabilidad: Array<{ tipo: string; ref: string }> }> {
+    const r = await this.setOperatorSkillsImpl(operationId, operator, actividades, actor);
+    await this.anotarCambio(operationId, `Habilidades de ${r.nombre}: ${r.todas ? 'todas las actividades' : (r.habilidades.join(', ') || 'ninguna (no recibe tareas)')}`, actor);
+    return r;
+  }
+
+  async updateAgentRule(operationId: string, ruleKey: string, patch: { enabled?: boolean; threshold?: number; cooldownMin?: number; severity?: AgentRuleSeverity; sellerId?: string | null; actionType?: 'alert' | 'execute'; actionMode?: 'confirmar' | 'directo' }, actor?: string): Promise<AgentRuleConfig> {
+    const r = await this.updateAgentRuleImpl(operationId, ruleKey, patch, actor);
+    const nom = agentRuleDef(ruleKey)?.name || ruleKey; const d: string[] = [];
+    if (patch.enabled != null) d.push(patch.enabled ? 'ACTIVADA' : 'DESACTIVADA');
+    if (patch.actionType != null) d.push(patch.actionType === 'alert' ? 'acción: solo avisar' : `acción: ejecutar (${patch.actionMode || r.actionMode || 'confirmar'})`);
+    if (patch.threshold != null) d.push(`umbral ${patch.threshold}`);
+    if (patch.cooldownMin != null) d.push(`enfriamiento ${patch.cooldownMin} min`);
+    await this.anotarCambio(operationId, `Regla del agente «${nom}»: ${d.join(', ') || 'actualizada'}`, actor);
+    return r;
+  }
+
+  async setAutoBalanceContinuous(operationId: string, on: boolean, actor?: string | null): Promise<{ autoBalance: boolean; asignadasInicial: number }> {
+    const r = await this.setAutoBalanceContinuousImpl(operationId, on);
+    await this.anotarCambio(operationId, `Auto-balanceo continuo ${on ? 'ACTIVADO' + (r.asignadasInicial ? ` (repartió ${r.asignadasInicial} tarea${r.asignadasInicial === 1 ? "" : "s"} al activarse)` : '') : 'DESACTIVADO'}`, actor);
+    return r;
+  }
+
+  async setAssignmentMode(operationId: string, mode: 'advisory' | 'strict', actor?: string | null): Promise<{ assignmentMode: 'advisory' | 'strict' }> {
+    const r = await this.setAssignmentModeImpl(operationId, mode);
+    await this.anotarCambio(operationId, `Modo de asignación cambiado a ${mode === 'strict' ? 'ESTRICTO' : 'ADVISORY'}`, actor);
+    return r;
+  }
+
+  async setOperatorSelfPickup(operationId: string, on: boolean, actor?: string | null): Promise<{ operatorSelfPickup: boolean }> {
+    const r = await this.setOperatorSelfPickupImpl(operationId, on);
+    await this.anotarCambio(operationId, `«Operarios toman tareas» ${on ? 'ACTIVADO' : 'DESACTIVADO'}`, actor);
+    return r;
+  }
+
+  async cancelOrder(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
+    const r = await this.cancelOrderImpl(sellerId, orderId, actor);
+    await this.anotarCambioSeller(sellerId, `Orden ${r.externalOrderId || r.id} CANCELADA`, actor);
+    return r;
+  }
+
+  async reactivateOrder(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
+    const r = await this.reactivateOrderImpl(sellerId, orderId, actor);
+    await this.anotarCambioSeller(sellerId, `Orden ${r.externalOrderId || r.id} REACTIVADA`, actor);
+    return r;
+  }
+
+  async createReceipt(sellerId: string, input: CreateReceiptInput, actor?: string): Promise<ReceiptOrder> {
+    const r = await this.createReceiptImpl(sellerId, input, actor);
+    await this.anotarCambioSeller(sellerId, `Recepción ${r.id}${r.reference ? ' (' + r.reference + ')' : ''} CREADA`, actor);
+    return r;
+  }
+
+  async updateReceipt(sellerId: string, orderId: string, input: CreateReceiptInput, actor?: string): Promise<ReceiptOrder> {
+    const r = await this.updateReceiptImpl(sellerId, orderId, input, actor);
+    await this.anotarCambioSeller(sellerId, `Recepción ${r.id} EDITADA`, actor);
+    return r;
+  }
+
+  async closeReceipt(sellerId: string, orderId: string, actor?: string): Promise<ReceiptOrder> {
+    const r = await this.closeReceiptImpl(sellerId, orderId, actor);
+    await this.anotarCambioSeller(sellerId, `Recepción ${r.id} CERRADA (${r.status})`, actor);
+    return r;
+  }
+
+  async deleteReceipt(sellerId: string, orderId: string, actor?: string): Promise<{ ok: true; id: string }> {
+    const r = await this.deleteReceiptImpl(sellerId, orderId, actor);
+    await this.anotarCambioSeller(sellerId, `Recepción ${orderId} ELIMINADA (ya no existe)`, actor);
+    return r;
+  }
+
+  async deactivateUser(userId: string, actor?: string | null): Promise<User> {
+    const r = await this.deactivateUserImpl(userId);
+    if (r.operationId) await this.anotarCambio(r.operationId, `Usuario ${r.name || r.email} DESACTIVADO`, actor);
+    return r;
+  }
+
+  async createUser(input: CreateUserInput, actor?: string | null): Promise<User> {
+    const r = await this.createUserImpl(input);
+    if (r.operationId) await this.anotarCambio(r.operationId, `Usuario ${r.name || r.email} CREADO (${r.role})`, actor);
+    return r;
+  }
+
+  async updateUser(userId: string, patch: UpdateUserInput, actor?: string | null): Promise<User> {
+    const r = await this.updateUserImpl(userId, patch);
+    if (r.operationId && patch && (patch as any).active != null) await this.anotarCambio(r.operationId, `Usuario ${r.name || r.email} ${(patch as any).active ? 'ACTIVADO' : 'DESACTIVADO'}`, actor);
+    return r;
+  }
+
   private profileCache = new Map<string, { at: number; text: string }>();
   /** Invalida el perfil cacheado (al cambiar clientes, ubicaciones, usuarios o ajustes). */
   private invalidateAgentProfile(operationId: string): void { this.profileCache.delete(operationId); }
+
+  /**
+   * Cambios recientes hechos a mano (portal, app o copiloto) por operación. El copiloto
+   * los recibe en cada pregunta: así sabe que algo que dijo antes en la conversación
+   * ya no es cierto (ej. «desactivé el auto-balanceo», «borré la recepción OR-…»).
+   */
+  private cambiosRecientes = new Map<string, Array<{ at: string; texto: string; actor: string | null }>>();
+  registrarCambio(operationId: string | null | undefined, texto: string, actor?: string | null): void {
+    if (!operationId) return;
+    const l = this.cambiosRecientes.get(operationId) || [];
+    l.push({ at: this.clockNow(), texto, actor: actor ?? null });
+    while (l.length > 40) l.shift();
+    this.cambiosRecientes.set(operationId, l);
+  }
+  /** Cambios de las últimas `horas` (más nuevos primero), como texto para el LLM. */
+  async cambiosRecientesTexto(operationId: string, horas = 6): Promise<string> {
+    const desde = Date.parse(this.clockNow()) - horas * 3600000;
+    const l = (this.cambiosRecientes.get(operationId) || []).filter((c) => Date.parse(c.at) >= desde).slice().reverse();
+    if (!l.length) return '';
+    const cfg = await this.getDeadlineConfig(operationId).catch(() => ({} as DeadlineConfig));
+    const off = typeof (cfg as any).offsetHoras === 'number' ? (cfg as any).offsetHoras : -3;
+    const hh = (iso: string) => new Date(Date.parse(iso) + off * 3600000).toISOString().slice(11, 16);
+    return l.slice(0, 20).map((c) => `- ${hh(c.at)} ${c.texto}${c.actor ? ` (por ${c.actor})` : ''}`).join('\n');
+  }
 
   /**
    * CAPA 1 — Perfil del tenant: estable, cacheado 5 minutos. Quién es la operación, sus
@@ -2435,13 +2576,14 @@ export class WmsFacade {
    * debe respetar (hoy solo vivían en el código).
    */
   async agentProfileContext(operationId: string): Promise<string> {
+    // Antes se cacheaba 5 minutos y nunca se invalidaba: si alguien activaba el
+    // auto-balanceo, cambiaba el modo o creaba un usuario en el portal, el copiloto
+    // seguía hablando del estado anterior. Son lecturas baratas: va siempre fresco.
     const now = Date.parse(this.clockNow());
-    const c = this.profileCache.get(operationId);
-    if (c && now - c.at < 5 * 60000) return c.text;
     const L: string[] = [];
     const op = await this.operationsService.get(operationId);
     L.push(`== PERFIL DE LA OPERACIÓN ==`);
-    L.push(`Operación: ${op?.name || operationId} (id ${operationId}). Modo de asignación: ${op?.assignmentMode || 'advisory'}. Auto-balanceo continuo: ${op?.autoBalance ? 'ON' : 'OFF'}.`);
+    L.push(`Operación: ${op?.name || operationId} (id ${operationId}). Automatismos AHORA: modo de asignación ${op?.assignmentMode || 'advisory'}; auto-balanceo continuo ${op?.autoBalance ? 'ON' : 'OFF'}; operarios toman tareas solos ${op?.operatorSelfPickup ? 'ON' : 'OFF'}.`);
     try {
       const sellers = await this.listSellers(operationId);
       L.push(`Clientes (${sellers.length}): ` + sellers.map((x) => `${x.name} [id ${x.id}] picking ${x.pickingStrategy}${x.consolidateByLocation ? ', consolida por ubicación' : ''}${x.autoAllocateOnIngest ? ', auto-reserva al ingresar' : ''}${(x.courierPriority || []).length ? ', couriers ' + (x.courierPriority || []).join('>') : ''}${x.active === false ? ', INACTIVO' : ''}`).join(' · '));
@@ -2578,6 +2720,10 @@ export class WmsFacade {
     const head = `Fecha actual: ${new Date(now).toISOString().slice(0, 10)}. Alcance: ${sellerId ? 'cliente ' + sellerId : 'toda la operación'}. Política: ${describePolicy(settings)}`;
     const sections: Array<{ name: string; prio: number; text: string }> = [{ name: 'cabecera', prio: 0, text: head }];
     const push = async (name: string, prio: number, fn: () => Promise<string>) => { try { const t = await fn(); if (t) sections.push({ name, prio, text: t }); } catch { missing.push(name); } };
+    await push('cambios', 0, async () => {
+      const t = await this.cambiosRecientesTexto(operationId);
+      return t ? `== CAMBIOS RECIENTES HECHOS EN EL PORTAL / LA APP (más nuevos primero; mandan sobre cualquier cosa dicha antes en la conversación) ==\n${t}` : '';
+    });
     await push('perfil', 1, () => this.agentProfileContext(operationId));
     await push('estado', 1, () => this.agentStateContext(operationId, sellerId));
     await push('memoria', 1, () => this.agentMemoryContext(operationId));
@@ -3548,14 +3694,14 @@ export class WmsFacade {
   }
 
   // ---- Usuarios, roles y autorización ---------------------------------------
-  async createUser(input: CreateUserInput): Promise<User> {
+  private async createUserImpl(input: CreateUserInput): Promise<User> {
     await this.assertQuota(input.operationId ?? null, 'users');
     return safeUser(await this.usersService.createUser(input));
   }
-  async updateUser(userId: string, patch: UpdateUserInput): Promise<User> {
+  private async updateUserImpl(userId: string, patch: UpdateUserInput): Promise<User> {
     return safeUser(await this.usersService.updateUser(userId, patch));
   }
-  async deactivateUser(userId: string): Promise<User> {
+  private async deactivateUserImpl(userId: string): Promise<User> {
     return safeUser(await this.usersService.deactivateUser(userId));
   }
   async getUser(userId: string): Promise<User | null> {
@@ -4497,7 +4643,7 @@ export class WmsFacade {
     const op = await this.operationsService.get(operationId);
     return op?.assignmentMode === 'strict' ? 'strict' : 'advisory';
   }
-  async setAssignmentMode(operationId: string, mode: 'advisory' | 'strict'): Promise<{ assignmentMode: 'advisory' | 'strict' }> {
+  private async setAssignmentModeImpl(operationId: string, mode: 'advisory' | 'strict'): Promise<{ assignmentMode: 'advisory' | 'strict' }> {
     await this.operationsService.setAssignmentMode(operationId, mode);
     return { assignmentMode: mode };
   }
@@ -5038,7 +5184,7 @@ export class WmsFacade {
    * para quitar la restricción. Las tareas que ya tiene asignadas y que dejan de estar
    * permitidas NO se le quitan solas: se informan para que el admin decida.
    */
-  async setOperatorSkills(operationId: string, operator: string, actividades: unknown, actor?: string): Promise<{ ok: true; operario: string; nombre: string; todas: boolean; habilidades: string[]; tareasFueraDeHabilidad: Array<{ tipo: string; ref: string }> }> {
+  private async setOperatorSkillsImpl(operationId: string, operator: string, actividades: unknown, actor?: string): Promise<{ ok: true; operario: string; nombre: string; todas: boolean; habilidades: string[]; tareasFueraDeHabilidad: Array<{ tipo: string; ref: string }> }> {
     const u = (await this.listUsers(operationId)).find((x) => x.id === operator || x.email.toLowerCase() === String(operator || '').toLowerCase());
     if (!u) throw new NotFoundError(`Operario no encontrado en la operación: ${operator}`);
     if (String(u.role) !== 'OPERATOR') throw new ValidationError(`${u.name} no es operario: las habilidades solo aplican a usuarios con rol Operario.`);
@@ -5173,7 +5319,7 @@ export class WmsFacade {
   }
 
   /** Actualiza la configuración de una regla (encendido, umbral, enfriamiento, severidad, alcance, acción). */
-  async updateAgentRule(operationId: string, ruleKey: string, patch: { enabled?: boolean; threshold?: number; cooldownMin?: number; severity?: AgentRuleSeverity; sellerId?: string | null; actionType?: 'alert' | 'execute'; actionMode?: 'confirmar' | 'directo' }, actor?: string): Promise<AgentRuleConfig> {
+  private async updateAgentRuleImpl(operationId: string, ruleKey: string, patch: { enabled?: boolean; threshold?: number; cooldownMin?: number; severity?: AgentRuleSeverity; sellerId?: string | null; actionType?: 'alert' | 'execute'; actionMode?: 'confirmar' | 'directo' }, actor?: string): Promise<AgentRuleConfig> {
     if (!this.agentRuleConfig) throw new ValidationError('Agente no disponible');
     const def = agentRuleDef(ruleKey);
     if (!def) throw new NotFoundError(`Regla no encontrada: ${ruleKey}`);
@@ -5918,7 +6064,7 @@ export class WmsFacade {
     const op = await this.operationsService.get(operationId);
     return !!op?.operatorSelfPickup;
   }
-  async setOperatorSelfPickup(operationId: string, on: boolean): Promise<{ operatorSelfPickup: boolean }> {
+  private async setOperatorSelfPickupImpl(operationId: string, on: boolean): Promise<{ operatorSelfPickup: boolean }> {
     await this.operationsService.setOperatorSelfPickup(operationId, on);
     return { operatorSelfPickup: on };
   }
@@ -6160,8 +6306,10 @@ export class WmsFacade {
     if (type === 'RECEIVE') {
       // Ante cualquier duda (no existe, error de lectura) NO se cierra nada: solo se
       // cierra lo que se SABE superado.
-      const r = await this.getReceipt(sellerId, entityId).catch(() => null);
-      if (!r) return null;
+      let leida = true;
+      const r = await this.getReceipt(sellerId, entityId).catch(() => { leida = false; return null; });
+      // Se leyó bien y no está: la recepción fue eliminada → su tarea ya no corresponde.
+      if (!r) return leida ? { motivo: `la recepción ${entityId} ya no existe (fue eliminada)`, cierre: 'cancelled' } : null;
       if (r.status === ReceiptOrderStatus.RECEIVED) return { motivo: `la recepción ${r.reference || r.id} ya está recibida`, cierre: 'done' };
       if (r.status === ReceiptOrderStatus.CANCELLED) return { motivo: `la recepción ${r.reference || r.id} fue anulada`, cierre: 'cancelled' };
       return null;
@@ -6694,7 +6842,7 @@ export class WmsFacade {
   }
 
   /** Activa/desactiva el auto-balanceo continuo. Al activarlo, hace un barrido inicial. */
-  async setAutoBalanceContinuous(operationId: string, on: boolean): Promise<{ autoBalance: boolean; asignadasInicial: number }> {
+  private async setAutoBalanceContinuousImpl(operationId: string, on: boolean): Promise<{ autoBalance: boolean; asignadasInicial: number }> {
     await this.operationsService.setAutoBalance(operationId, on);
     let asignadasInicial = 0;
     if (on) for (const t of ['PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'RESLOT', 'COUNT'] as WorkTaskType[]) asignadasInicial += await this.rebalancePending(operationId, t);
@@ -7332,7 +7480,7 @@ export class WmsFacade {
   }
 
   // ---- Órdenes de recepción (inbound) ---------------------------------------
-  async createReceipt(sellerId: string, input: CreateReceiptInput, actor?: string): Promise<ReceiptOrder> {
+  private async createReceiptImpl(sellerId: string, input: CreateReceiptInput, actor?: string): Promise<ReceiptOrder> {
     const order = await this.receipts.create(sellerId, input, actor);
     // Auto-balanceo continuo: la recepción entra al pool RECEIVE.
     const opId = await this.operationOfSeller(sellerId).catch(() => null);
@@ -7342,7 +7490,7 @@ export class WmsFacade {
     if (opId) await this.openTask(opId, { type: 'RECEIVE', sellerId, orderId: null, orderRef: order.reference || order.id, entityId: order.id, entityRef: order.reference || order.id, unitsEstimate: units, by: actor || 'system' });
     return order;
   }
-  updateReceipt(sellerId: string, orderId: string, input: CreateReceiptInput, actor?: string): Promise<ReceiptOrder> {
+  private updateReceiptImpl(sellerId: string, orderId: string, input: CreateReceiptInput, actor?: string): Promise<ReceiptOrder> {
     return this.receipts.update(sellerId, orderId, input, actor);
   }
   /** Cotejo: registra el físico recibido por línea (postea el stock contado). */
@@ -7370,7 +7518,7 @@ export class WmsFacade {
     return this.receipts.unmarkArrived(sellerId, orderId, actor);
   }
   /** Cierra la orden como recibida aunque falte mercadería (parcial). */
-  async closeReceipt(sellerId: string, orderId: string, actor?: string): Promise<ReceiptOrder> {
+  private async closeReceiptImpl(sellerId: string, orderId: string, actor?: string): Promise<ReceiptOrder> {
     const order = await this.receipts.close(sellerId, orderId, actor);
     // Cierre parcial: la tarea RECEIVE también termina (bandeja + ledger).
     const opId = await this.operationOfSeller(sellerId).catch(() => null);
@@ -7381,8 +7529,17 @@ export class WmsFacade {
     }
     return order;
   }
-  deleteReceipt(sellerId: string, orderId: string, actor?: string): Promise<{ ok: true; id: string }> {
-    return this.receipts.remove(sellerId, orderId, actor);
+  private async deleteReceiptImpl(sellerId: string, orderId: string, actor?: string): Promise<{ ok: true; id: string }> {
+    const antes = await this.getReceipt(sellerId, orderId).catch(() => null);
+    const r = await this.receipts.remove(sellerId, orderId, actor);
+    // La recepción dejó de existir: su tarea de cotejo sale de la bandeja y del ledger.
+    // Sin esto quedaba una tarea RECEIVE fantasma (y el copiloto la seguía contando).
+    const opId = await this.operationOfSeller(sellerId).catch(() => null);
+    if (opId) {
+      await this.cerrarTareaVencida(opId, 'RECEIVE', orderId, { motivo: `la recepción ${antes?.reference || orderId} fue eliminada`, cierre: 'cancelled' });
+      await this.continuousHook(opId, 'RECEIVE', null);
+    }
+    return r;
   }
   getReceipt(sellerId: string, orderId: string): Promise<ReceiptOrder | null> {
     return this.receipts.get(sellerId, orderId);
@@ -7612,7 +7769,7 @@ export class WmsFacade {
     };
   }
 
-  async cancelOrder(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
+  private async cancelOrderImpl(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
     const order = await this.orders.cancel(sellerId, orderId, actor);
     this.fireOrderWebhook(sellerId, order); // order.cancelled
     // La orden dejó de ser trabajo: su tarea sale de la bandeja del operario y del ledger.
@@ -7655,7 +7812,7 @@ export class WmsFacade {
     if (liberadas) this.prioritiesAt.delete(operationId);
     return { liberadas };
   }
-  async reactivateOrder(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
+  private async reactivateOrderImpl(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
     const order = await this.orders.reactivate(sellerId, orderId, actor);
     this.fireOrderWebhook(sellerId, order);
     return order;

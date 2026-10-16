@@ -2774,6 +2774,10 @@
     $$('#cop-answer [data-copcancel]').forEach(function(b){b.addEventListener('click',function(){var m=copChat[+b.getAttribute('data-copcancel')];if(m&&m.actions){m.actions.forEach(function(a){if(a.state==='pending'){a.state='error';a.error='cancelada';}});copRenderChat();}});});
     ans.scrollTop=ans.scrollHeight;
   }
+  // Las respuestas viejas del hilo viajan marcadas con su hora: así el modelo sabe que
+  // un estado dicho hace 20 minutos puede haber cambiado en el portal.
+  function copHoraTxt(t){try{var d=new Date(t);return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);}catch(e){return '';}}
+  function copHistItem(m){var c=m.content!=null?m.content:(m.text||'');if(m.role==='assistant'&&m.at)c='[Respuesta de las '+copHoraTxt(m.at)+'; sus datos pueden haber cambiado desde entonces] '+c;return {role:m.role,content:c};}
   function copAsk(){
     var qi=$("#cop-q"); if(!qi)return;
     var q=(qi.value||'').trim(); if(!q){return;}
@@ -2783,12 +2787,12 @@
   function copSend(q){
     if(!q)return;
     // Historial (turnos previos ya respondidos) para continuar la conversación.
-    var history=copChat.filter(function(m){return !m.pending;}).map(function(m){return {role:m.role,content:m.text||''};});
+    var history=copChat.filter(function(m){return !m.pending;}).map(copHistItem);
     copChat.push({role:'user',text:q});
     var pending={role:'assistant',text:'',pending:true}; copChat.push(pending);
     copRenderChat();
     api('/copilot/ask',{method:'POST',body:{operationId:op,sellerId:(role==='CLIENT'?seller:undefined),question:q,history:history}}).then(function(d){
-      pending.pending=false; pending.text=d.answer||''; pending.items=d.items; pending.suggestions=d.suggestions; pending.link=d.link; pending.toolsUsed=d.toolsUsed; pending.visuals=d.visuals||null; pending.q=q;
+      pending.pending=false; pending.at=Date.now(); pending.text=d.answer||''; pending.items=d.items; pending.suggestions=d.suggestions; pending.link=d.link; pending.toolsUsed=d.toolsUsed; pending.visuals=d.visuals||null; pending.q=q;
       var pas=d.pendingActions||(d.pendingAction?[d.pendingAction]:null);
       if(pas&&pas.length){ pending.actions=pas.map(function(pa){return {pa:pa,state:'pending'};}); }
       copRenderChat();
@@ -2868,11 +2872,11 @@
       vozAwaitingConfirm=false; vozPending=null;
     }
     vozSetState('Pensando…','thinking');
-    var history=vozHistory.slice(-12);
+    var history=vozHistory.slice(-12).map(copHistItem);
     vozHistory.push({role:'user',content:text});
     api('/copilot/ask',{method:'POST',body:{operationId:op,question:text,history:history}}).then(function(d){
       var ans=d.answer||'No tengo una respuesta.';
-      vozHistory.push({role:'assistant',content:ans});
+      vozHistory.push({role:'assistant',content:ans,at:Date.now()});
       var pas=d.pendingActions||(d.pendingAction?[d.pendingAction]:null);
       if(pas&&pas.length){ vozPending=pas.slice(); vozAwaitingConfirm=true;
         var resumen=ans+' '+(pas.length>1?('Son '+pas.length+' acciones. '):'')+pas.filter(function(x){return x.tool;}).map(function(x){return (x.resumen||x.tool)+'. ';}).join('')+'¿Las confirmo?';

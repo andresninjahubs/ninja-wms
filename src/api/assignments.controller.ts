@@ -153,7 +153,7 @@ export class AssignmentsController {
   @Put('mode')
   @RequirePermission('master:manage')
   setMode(@CurrentUser() user: User | null, @Body() body: { operationId?: string; mode: 'advisory' | 'strict' }) {
-    return this.wms.setAssignmentMode(actorOperation(user, body?.operationId), body?.mode === 'strict' ? 'strict' : 'advisory');
+    return this.wms.setAssignmentMode(actorOperation(user, body?.operationId), body?.mode === 'strict' ? 'strict' : 'advisory', user?.id ?? null);
   }
 
   /** Tablero del operario (PWA): sus tareas en orden de ejecución + disponibles para tomar. */
@@ -237,7 +237,7 @@ export class AssignmentsController {
   @Put('self-pickup')
   @RequirePermission('master:manage')
   setSelfPickup(@CurrentUser() user: User | null, @Body() body: { operationId?: string; on: boolean }) {
-    return this.wms.setOperatorSelfPickup(actorOperation(user, body?.operationId), !!body?.on);
+    return this.wms.setOperatorSelfPickup(actorOperation(user, body?.operationId), !!body?.on, user?.id ?? null);
   }
 
   /** Auto-balanceo continuo: estado y activación. */
@@ -250,6 +250,6 @@ export class AssignmentsController {
   @Put('continuous')
   @RequirePermission('master:manage')
   setContinuous(@CurrentUser() user: User | null, @Body() body: { operationId?: string; on: boolean }) {
-    return this.wms.setAutoBalanceContinuous(actorOperation(user, body?.operationId), !!body?.on);
+    return this.wms.setAutoBalanceContinuous(actorOperation(user, body?.operationId), !!body?.on, user?.id ?? null);
   }
 }

@@ -33,7 +33,7 @@ export class UsersController {
       operationId,
       sellerId: dto.sellerId ?? null,
       password: dto.password ?? null,
-    });
+    }, actor?.id ?? null);
   }
 
   /** El admin fija/restablece la contraseña de un usuario de su alcance. */
@@ -60,14 +60,14 @@ export class UsersController {
 
   @Patch(':userId')
   @RequirePermission('user:manage')
-  update(@Param('userId') userId: string, @Body() dto: UpdateUserDto) {
-    return this.wms.updateUser(userId, dto);
+  update(@Param('userId') userId: string, @Body() dto: UpdateUserDto, @CurrentUser() actor: User | null) {
+    return this.wms.updateUser(userId, dto, actor?.id ?? null);
   }
 
   @Post(':userId/deactivate')
   @RequirePermission('user:manage')
-  deactivate(@Param('userId') userId: string) {
-    return this.wms.deactivateUser(userId);
+  deactivate(@Param('userId') userId: string, @CurrentUser() actor: User | null) {
+    return this.wms.deactivateUser(userId, actor?.id ?? null);
   }
 }
 

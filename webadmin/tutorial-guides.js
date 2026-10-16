@@ -149,7 +149,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#cop-ai-status', place:'bottom', title:'Conectar la IA', text:'Con <b>Conectar IA</b> eliges proveedor y modelo, pegas tu API key y la pruebas. <b>Ver contexto</b> muestra exactamente qué información de tu operación recibe el modelo; <b>Desconectar</b> la retira.'},
       {el:'#cop-settings', place:'bottom', title:'Confirmar o ejecutar directo', text:'Cuando el copiloto propone una acción (reservar, asignar, mover), puedes pedir que <b>confirme contigo</b> antes o que la <b>ejecute directo</b>. Empieza con confirmación.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
     ],
-    tips:['Puedes preguntar por cliente, por SKU o por operario.',{t:'Cada recomendación y acción del copiloto queda registrada en «Auditoría IA».',mod:'aiaudit'}]
+    tips:['Puedes preguntar por cliente, por SKU o por operario.','El copiloto lee los datos al momento de cada pregunta y conoce los cambios que se hicieron a mano en el portal (activar el auto-balanceo, eliminar una recepción, etc.): si algo cambió desde su respuesta anterior, te lo dice.',{t:'Cada recomendación y acción del copiloto queda registrada en «Auditoría IA».',mod:'aiaudit'}]
   },
 
   voz: {
