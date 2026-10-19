@@ -169,8 +169,18 @@ export class InventoryService {
     const binId = cmd.binId ?? null;
     const available = await this.availableQty(sellerId, cmd.sku, cmd.fromLocationId, lot, binId);
     if (available < cmd.qty) {
+      const loc = await this.locations.findById(cmd.fromLocationId).catch(() => null);
+      const donde = loc ? loc.code : cmd.fromLocationId;
+      // ¿El stock está dentro de un Bin? Entonces no se guarda suelto: se ubica el Bin completo.
+      let enBins = 0;
+      if (!binId) {
+        const todo = await this.movements.balances({ sellerId, sku: cmd.sku, locationId: cmd.fromLocationId });
+        enBins = todo.filter((b) => b.binId && b.state === StockState.AVAILABLE && (b.lot ?? null) === lot && b.qty > 0).reduce((t, b) => t + b.qty, 0);
+      }
       throw new InsufficientStockError(
-        `Stock insuficiente en ${cmd.fromLocationId} para ${cmd.sku}: disponible ${available}, requerido ${cmd.qty}`,
+        enBins > 0 && available < cmd.qty
+          ? `En ${donde} hay ${available} un sueltas de ${cmd.sku}; otras ${enBins} un están dentro de un Bin. Lo que está en un Bin se guarda moviendo el Bin completo (sección Bins o «Guardado de Bins» en la app).`
+          : `Stock insuficiente en ${donde} para ${cmd.sku}: disponible ${available}, requerido ${cmd.qty}`,
       );
     }
 

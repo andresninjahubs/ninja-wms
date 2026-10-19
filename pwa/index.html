@@ -343,6 +343,7 @@
     .iconbtn.refr{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16 M16 16h5v5'/%3E%3C/svg%3E")}
     .op[data-op="countst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2 M9 3h6v4H9z M9 12h6 M9 16h4'/%3E%3C/svg%3E")}
     .op[data-op="retst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11'/%3E%3C/svg%3E")}
+    .op[data-op="binpa"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7l9-4 9 4v10l-9 4-9-4z M3 7l9 4 9-4 M12 11v10 M16 21l3-3-3-3'/%3E%3C/svg%3E")}
     .op[data-op="binst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7l9-4 9 4v10l-9 4-9-4z M3 7l9 4 9-4 M12 11v10 M7.5 5l9 4'/%3E%3C/svg%3E")}
     .op[data-op="kitst"] .em{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2 2 7l10 5 10-5-10-5z M2 17l10 5 10-5 M2 12l10 5 10-5'/%3E%3C/svg%3E")}
     .cl{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
@@ -478,6 +479,7 @@
           <div class="ops">
             <button class="op" data-op="receive"><span class="em">📦</span><span class="t">Recepción</span></button>
             <button class="op" data-op="putaway"><span class="em">⇄</span><span class="t">Guardado</span></button>
+            <button class="op" data-op="binpa" style="display:none"><span class="em">📦</span><span class="t">Guardado de Bins</span></button>
             <button class="op" data-op="pick"><span class="em">🛒</span><span class="t">Picking</span></button>
             <button class="op" data-op="packst"><span class="em">📦</span><span class="t">Empaque</span></button>
             <button class="op" data-op="shipst"><span class="em">🚚</span><span class="t">Despacho</span></button>
@@ -631,6 +633,7 @@
         <div class="chips tsf" id="ts-types" style="display:none"></div>
         <div id="ts-list"></div>
         <button class="btn alt" id="ts-loose" style="margin-top:6px">—</button>
+        <button class="btn alt" id="ts-loosebin" style="margin-top:6px;display:none">📦 Ubicar un Bin (sin tarea)</button>
       </div>
     </section>
 

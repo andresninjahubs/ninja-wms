@@ -7021,6 +7021,7 @@
     (D.inv||[]).forEach(function(b){
       var l=locById[b.locationId];
       if(!l||l.zoneType!=="RECEIVING"||b.state!=="AVAILABLE"||!(b.qty>0))return;
+      if(b.binId)return;   // lo que está dentro de un Bin se guarda con el Bin completo (pestaña «En Bins»)
       var esRepo=!!(repo&&b.locationId===repo.id);
       if(pwTab==='reposicion'?!esRepo:esRepo)return;
       var k=b.sku+"|"+(b.lot||"")+"|"+b.locationId;
@@ -7034,28 +7035,82 @@
     (D.inv||[]).forEach(function(b){
       var l=locById[b.locationId];
       if(!l||l.zoneType!=="RECEIVING"||b.state!=="AVAILABLE"||!(b.qty>0))return;
+      if(b.binId)return;
       if(repo&&b.locationId===repo.id)b2+=b.qty; else a+=b.qty;
     });
-    return {recepcion:a,reposicion:b2};
+    return {recepcion:a,reposicion:b2,bins:(pwBins||[]).length};
   }
   function renderPwTabs(){
     var el=$("#pw-tabs"); if(!el)return;
     var c=pwCounts();
     var tabs=[['recepcion','Desde recepción',c.recepcion],['reposicion','Por reponer',c.reposicion]];
+    if(pwBins!==null&&(pwBins.length||pwTab==='bins'))tabs.push(['bins','En Bins',c.bins]);
     el.innerHTML=tabs.map(function(t){
       return '<button class="fchip '+(pwTab===t[0]?'on':'')+(t[2]?'':' zero')+'" data-pwtab="'+t[0]+'">'+t[1]+'<span class="fcount">'+t[2]+'</span></button>';
     }).join('');
     $$("#pw-tabs [data-pwtab]").forEach(function(b){b.addEventListener("click",function(){pwTab=b.getAttribute("data-pwtab");renderPutaway();});});
     var help=$("#pw-help");
-    if(help)help.textContent=pwTab==='reposicion'
+    if(help)help.textContent=pwTab==='bins'
+      ? 'Bins (contenedores) que siguen en recepción. Se guardan completos: todo su contenido va a la ubicación destino en un solo movimiento.'
+      : pwTab==='reposicion'
       ? 'Mercadería que volvió de órdenes canceladas y todavía no está en su ubicación. Mientras espera aquí no se puede reservar para otra orden.'
       : 'Stock recibido en zona de recepción, pendiente de guardar en almacenaje. El destino viene sugerido automáticamente.';
     var tho=$("#pw-th-origen"); if(tho)tho.textContent=pwTab==='reposicion'?'En reposición':'Recepción';
     var thq=$("#pw-th-qty"); if(thq)thq.textContent=pwTab==='reposicion'?'Por reponer':'Por guardar';
   }
-  function renderPutaway(){
+  // ---- Bins en recepción: se guardan completos (un movimiento por Bin) ----
+  var pwBins=null, pwBinsAt=0;
+  function loadPwBins(force){
+    if(!window.NinjaBins||!op||role==="CLIENT")return;
+    if(!force&&pwBins!==null&&Date.now()-pwBinsAt<15000)return;
+    pwBinsAt=Date.now();
+    api('/bins?operationId='+encodeURIComponent(op)+'&estado=EN_ARMADO,POR_UBICAR,EN_MOVIMIENTO').then(function(r){
+      pwBins=(r.bins||[]).filter(function(b){var l=locById[b.locationId];return l&&l.zoneType==="RECEIVING"&&!(b.estado==="EN_MOVIMIENTO"&&b.pending);});
+      pwBins.sort(function(a,b){return Date.parse(a.closedAt||a.updatedAt)-Date.parse(b.closedAt||b.updatedAt);});
+      if($('.page[data-pg="putaway"]')&&$('.page[data-pg="putaway"]').classList.contains('on'))renderPutaway(true);
+    }).catch(function(){pwBins=[];});
+  }
+  var PW_HEAD_STD=null;
+  function renderPwBins(){
+    var head=$("#pw-head"); if(head){ if(PW_HEAD_STD===null)PW_HEAD_STD=head.innerHTML; head.innerHTML='<tr><th>Bin</th><th>Estado</th><th>Cliente(s)</th><th>Recepción</th><th style="text-align:right">Unidades</th><th>Destino sugerido</th><th data-action></th></tr>'; }
+    var rows=pwBins||[];
+    $("#pw-count").textContent=rows.length?(rows.length+" Bin(s) en recepción · "+rows.reduce(function(a,b){return a+b.unidades;},0)+" un"):"";
+    if(!rows.length){$("#pw-body").innerHTML='<tr><td colspan="7" class="empty">No hay Bins esperando en recepción. ✓</td></tr>';return;}
+    var puede=role!=="CLIENT";
+    $("#pw-body").innerHTML=rows.map(function(b,i){
+      var armado=b.estado==="EN_ARMADO";
+      return '<tr><td class="mono2"><a href="#" data-pwbopen="'+esc(b.id)+'" style="font-weight:700">'+esc(b.numero)+'</a></td>'
+        +'<td><span class="chip '+(armado?'st-RECEIVED':'st-RESERVED')+'"><span class="dot"></span>'+esc(b.estadoTexto)+'</span></td>'
+        +'<td>'+esc(b.multiCliente?'Multi-cliente':((b.clientesNombre||[])[0]||'—'))+'</td>'
+        +'<td><span class="loc-chip">'+esc(b.ubicacion||'—')+'</span></td>'
+        +'<td class="num">'+b.unidades+'</td>'
+        +'<td class="pw-bdest muted" data-i="'+i+'">'+(armado?'Ciérralo para ubicarlo':'Calculando…')+'</td>'
+        +'<td><div class="card-actions" style="justify-content:flex-end">'
+          +(puede?(armado?'<button class="mini pri" data-pwbclose="'+i+'">Cerrar Bin</button>':'<button class="mini pri" data-pwball="'+i+'" disabled>Guardar Bin aquí</button>'):'')
+          +'<button class="mini" data-pwbopen="'+esc(b.id)+'">Abrir…</button>'
+        +'</div></td></tr>';
+    }).join("");
+    rows.forEach(function(b,i){
+      if(b.estado==="EN_ARMADO")return;
+      api('/bins/'+encodeURIComponent(b.numero)+'/suggest?operationId='+encodeURIComponent(op)).then(function(s){
+        var cell=document.querySelector('#pw-body .pw-bdest[data-i="'+i+'"]'); if(!cell)return;
+        if(s&&s.length){ b._sug=s[0]; cell.classList.remove("muted"); cell.innerHTML='<span class="loc-chip">'+esc(s[0].code)+'</span> <span class="hint">sugerida</span>'; var bt=document.querySelector('#pw-body [data-pwball="'+i+'"]'); if(bt)bt.disabled=false; }
+        else cell.textContent='(sin ubicación de almacenaje)';
+      }).catch(function(){var cell=document.querySelector('#pw-body .pw-bdest[data-i="'+i+'"]'); if(cell)cell.textContent='(error)';});
+    });
+    $$("#pw-body [data-pwbopen]").forEach(function(a){a.addEventListener("click",function(e){e.preventDefault();if(window.NinjaBins)NinjaBins.openDetail(a.getAttribute("data-pwbopen"));});});
+    $$("#pw-body [data-pwbclose]").forEach(function(btn){btn.addEventListener("click",function(){var b=rows[+btn.getAttribute("data-pwbclose")];btn.disabled=true;
+      api('/bins/'+encodeURIComponent(b.numero)+'/close',{method:'POST',body:{operationId:op}}).then(function(){toast("Bin "+b.numero+" cerrado: queda por ubicar");loadPwBins(true);}).catch(function(e){btn.disabled=false;recErrModal("No se pudo cerrar el Bin",e.message);});});});
+    $$("#pw-body [data-pwball]").forEach(function(btn){btn.addEventListener("click",function(){var b=rows[+btn.getAttribute("data-pwball")];if(!b||!b._sug)return;btn.disabled=true;
+      api('/bins/'+encodeURIComponent(b.numero)+'/putaway',{method:'POST',body:{operationId:op,destino:b._sug.code}}).then(function(){toast("Bin "+b.numero+" guardado en "+b._sug.code);loadPwBins(true);return loadSeller();}).catch(function(e){btn.disabled=false;recErrModal("No se pudo guardar el Bin",e.message);});});});
+  }
+  function renderPutaway(desdeBins){
     if(!$("#pw-body"))return;
+    if(!desdeBins)loadPwBins();
+    if(pwTab==='bins'&&pwBins===null)pwTab='recepcion';
+    var hd=$("#pw-head"); if(hd&&PW_HEAD_STD!==null&&pwTab!=='bins')hd.innerHTML=PW_HEAD_STD;
     renderPwTabs();
+    if(pwTab==='bins'){renderPwBins();return;}
     var rows=pwRows(); pwCurrent=rows;
     $("#pw-count").textContent=rows.length?(rows.length+" SKU(s) por guardar · "+rows.reduce(function(a,r){return a+r.qty;},0)+" un"):"";
     if(!rows.length){$("#pw-body").innerHTML='<tr><td colspan="7" class="empty">No hay stock pendiente de guardar. ✓</td></tr>';return;}

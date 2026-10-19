@@ -157,6 +157,7 @@
     // Pantallas de lista o menú: el operario no está trabajando en nada concreto.
     if (['login', 'home', 'msgs', 'pickst', 'recvst', 'taskst', 'ret', 'kit'].indexOf(id) >= 0 && typeof liveIdle === 'function') liveIdle();
     if (typeof camClose === 'function' && $('camsheet') && $('camsheet').style.display !== 'none') camClose();
+    if (id === 'home' && window.NinjaBinsOp && opIdOrNull()) NinjaBinsOp.refresh();   // el admin pudo activar/desactivar los Bins
     if (id === 'home') { loadBoard(); if (!boardTimer) boardTimer = setInterval(function () { if ($('home').classList.contains('on') && !document.hidden) loadBoard(); }, 30000); }
   }
 
@@ -280,6 +281,8 @@
       if (which === 'retst') { openReturns(); return; }
       if (which === 'kitst') { openKits(); return; }
       if (which === 'binst') { openTaskStation('bins'); return; }
+      // Guardado de Bins sin tarea: lista de Bins por ubicar para tocar, o escanear el Bin.
+      if (which === 'binpa') { if (window.NinjaBinsOp) NinjaBinsOp.open('putaway', null, 'home'); return; }
       if (!cfg.seller) { toast('Elige primero el cliente en «Operar libre»', false); var fs = $('free-seller'); if (fs) fs.focus(); return; }
       startOp(which);
     });
@@ -417,7 +420,7 @@
     if (t.sellerId) { cfg.seller = t.sellerId; save(); }
     liveTask();
     // Tareas de Bins: ubicar / mover / consolidar contenedores completos.
-    if (/^BIN_/.test(t.type) && window.NinjaBinsOp) { var vb = PI.back === 'ts:bins' ? 'ts' : 'home'; PI.back = false; NinjaBinsOp.openTask(t, vb); return; }
+    if (/^BIN_/.test(t.type) && window.NinjaBinsOp) { var vb = (PI.back === 'ts:bins' || PI.back === 'ts:putaway') ? 'ts' : 'home'; PI.back = false; NinjaBinsOp.openTask(t, vb); return; }
     // Picking: recorrido por ubicación (ubicación → productos → siguiente ubicación).
     if (t.type === 'PICK') { var volverA = PI.back ? 'pickst' : 'home'; PI.back = false; openPickRun([{ sellerId: t.sellerId, orderId: t.entityId }], { back: volverA }); return; }
     if (t.type === 'RESTOCK') {
@@ -2689,9 +2692,9 @@
   // ESTACIÓN GENÉRICA POR TAREAS (Guardado y Conteo)
   // ---------------------------------------------------------------------
   var TS_KINDS = {
-    putaway: { types: 'PUTAWAY,RECEIVE,RESLOT,RESTOCK', title: 'Guardado', mine: 'Asignadas a mí', label: 'Escanea la ubicación de origen, el SKU o la guía', loose: 'Guardado suelto (sin tarea)', nada: 'No hay tareas de este tipo ahora.', skill: 'el guardado',
+    putaway: { types: 'PUTAWAY,RECEIVE,RESLOT,RESTOCK,BIN_PUTAWAY,BIN_MOVE', title: 'Guardado', mine: 'Asignadas a mí', label: 'Escanea la ubicación de origen, el SKU o la guía', loose: 'Guardado suelto (sin tarea)', nada: 'No hay tareas de este tipo ahora.', skill: 'el guardado',
       // Filtro por tipo dentro de la estación (se recuerda en el aparato).
-      filtros: [['', 'Todas'], ['PUTAWAY', 'Guardado'], ['RECEIVE', 'Recepción'], ['RESLOT', 'Re-slot'], ['RESTOCK', 'Reposición']] },
+      filtros: [['', 'Todas'], ['PUTAWAY', 'Guardado'], ['BIN_PUTAWAY', 'Bins'], ['RECEIVE', 'Recepción'], ['RESLOT', 'Re-slot'], ['RESTOCK', 'Reposición'], ['BIN_MOVE', 'Mover Bin']] },
     bins: { types: 'BIN_PUTAWAY,BIN_MOVE,BIN_CONSOLIDATE', title: 'Bins', mine: 'Asignadas a mí', label: 'Escanea el N° del Bin', loose: 'Otras acciones con Bins (ubicar, mover, consolidar, contar, consultar, crear)', nada: 'No hay tareas de Bins ahora.', skill: 'el guardado',
       filtros: [['', 'Todas'], ['BIN_PUTAWAY', 'Ubicar'], ['BIN_MOVE', 'Mover'], ['BIN_CONSOLIDATE', 'Consolidar']] },
     count: { types: 'COUNT', title: 'Conteo', mine: 'Asignados a mí', label: 'Escanea la ubicación a contar o escribe el SKU', loose: 'Conteo libre de una ubicación', nada: 'No hay conteos pendientes hoy. 🎉', skill: 'el conteo' },
@@ -2704,6 +2707,8 @@
     $('ts-title').textContent = K.title; $('ts-label').textContent = K.label; $('ts-lmine').textContent = K.mine;
     $('ts-code').placeholder = kind === 'bins' ? 'N° de Bin' : 'Ubicación o SKU';
     $('ts-loose').textContent = K.loose;
+    // Guardado: también se ubican Bins sin tarea (lista de Bins por ubicar o escaneo del Bin).
+    $('ts-loosebin').style.display = (kind === 'putaway' && window.NinjaBinsOp && NinjaBinsOp.habilitado()) ? '' : 'none';
     $('ts-list').innerHTML = '<div class="pk-empty">Cargando…</div>';
     loadTaskStation(); enfoca('ts-code');
   }
@@ -2782,15 +2787,18 @@
     var el = $('ts-code'), c = norm(el.value); el.value = ''; if (!c) return;
     var b = TS.board || {};
     var hit = function (t) {
-      if (TS.kind === 'bins') return norm(String(t.entityRef || '').split(/[\s:←]/)[0]) === c;
+      if (TS.kind === 'bins' || /^BIN_/.test(t.type)) return norm(String(t.entityRef || '').split(/[\s:←]/)[0]) === c;
       var p = tsParts(t), lc = TS.kind === 'count' ? LOC_BY_ID[p.ref] : LOC_BY_ID[p.loc];
       return norm(t.entityRef) === c || (lc && norm(lc.code) === c) || norm(TS.kind === 'count' ? p.ref : p.sku) === c;
     };
     var m = (b.mine || []).filter(hit)[0]; if (m) { bip(true); tsStart(m); return; }
     var f = (b.available || []).filter(hit)[0];
     if (f) { if (!b.selfPickup) { bip(false); toast('Esa tarea está libre, pero el administrador no permite tomarlas desde la app', false); return; } tsTake(f.entityId, f.type, true); return; }
+    // Un Bin escaneado sin tarea: se abre su guardado directo (estación de Guardado o de Bins).
+    if ((TS.kind === 'putaway' || TS.kind === 'bins') && window.NinjaBinsOp && NinjaBinsOp.habilitado() && NinjaBinsOp.pareceBin(c)) { NinjaBinsOp.openWithCode('putaway', c, 'ts'); return; }
     bip(false); toast('No encontré una tarea con «' + c + '»', false); enfoca('ts-code');
   });
+  $('ts-loosebin').addEventListener('click', function () { if (window.NinjaBinsOp) NinjaBinsOp.open('putaway', null, 'ts'); });
   $('btn-tsrefresh').addEventListener('click', function () { loadTaskStation(); toast('Actualizado', true); });
   $('btn-tsback').addEventListener('click', function () { PI.back = false; show('home'); });
   $('ts-loose').addEventListener('click', function () {
@@ -3274,7 +3282,7 @@
     api: api, toast: toast, bip: bip, esc: esc, show: show, enfoca: enfoca,
     opId: opIdOrNull, findLoc: findLocByCode, resolveCode: resolveCode, descOf: descOf, sellerNom: sellerNom,
     camStart: function (h, cb, hint) { camDockStart(h, cb, hint); }, camStop: camDockStop, camHint: camDockHint, camToggle: camDockToggle,
-    goHome: function () { show('home'); }, openStation: function () { openTaskStation('bins'); }, openRecv: openRecvStation,
+    goHome: function () { show('home'); }, openStation: function () { openTaskStation(TS.kind || 'bins'); }, openRecv: openRecvStation,
     taskDone: function () { task = null; liveIdle(); loadBoard(); },
   });
 

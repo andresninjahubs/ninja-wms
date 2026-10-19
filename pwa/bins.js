@@ -41,7 +41,7 @@
     return C.api('/bins/settings?' + q()).then(function (s) { SET = s; sync(); return s; }).catch(function () { SET = null; sync(); return null; });
   }
   function sync() {
-    var b = document.querySelector('.op[data-op="binst"]'); if (b) b.style.display = habilitado() ? '' : 'none';
+    Array.prototype.forEach.call(document.querySelectorAll('.op[data-op="binst"],.op[data-op="binpa"]'), function (b) { b.style.display = habilitado() ? '' : 'none'; });
   }
 
   // ---- Pantalla -------------------------------------------------------------------
@@ -101,6 +101,10 @@
       html = '<div class="card"><div class="sec">Tipo de contenedor</div><div class="chips" id="bo-tipos">' + tipos.map(function (t, i) { return '<button class="chip' + (i === 0 ? ' on' : '') + '" data-botipo="' + esc(t) + '">' + esc(t) + '</button>'; }).join('') + '</div>'
         + '<button class="btn" id="bo-crear" style="margin-top:12px">Crear Bin</button><div class="muted" style="margin-top:8px">El número es correlativo y nunca se reutiliza. Imprime su etiqueta desde el panel (Bins → Etiquetas) o escribe el número en el contenedor.</div></div>'
         + (m.creado ? '<div class="resbox"><div class="rb-t">✓ Bin creado</div><div style="font-size:30px;font-weight:900;letter-spacing:.04em">' + esc(m.creado) + '</div><div class="muted">Queda EN ARMADO: recibe o pasa productos a él, ciérralo y ubícalo.</div></div>' : '');
+    } else if (!m.bin && m.modo === 'putaway' && !m.task) {
+      // Guardado libre de Bins: escanear el Bin, o tocarlo en la lista de los que esperan ubicación.
+      label('Escanea el Bin o tócalo en la lista', 'N° de Bin');
+      html = renderPorUbicar();
     } else if (!m.bin && !(m.modo === 'consolidate' && !m.task)) {
       label(MODOS[m.modo].l, 'N° de Bin');
       html = '<div class="pk-empty">Escanea o escribe el número del Bin.</div>';
@@ -111,6 +115,31 @@
     if (m.modo !== 'menu') html += '<button class="btn alt" id="bo-salir" style="margin-top:12px">' + (m.back === 'home' ? 'Volver a mis tareas' : m.back === 'ts' ? 'Volver a la lista de Bins' : 'Volver al menú de Bins') + '</button>';
     $('bo-body').innerHTML = html;
     C.enfoca('bo-code');
+  }
+
+  /** Bins cerrados esperando ubicación (los más antiguos primero), para elegir tocando. */
+  function hace(iso) {
+    var min = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+    return min < 60 ? 'hace ' + min + ' min' : min < 1440 ? 'hace ' + Math.round(min / 60) + ' h' : 'hace ' + Math.round(min / 1440) + ' d';
+  }
+  function renderPorUbicar() {
+    var m = M;
+    if (!m.lista) {
+      m.lista = 'cargando';
+      C.api('/bins?' + q() + '&estado=POR_UBICAR,EN_MOVIMIENTO').then(function (r) {
+        var l = (r.bins || []).filter(function (b) { return b.estado === 'POR_UBICAR' || !b.pending; });
+        l.sort(function (a, b) { return Date.parse(a.closedAt || a.updatedAt) - Date.parse(b.closedAt || b.updatedAt); });
+        if (M === m) { m.lista = l; if (!m.bin) render(); }
+      }).catch(function (e) { if (M === m) { m.lista = []; m.listaErr = e.message; if (!m.bin) render(); } });
+      return '<div class="pk-empty">Buscando Bins por ubicar…</div>';
+    }
+    if (m.lista === 'cargando') return '<div class="pk-empty">Buscando Bins por ubicar…</div>';
+    if (!m.lista.length) return '<div class="pk-empty">' + (m.listaErr ? esc(m.listaErr) : 'No hay Bins esperando ubicación. 🎉') + '</div>';
+    return '<div class="sec">Por ubicar · ' + m.lista.length + ' Bin(s) · los más antiguos primero</div>' + m.lista.map(function (b) {
+      var cli = b.multiCliente ? 'Multi-cliente' : ((b.clientesNombre || [])[0] || '—');
+      return '<button class="ordc" data-bopick="' + esc(b.numero) + '"><div class="oc-main"><div class="oc-ref">📦 ' + esc(b.numero) + (b.estado === 'EN_MOVIMIENTO' ? ' <span class="tagrun">En curso</span>' : '') + '</div>'
+        + '<div class="oc-meta">' + esc(cli) + ' · ' + b.unidades + ' un · ' + (b.ubicacion ? 'en ' + esc(b.ubicacion) : 'sin ubicación') + ' · ' + esc(hace(b.closedAt || b.updatedAt)) + '</div></div><span class="oc-act">Ubicar</span></button>';
+    }).join('');
   }
 
   // Ubicar / mover: Bin conocido → escanear la ubicación destino (con sugerencias).
@@ -327,6 +356,7 @@
         return;
       }
       if (t.hasAttribute('data-bosug')) { ubicarEn(t.getAttribute('data-bosug'), false); return; }
+      if (t.hasAttribute('data-bopick')) { t.disabled = true; getBin(t.getAttribute('data-bopick')).then(function (b) { cargado(b, false); }).catch(function (x) { t.disabled = false; C.bip(false); C.toast(x.message, false); }); return; }
       if (t.id === 'bo-igual' && m.alerta) { ubicarEn(m.alerta.code, true); return; }
       if (t.id === 'bo-otro') { open(m.modo, null, m.back === 'home' || m.back === 'ts' ? m.back : 'menu'); return; }
       if (t.id === 'bo-consok') { consolidar(); return; }
@@ -405,6 +435,8 @@
     habilitado: habilitado,
     open: open,
     openTask: openTask,
+    /** Abre un modo y procesa de inmediato un código ya leído (p. ej. un Bin escaneado en la estación de guardado). */
+    openWithCode: function (modo, code, back) { open(modo, null, back); onCode(code); },
     pareceBin: pareceBin,
     recvBar: recvBar,
     tryRecvCode: tryRecvCode,
