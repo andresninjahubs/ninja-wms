@@ -90,12 +90,12 @@
     }).join("");
   }
   var NAV_BY_ROLE={
-    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","deadlines","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
-    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","deadlines","inbound","returns","putaway","assembly","locations","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","branding","clients","users"],
+    PLATFORM_ADMIN:["dashboard","aidash","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","deadlines","inbound","returns","putaway","assembly","locations","bins","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","pkgmatrix","branding","clients","users","operations","usage","announcements"],
+    ADMIN:["dashboard","aidash","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","deadlines","inbound","returns","putaway","assembly","locations","bins","movements","counts","billing","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan","branding","clients","users"],
     // Sin "billing": la facturación es del administrador de la operación, no del supervisor.
-    SUPERVISOR:["dashboard","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","deadlines","inbound","returns","putaway","assembly","locations","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan"],
-    OPERATOR:["dashboard","copilot","inventory","lotes","orders","pickqueue","inbound","returns","putaway","assembly","locations","movements","counts","voicechannel"],
-    CLIENT:["dashboard","copilot","inventory","products","lotes","consignees","orders","inbound","returns","movements","billing","chat","webhooks"]
+    SUPERVISOR:["dashboard","copilot","voz","inventory","products","lotes","consignees","packaging","orders","pickqueue","deadlines","inbound","returns","putaway","assembly","locations","bins","movements","counts","costos","chat","voicechannel","webhooks","activity","aiaudit","cargas","asignaciones","agente","agdiario","agalertas","torre","mcp","plan"],
+    OPERATOR:["dashboard","copilot","inventory","lotes","orders","pickqueue","inbound","returns","putaway","assembly","locations","bins","movements","counts","voicechannel"],
+    CLIENT:["dashboard","copilot","inventory","bins","products","lotes","consignees","orders","inbound","returns","movements","billing","chat","webhooks"]
   };
   function esc(s){return String(s==null?"":s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}
   function fill(el,opts){el.innerHTML=opts.map(function(o){return '<option value="'+esc(o.v)+'">'+esc(o.t)+'</option>';}).join("");}
@@ -247,8 +247,8 @@
   // Cada módulo mapea a una feature del plan. Si el plan de la operación no la
   // incluye, el ítem del menú aparece con candado y su página se bloquea.
   var planFeatures=null; // null = desconocido/interno (sin candados)
-  var MODULE_FEATURE={returns:'returns',assembly:'kitting',counts:'cycle_count',packaging:'packaging_materials',asignaciones:'task_assignment',cargas:'task_assignment',billing:'billing_3pl',costos:'cost_profitability',copilot:'ai_copilot',voz:'ai_voice',webhooks:'webhooks',branding:'white_label',chat:'client_chat',voicechannel:'voice_channel',announcements:'announcements'};
-  var FEATURE_NAME={returns:'Devoluciones',kitting:'Armado de kits',cycle_count:'Conteo cíclico',packaging_materials:'Insumos de embalaje',lot_serial:'Lote/serie',task_assignment:'Asignación de tareas',reslotting:'Re-slotting',billing_3pl:'Facturación 3PL',cost_profitability:'Costos y rentabilidad',advanced_analytics:'Analítica avanzada',ai_copilot:'Copiloto IA',ai_voice:'Copiloto de voz',webhooks:'Webhooks',api:'API',white_label:'Marca propia',multi_courier:'Multi-courier',client_chat:'Mensajería con clientes',voice_channel:'Canal de voz',announcements:'Anuncios'};
+  var MODULE_FEATURE={bins:'bins',returns:'returns',assembly:'kitting',counts:'cycle_count',packaging:'packaging_materials',asignaciones:'task_assignment',cargas:'task_assignment',billing:'billing_3pl',costos:'cost_profitability',copilot:'ai_copilot',voz:'ai_voice',webhooks:'webhooks',branding:'white_label',chat:'client_chat',voicechannel:'voice_channel',announcements:'announcements'};
+  var FEATURE_NAME={bins:'Bins',returns:'Devoluciones',kitting:'Armado de kits',cycle_count:'Conteo cíclico',packaging_materials:'Insumos de embalaje',lot_serial:'Lote/serie',task_assignment:'Asignación de tareas',reslotting:'Re-slotting',billing_3pl:'Facturación 3PL',cost_profitability:'Costos y rentabilidad',advanced_analytics:'Analítica avanzada',ai_copilot:'Copiloto IA',ai_voice:'Copiloto de voz',webhooks:'Webhooks',api:'API',white_label:'Marca propia',multi_courier:'Multi-courier',client_chat:'Mensajería con clientes',voice_channel:'Canal de voz',announcements:'Anuncios'};
   function moduleLocked(pg){
     // La plataforma no se topa con el muro. Está mirando la operación de un cliente y
     // su plan, no el suyo: ponerle un candado y ofrecerle escribir por WhatsApp a su
@@ -269,6 +269,7 @@
   var planActualNombre=null;   // lo llena loadPlanFeatures(); solo para el texto del muro
   /** Qué hace cada módulo, en una línea. Es el argumento de venta, no el nombre. */
   var MODULE_PITCH={
+    bins:'Contenedores con número propio (pallet, caja, tote): recibe, ubica, mueve, cuenta y cobra por Bin con un solo escaneo.',
     returns:'Recibir devoluciones, revisar su estado y decidir si vuelven a stock, se reparan o se dan de baja.',
     assembly:'Armar y desarmar kits desde sus componentes, con el stock cuadrando solo.',
     counts:'Conteo cíclico dirigido: el sistema propone qué contar cada día y registra las diferencias.',
@@ -608,6 +609,7 @@
     loadDeadlineConfig(); // cortes de courier y ventana de riesgo (para los chips de deadline)
     return Promise.all([pSellers,pLocs,pUsers,pPkg,pBrand]).then(function(res){
       D.sellers=res[0]; D.locations=res[1]; D.users=res[2]; D.packaging=res[3]||[]; D.brand=res[4]||null; applyOperationBranding(D.brand);
+      if(window.NinjaBins)NinjaBins.init({api:api,esc:esc,toast:toast,openModal:openModal,closeModal:closeModal,fmtDate:fmtDate,getOp:function(){return op;},getRole:function(){return role;},getSellers:function(){return D.sellers||[];}});
       locByCode={}; var _prevDel={}; for(var _k in locById){ if(locById[_k]&&locById[_k].deletedAt)_prevDel[_k]=locById[_k]; } locById=_prevDel; D.locations.forEach(function(l){locByCode[l.code]=l;locById[l.id]=l;});
       var sellerOpts=D.sellers.map(function(s){return {v:s.id,t:s.name};});
       // Vista consolidada: una opción más del filtro para el administrador (no clientes).
@@ -2378,7 +2380,7 @@
   }
 
   // ===== Copiloto del WMS =========================================================
-  var COP_SUGGESTIONS=['¿Qué SKUs están por quebrar stock?','¿Qué lotes están por vencer?','¿Qué insumos de embalaje se están por agotar?','¿Hay anomalías de consumo?','¿Cuántas órdenes tengo pendientes?','¿Qué se despachó hoy?','¿Qué hay en la cola de preparación?','¿Cuánto llevo facturado este mes?'];
+  var COP_SUGGESTIONS=['¿Qué SKUs están por quebrar stock?','¿Qué lotes están por vencer?','¿Qué insumos de embalaje se están por agotar?','¿Hay anomalías de consumo?','¿Cuántas órdenes tengo pendientes?','¿Qué se despachó hoy?','¿Qué hay en la cola de preparación?','¿Cuánto llevo facturado este mes?','¿Qué recepciones están abiertas?'];
   var copInited=false, copAiConnected=false;
   function copSevColor(sev){return sev==='crit'?'var(--crit)':sev==='warn'?'var(--signal,#F0A24A)':'var(--primary)';}
   function renderCopilot(){
@@ -3900,11 +3902,18 @@
       if(mvF.loc && m.locationId!==mvF.loc) return false;
       if(mvF.user && m.actor!==mvF.user) return false;
       if(mvF.cli && m.sellerId!==mvF.cli) return false;
-      if(mvF.ref && String(m.reference||"").toLowerCase().indexOf(mvF.ref)<0) return false;
+      if(mvF.ref && (String(m.reference||"")+' '+(m.binNumero||'')+' '+(m.binOrigen||'')+' '+(m.binDestino||'')).toLowerCase().indexOf(mvF.ref)<0) return false;
       if(mvF.from && dayOf(m.occurredAt) < mvF.from) return false;
       if(mvF.to && dayOf(m.occurredAt) > mvF.to) return false;
       return true;
     });
+  }
+  /** Bin del movimiento: origen → destino cuando el stock cambia de Bin, o el Bin a secas. */
+  function mvBinTxt(m){
+    if(m.binOrigen&&m.binDestino&&m.binOrigen!==m.binDestino)return esc(m.binOrigen)+' → '+esc(m.binDestino);
+    if(m.binOrigen&&!m.binDestino&&m.binNumero!==m.binOrigen&&m.qtyDelta>0)return esc(m.binOrigen)+' → suelto';
+    if(!m.binOrigen&&m.binDestino&&m.binNumero!==m.binDestino&&m.qtyDelta<0)return 'suelto → '+esc(m.binDestino);
+    return m.binNumero?esc(m.binNumero):'<span class="muted">—</span>';
   }
   function mvRow(m){
     var sign=m.qtyDelta>0?'style="color:var(--good)"':'style="color:var(--crit)"';
@@ -3917,6 +3926,7 @@
       '<td><span class="chip '+mvCls+'"><span class="dot"></span>'+esc(LABELS[m.type]||m.type)+'</span></td>'+
       '<td class="sku">'+esc(m.sku)+'</td>'+
       '<td><span class="loc-chip">'+esc(code(m.locationId))+'</span></td>'+
+      '<td class="mono2">'+mvBinTxt(m)+'</td>'+
       '<td>'+esc(m.lot||"—")+'</td>'+
       '<td>'+stTag+'</td>'+
       '<td title="'+esc(m.actorName||actorName(m.actor))+'">'+esc(movActor(m))+'</td>'+
@@ -3928,7 +3938,7 @@
   function renderMvTable(){
     mvLast=mvFiltered();
     $("#mv-count").textContent=mvLast.length+" movimiento"+(mvLast.length===1?"":"s");
-    $("#mv-body").innerHTML=mvLast.length?mvLast.slice(0,500).map(mvRow).join(""):'<tr><td colspan="10" class="empty">Sin movimientos para el filtro seleccionado.</td></tr>';
+    $("#mv-body").innerHTML=mvLast.length?mvLast.slice(0,500).map(mvRow).join(""):'<tr><td colspan="11" class="empty">Sin movimientos para el filtro seleccionado.</td></tr>';
   }
   function downloadXlsx(path,filename,okMsg){
     if(!seller){toast("Selecciona un cliente primero");return;}
@@ -4103,14 +4113,15 @@
     var head=$("#inv-head"),body=$("#inv-body"),cnt=$("#inv-count");
 
     if(view==="detail"){
-      head.innerHTML='<tr><th>SKU</th><th>Descripción</th><th>Ubicación</th><th>Lote</th><th>Estado</th><th style="text-align:right">Cantidad</th><th data-action></th></tr>';
-      var rows=D.inv.filter(function(b){return !q||b.sku.toLowerCase().indexOf(q)>=0||code(b.locationId).toLowerCase().indexOf(q)>=0;})
+      head.innerHTML='<tr><th>SKU</th><th>Descripción</th><th>Ubicación</th><th>Bin</th><th>Lote</th><th>Estado</th><th style="text-align:right">Cantidad</th><th data-action></th></tr>';
+      var rows=D.inv.filter(function(b){return !q||b.sku.toLowerCase().indexOf(q)>=0||code(b.locationId).toLowerCase().indexOf(q)>=0||(b.binNumero&&b.binNumero.toLowerCase().indexOf(q)>=0);})
         .sort(function(a,b){return a.sku<b.sku?-1:a.sku>b.sku?1:0;});
       cnt.textContent=rows.length+" registros · "+rows.reduce(function(a,b){return a+b.qty;},0)+" unidades";
       body.innerHTML=rows.length?rows.map(function(b){
         var low=b.state==="AVAILABLE"&&b.qty<15;
-        return '<tr><td class="sku">'+esc(b.sku)+'</td><td class="muted">'+esc(skuDesc(b.sku)||'—')+'</td><td><span class="loc-chip">'+esc(code(b.locationId))+'</span></td><td class="mono2">'+(b.lot?esc(b.lot):'—')+'</td><td><span class="chip st-'+b.state+'"><span class="dot"></span>'+(b.state==="AVAILABLE"?"Disponible":b.state==="RESERVED"?"Reservado":b.state)+'</span></td><td class="num '+(low?'warnrow':'')+'">'+b.qty+(low?' ⚠':'')+'</td><td></td></tr>';
-      }).join(""):'<tr><td colspan="7" class="empty">Sin resultados.</td></tr>';
+        return '<tr><td class="sku">'+esc(b.sku)+'</td><td class="muted">'+esc(skuDesc(b.sku)||'—')+'</td><td><span class="loc-chip">'+esc(code(b.locationId))+'</span></td><td>'+(b.binNumero?'<a href="#" class="mono2" data-invbin="'+esc(b.binId)+'" style="font-weight:700">'+esc(b.binNumero)+'</a>':'<span class="muted">suelto</span>')+'</td><td class="mono2">'+(b.lot?esc(b.lot):'—')+'</td><td><span class="chip st-'+b.state+'"><span class="dot"></span>'+(b.state==="AVAILABLE"?"Disponible":b.state==="RESERVED"?"Reservado":b.state)+'</span></td><td class="num '+(low?'warnrow':'')+'">'+b.qty+(low?' ⚠':'')+'</td><td></td></tr>';
+      }).join(""):'<tr><td colspan="8" class="empty">Sin resultados.</td></tr>';
+      $$("#inv-body [data-invbin]").forEach(function(a){a.addEventListener("click",function(e){e.preventDefault();if(window.NinjaBins)NinjaBins.openDetail(a.getAttribute("data-invbin"));});});
       return;
     }
 
@@ -5702,7 +5713,7 @@
   /** Nombre del actor de un movimiento: el servidor lo manda resuelto (actorName); si no, se resuelve acá. */
   function movActor(m){ return m.actorName||actorShort(m.actor); }
   function actorName(id){
-    if(!id)return "Sistema";
+    if(!id)return "Sin autor registrado";
     var u=byId(D.users,id);
     if(u)return u.name+" ("+u.email+")";
     if(id==="system")return "Sistema";
@@ -6008,11 +6019,13 @@
     }).join("");
     var html='<div class="form">'
       +'<p class="hint" style="margin:0 0 10px">Cuenta el físico recibido en esta entrega. Los productos con control de lote y/o vencimiento piden ese dato (obligatorio); los demás, solo la cantidad. Para SKUs serializados, ingresa los N° de serie. Al confirmar, ingresa al stock exactamente lo contado.</p>'
+      +(window.NinjaBins?NinjaBins.receiptBinPicker():'')
       +cards
       +'<div class="ferr" id="ct-err"></div>'
       +'<div class="acts"><span class="hint">'+esc(o.id)+' · '+esc(o.supplier||"proveedor")+'</span><div style="display:flex;gap:10px"><button class="btn" id="ct-cancel">Cancelar</button><button class="btn pri" id="ct-save">Confirmar recepción</button></div></div>'
       +'</div>';
     openModal("Recepcionar (cotejo) — "+o.id,html,true);
+    if(window.NinjaBins)NinjaBins.wireReceiptBinPicker();
     // Contador vivo de series por línea (verde cuando iguala la cantidad).
     function parseSerials(txt){return (txt||"").split(/[\n,;]+/).map(function(s){return s.trim();}).filter(Boolean);}
     function refreshSerCount(line){
@@ -6051,9 +6064,12 @@
       });
       if(!counts.length){$("#ct-err").textContent="Ingresa al menos una cantidad recibida (mayor a 0).";return;}
       if(err){$("#ct-err").textContent=err;return;}
+      // Recepción dentro de un Bin: todo lo contado en esta entrega entra al Bin elegido.
+      var binNum=window.NinjaBins?NinjaBins.receiptBinValue():null;
+      if(binNum)counts.forEach(function(c){c.binId=binNum;});
       var btn=$("#ct-save"); btn.disabled=true;
       api('/sellers/'+seller+'/receipts/'+encodeURIComponent(o.id)+'/receive',{method:'POST',body:{counts:counts}})
-        .then(function(r){closeModal();toast(r.status==="RECEIVED"?"Recepción completa":"Recepción parcial registrada");return loadSeller();})
+        .then(function(r){closeModal();toast((r.status==="RECEIVED"?"Recepción completa":"Recepción parcial registrada")+(binNum?" · en "+binNum:""));return (window.NinjaBins?NinjaBins.afterReceiptReceived(binNum):Promise.resolve()).then(function(){return loadSeller();});})
         .catch(function(e){btn.disabled=false;$("#ct-err").textContent=e.message;});
     });
   }
@@ -6342,6 +6358,13 @@
       +'<div class="row2"><div class="fld"><label>Control de lote</label><select id="pf-lot"><option value="no"'+(isEdit&&existing.lotControlled?'':' selected')+'>No</option><option value="si"'+(isEdit&&existing.lotControlled?' selected':'')+'>Sí</option></select></div>'
       +'<div class="fld"><label>Control de serie</label><select id="pf-serial"><option value="no"'+(isEdit&&existing.serialControlled?'':' selected')+'>No</option><option value="si"'+(isEdit&&existing.serialControlled?' selected':'')+'>Sí — captura N° de serie en recepción</option></select></div></div>'
       +'<div class="fld"><label>Control de vencimiento</label><select id="pf-expiry"><option value="no"'+(isEdit&&existing.expiryControlled?'':' selected')+'>No</option><option value="si"'+(isEdit&&existing.expiryControlled?' selected':'')+'>Sí — exige vencimiento en recepción</option></select><span class="hint">Con "Control de lote" o "Control de vencimiento" en Sí, la recepción obliga a capturar ese dato.</span></div>'
+      +(function(){var ex=isEdit?existing:{};function v(k){return ex&&ex[k]!=null?ex[k]:'';}
+        return '<div class="fld"><label>Medidas por unidad (opcional)</label><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">'
+          +'<input id="pf-largo" type="number" min="0" step="0.1" placeholder="Largo cm" value="'+esc(v('largoCm'))+'">'
+          +'<input id="pf-ancho" type="number" min="0" step="0.1" placeholder="Ancho cm" value="'+esc(v('anchoCm'))+'">'
+          +'<input id="pf-alto" type="number" min="0" step="0.1" placeholder="Alto cm" value="'+esc(v('altoCm'))+'">'
+          +'<input id="pf-peso" type="number" min="0" step="0.01" placeholder="Peso kg" value="'+esc(v('pesoKg'))+'">'
+          +'</div><span class="hint">Se usan para repartir el cobro de un Bin multi-cliente por volumen o peso. Si faltan, se reparte por unidades.</span></div>';})()
       +'<div class="fld"><label style="display:flex;gap:8px;align-items:center;cursor:pointer;font-weight:600"><input type="checkbox" id="pf-iskit" '+(isKit?'checked':'')+' style="width:18px;height:18px"> Este producto es un <span style="color:var(--primary-ink)">kit</span> (compuesto por otros SKUs)</label></div>'
       +'<div id="pf-kit" class="'+(isKit?'':'hidden')+'" style="border:1px solid var(--line);border-radius:10px;padding:13px;background:var(--surface-2)">'
         +'<div class="fld"><label>Modo del kit</label><select id="pf-kmode"><option value="VIRTUAL"'+(kmode==='VIRTUAL'?' selected':'')+'>Virtual — se explota en sus componentes al vender</option><option value="ASSEMBLED"'+(kmode==='ASSEMBLED'?' selected':'')+'>Armado — tiene stock propio, se ensambla en bodega</option></select></div>'
@@ -6367,6 +6390,7 @@
       body.lotControlled=$("#pf-lot").value==='si';
       body.serialControlled=$("#pf-serial")?$("#pf-serial").value==='si':false;
       body.expiryControlled=$("#pf-expiry")?$("#pf-expiry").value==='si':false;
+      [['pf-largo','largoCm'],['pf-ancho','anchoCm'],['pf-alto','altoCm'],['pf-peso','pesoKg']].forEach(function(p){var el=$("#"+p[0]);if(!el)return;var v=el.value.trim();body[p[1]]=v===''?null:Math.max(0,parseFloat(v)||0)||null;});
       body.isKit=isKitNow;
       if(isKitNow){
         body.kitMode=$("#pf-kmode").value;
@@ -6486,7 +6510,7 @@
   function fmtPeriod(fromISO){try{var d=new Date(fromISO);return monthName(d.getUTCMonth()+1)+' '+d.getUTCFullYear();}catch(e){return fromISO;}}
   function num0(v){var n=parseInt(v,10);return isNaN(n)?0:n;}
   function billActive(){var p=document.querySelector('.page[data-pg="billing"]');return p&&p.classList.contains('on');}
-  function fillRate(r){r=r||{};$("#rt-fixed").value=r.fixedMonthly||0;$("#rt-storage").value=r.storagePerUnitMonth||0;$("#rt-receipt").value=r.receiptPerUnit||0;$("#rt-ship").value=r.shipmentPerOrder||0;$("#rt-pick").value=r.pickPerUnit||0;$("#rt-asm").value=r.assemblyPerKit||0;$("#rt-cur").textContent=r.currency||'CLP';if($("#rt-approval"))$("#rt-approval").checked=!!r.requiresApproval;}
+  function fillRate(r){r=r||{};$("#rt-fixed").value=r.fixedMonthly||0;$("#rt-storage").value=r.storagePerUnitMonth||0;$("#rt-receipt").value=r.receiptPerUnit||0;$("#rt-ship").value=r.shipmentPerOrder||0;$("#rt-pick").value=r.pickPerUnit||0;$("#rt-asm").value=r.assemblyPerKit||0;if($("#rt-bin"))$("#rt-bin").value=r.storagePerBinDay||0;if($("#rt-binunits"))$("#rt-binunits").checked=!!r.binUnitsInUnitStorage;$("#rt-cur").textContent=r.currency||'CLP';if($("#rt-approval"))$("#rt-approval").checked=!!r.requiresApproval;}
   function billTab(which){
     $$("#bill-tabs .segbtn").forEach(function(b){b.classList.toggle("on",b.getAttribute("data-billtab")===which);});
     if($("#bill-dash"))$("#bill-dash").classList.toggle("on",which==="dash");
@@ -6523,7 +6547,7 @@
   }
   function saveRate(){
     $("#rt-err").textContent="";
-    var body={fixedMonthly:num0($("#rt-fixed").value),storagePerUnitMonth:num0($("#rt-storage").value),receiptPerUnit:num0($("#rt-receipt").value),shipmentPerOrder:num0($("#rt-ship").value),pickPerUnit:num0($("#rt-pick").value),assemblyPerKit:num0($("#rt-asm").value),requiresApproval:!!($("#rt-approval")&&$("#rt-approval").checked)};
+    var body={fixedMonthly:num0($("#rt-fixed").value),storagePerUnitMonth:num0($("#rt-storage").value),receiptPerUnit:num0($("#rt-receipt").value),shipmentPerOrder:num0($("#rt-ship").value),pickPerUnit:num0($("#rt-pick").value),assemblyPerKit:num0($("#rt-asm").value),storagePerBinDay:num0($("#rt-bin")?$("#rt-bin").value:0),binUnitsInUnitStorage:!!($("#rt-binunits")&&$("#rt-binunits").checked),requiresApproval:!!($("#rt-approval")&&$("#rt-approval").checked)};
     api('/sellers/'+seller+'/billing/rate',{method:'PATCH',body:body}).then(function(){toast("Tarifas guardadas");}).catch(function(e){$("#rt-err").textContent=e.message;});
   }
   function invStatusPill(inv){
@@ -6691,8 +6715,16 @@
       .then(function(inv){toast("Factura generada: "+(inv.number||inv.id));$("#bl-preview-box").innerHTML='';openInvoice(inv);return api('/sellers/'+seller+'/billing/invoices');})
       .then(function(list){renderInvoiceList(list);}).catch(function(e){toast(e.message);});
   }
+  /** Detalle del cobro por Bin: cada Bin con sus días, la participación del cliente y el criterio de prorrateo. */
+  function binDetalleHTML(l,cur){
+    if(!l||!l.detalle||!l.detalle.length)return '';
+    var CRIT={unidades:'por unidades',volumen:'por volumen',peso:'por peso',iguales:'partes iguales'};
+    return '<details style="margin-top:4px"><summary class="hint" style="cursor:pointer">Ver detalle por Bin ('+l.detalle.length+')</summary><table style="width:100%;font-size:12px;margin-top:4px"><thead><tr><th>Bin</th><th class="num">Días</th><th class="num">Participación</th><th class="num">Bin-días</th><th class="num">Monto</th><th>Criterio</th></tr></thead><tbody>'
+      +l.detalle.map(function(d){return '<tr><td class="mono2">'+esc(d.bin)+'</td><td class="num">'+esc(d.dias)+'</td><td class="num">'+esc(d.participacion)+'%</td><td class="num">'+esc(d.binDiasCobrados)+'</td><td class="num">'+fmtMoney(d.monto||0,cur)+'</td><td class="hint">'+esc(CRIT[d.criterio]||d.criterio||'')+(d.nota?' · '+esc(d.nota):'')+'</td></tr>';}).join('')
+      +'</tbody></table></details>';
+  }
   function invoicePreviewHTML(inv){
-    var rows=(inv.lines||[]).map(function(l){return '<tr><td>'+esc(l.concept)+'</td><td class="hint">'+l.qty+' '+esc(l.unit)+' × '+fmtMoney(l.rate,inv.currency)+'</td><td class="num">'+fmtMoney(l.amount,inv.currency)+'</td></tr>';}).join("")||'<tr><td colspan="3" class="empty">Sin cargos en el período (configura tarifas o revisa el mes).</td></tr>';
+    var rows=(inv.lines||[]).map(function(l){return '<tr><td>'+esc(l.concept)+binDetalleHTML(l,inv.currency)+'</td><td class="hint">'+l.qty+' '+esc(l.unit)+' × '+fmtMoney(l.rate,inv.currency)+'</td><td class="num">'+fmtMoney(l.amount,inv.currency)+'</td></tr>';}).join("")||'<tr><td colspan="3" class="empty">Sin cargos en el período (configura tarifas o revisa el mes).</td></tr>';
     return '<div class="tablewrap"><table class="cotejo-tbl"><thead><tr><th>Concepto</th><th>Detalle</th><th class="num">Monto</th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="2" class="num">Total</td><td class="num"><b>'+fmtMoney(inv.total,inv.currency)+'</b></td></tr></tfoot></table></div>';
   }
   function renderInvoiceList(list){
@@ -6758,7 +6790,7 @@
   function invoiceDocHTML(inv){
     var sellerName=(byId(D.sellers,seller)||{}).name||inv.sellerId;
     var opName=(byId(D.ops,op)||{}).name||op;
-    var rows=(inv.lines||[]).map(function(l,i){return '<tr><td>'+(i+1)+'</td><td>'+esc(l.concept)+'</td><td class="r">'+l.qty+' '+esc(l.unit)+'</td><td class="r">'+fmtMoney(l.rate,inv.currency)+'</td><td class="r">'+fmtMoney(l.amount,inv.currency)+'</td></tr>';}).join("")||'<tr><td colspan="5" class="r">Sin cargos en el período.</td></tr>';
+    var rows=(inv.lines||[]).map(function(l,i){return '<tr><td>'+(i+1)+'</td><td>'+esc(l.concept)+binDetalleHTML(l,inv.currency)+'</td><td class="r">'+l.qty+' '+esc(l.unit)+'</td><td class="r">'+fmtMoney(l.rate,inv.currency)+'</td><td class="r">'+fmtMoney(l.amount,inv.currency)+'</td></tr>';}).join("")||'<tr><td colspan="5" class="r">Sin cargos en el período.</td></tr>';
     var facturado=inv.status==='INVOICED';
     var estado=facturado?'Facturado':(inv.status==='APPROVED'?('Pre-factura · Aprobada'+(inv.approval?' · '+esc(inv.approval.by)+' · '+esc(fmtDate(inv.approval.at)):'')):(inv.status==='PENDING'?'Pre-factura · Pendiente de aprobación':'Pre-factura'));
     var docNote=inv.taxDocument?('<div class="mf-notes" style="border-left-color:#1f7a44"><span>Documento tributario asociado:</span> '+esc(inv.taxDocument.fileName)+' ('+fmtBytes(inv.taxDocument.size)+') — adjuntado por '+esc(inv.taxDocument.uploadedBy)+' el '+esc(fmtDate(inv.taxDocument.uploadedAt))+'.</div>'):'';
@@ -7240,7 +7272,7 @@
       if(!sel.sku){ fromHint=""; $("#pa-cap").textContent=""; validate(); return; }
       api('/sellers/'+seller+'/inventory?sku='+encodeURIComponent(sel.sku.sku)).then(function(rows){
         fromMax={};
-        rows.forEach(function(b){if(b.state==="AVAILABLE")fromMax[b.locationId]=(fromMax[b.locationId]||0)+b.qty;});
+        rows.forEach(function(b){if(b.state==="AVAILABLE"&&!b.binId)fromMax[b.locationId]=(fromMax[b.locationId]||0)+b.qty;});   // solo stock suelto: lo que está en un Bin se mueve con el Bin
         var conStock=Object.keys(fromMax).filter(function(id){return fromMax[id]>0;});
         if(conStock.length===1){ var l=locById[conStock[0]]; if(l){ $("#pa-from").value=l.code; } }
         fromHint=conStock.length?(conStock.length===1?"en 1 ubicación con stock":("en "+conStock.length+" ubicaciones con stock")):"Este producto no tiene stock disponible";
@@ -7489,9 +7521,11 @@
     return {used:used,pct:pct,cls:l.capacity===0?'':pct>=90?'full':pct>=85?'hi':''};
   }
   function locActionsHtml(l,manage){
-    if(!manage)return '';
+    // «Contenido»: Bins y stock suelto de la ubicación, por separado (lo ve todo rol interno).
+    var cont=(window.NinjaBins&&role!=="CLIENT")?'<button class="mini" data-lcont="'+esc(l.id)+'" title="Bins y stock suelto en esta ubicación">Contenido</button>':'';
+    if(!manage)return cont;
     var u=locUse(l), inactive=l.active===false;
-    return '<button class="mini" data-ledit="'+esc(l.id)+'">Editar</button>'
+    return cont+'<button class="mini" data-ledit="'+esc(l.id)+'">Editar</button>'
       +(inactive?'<button class="mini" data-lact="'+esc(l.id)+'">Activar</button>':'<button class="mini danger" data-ldeact="'+esc(l.id)+'">Desactivar</button>')
       +(u.used===0?'<button class="mini danger" data-ldel="'+esc(l.id)+'" title="La ubicación está vacía">Eliminar</button>':'<button class="mini" disabled title="Tiene stock: vacíala para poder eliminarla">Eliminar</button>');
   }
@@ -7550,7 +7584,7 @@
         var u=locUse(l);
         var capTxt=l.capacity>0?(u.used+'/'+l.capacity+' · '+u.pct+'%'):(u.used+' un · sin límite');
         var inactive=l.active===false;
-        var acts=manage?('<div class="card-actions">'+locActionsHtml(l,manage)+'</div>'):'';
+        var _la=locActionsHtml(l,manage);var acts=_la?('<div class="card-actions">'+_la+'</div>'):'';
         return '<div class="locc"'+(inactive?' style="opacity:.55"':'')+'>'+(manage?'<span class="lsel"><input type="checkbox" data-lsel="'+esc(l.id)+'"'+(u.used>0?' disabled title="Tiene stock: no se puede eliminar"':'')+(locSel[l.id]?' checked':'')+'></span>':'')+'<div class="code">'+esc(l.code)+(inactive?' · inactiva':'')+'</div><div class="zone">'+esc(zoneName(l.zoneType))+'</div>'
           +(l.capacity>0?'<div class="occ"><i class="'+u.cls+'" style="width:'+u.pct+'%"></i></div>':'<div class="occ"><i style="width:'+Math.min(100,u.used/6)+'%;background:var(--ink-3)"></i></div>')
           +'<div class="u"><span>Ocupación</span><span>'+capTxt+'</span></div>'+acts+'</div>';
@@ -7573,6 +7607,7 @@
       }).join(""):'<tr><td colspan="7" class="empty">Sin ubicaciones que coincidan.</td></tr>';
     }
     if(manage){ locBindSel(); locSelSync(); }
+    $$("[data-lcont]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();var l=byId(D.locations,b.getAttribute("data-lcont"));if(l&&window.NinjaBins)NinjaBins.openLocation(l);});});
     if(manage){
       $$("[data-ledit]").forEach(function(b){b.addEventListener("click",function(){openLocForm(byId(D.locations,b.getAttribute("data-ledit")));});});
       $$("[data-ldeact]").forEach(function(b){b.addEventListener("click",function(){var l=byId(D.locations,b.getAttribute("data-ldeact"));openConfirm("Desactivar ubicación","La ubicación "+l.code+" dejará de usarse para guardado y picking.",function(){api('/locations/'+l.id,{method:'PATCH',body:{active:false}}).then(function(){toast("Ubicación desactivada");reloadLocations();}).catch(err);});});});
@@ -8022,7 +8057,7 @@
     var isEdit=!!loc;
     var zoneOpts=ZONES.map(function(z){return '<option value="'+z[0]+'"'+((loc&&loc.zoneType===z[0])?' selected':'')+'>'+z[1]+'</option>';}).join("");
     var html='<div class="form">'
-      +'<div class="fld"><label>Código de la ubicación</label><input id="lf-code" value="'+esc(loc?loc.code:'')+'" placeholder="Ej: A-01-1-A"><span class="hint">Identificador del bin (el que se pistolea).</span></div>'
+      +'<div class="fld"><label>Código de la ubicación</label><input id="lf-code" value="'+esc(loc?loc.code:'')+'" placeholder="Ej: A-01-1-A"><span class="hint">Código de la ubicación que se pistolea en la estantería (no confundir con un Bin, que es un contenedor).</span></div>'
       +'<div class="row2"><div class="fld"><label>Zona</label><select id="lf-zone">'+zoneOpts+'</select></div>'
       +'<div class="fld"><label>Bodega</label><input id="lf-wh" value="'+esc(loc?loc.warehouseId:'W1')+'"></div></div>'
       +'<div class="row2"><div class="fld"><label>Capacidad (unidades)</label><input id="lf-cap" type="number" min="0" value="'+esc(loc?loc.capacity:0)+'"><span class="hint">0 = sin límite.</span></div>'
@@ -9000,7 +9035,7 @@
   function agtActivePage(){var p=document.querySelector('.page[data-pg="agente"]');return p&&p.classList.contains('on');}
   function agtPoll(){ if(!agtCanSee())return; api('/agent/alerts?'+agtScope()).then(function(d){ if(agtActivePage())paintAgentAlerts(d); else agtBadge((d&&d.abiertas||[]).length); }).catch(function(){}); }
 
-  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],deadlines:["Deadlines","Reglas de deadline automático por cliente"],lotes:["Lotes y vencimiento","Lotes con stock, vencimientos y alertas de próximo vencimiento"],cargas:["Cargas","Trabajo asignado y en ejecución por operario, en tiempo real"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],consignees:["Destinatarios","Libreta de direcciones frecuentes del cliente"],mcp:["Conexión MCP","Llaves para que agentes externos operen este WMS"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
+  var TITLES={dashboard:["Dashboard","Resumen operativo"],aidash:["Dashboard AI","Arma tu propio tablero conversando: datos en vivo, cada 30 s"],copilot:["Copiloto","Insights y respuestas con datos en vivo"],voz:["Copiloto de voz","Conversa por voz con tu operación y opera en automático"],inventory:["Inventario","Stock por SKU y ubicación"],orders:["Órdenes","Fulfillment y estados"],packaging:["Embalajes","Insumos de embalaje de la bodega"],pickqueue:["Cola de preparación","Picking en orden forzado: courier y FIFO"],inbound:["Recepción","Entradas de mercadería"],returns:["Devoluciones","Logística reversa: QA y disposición"],products:["Productos","Mantenedor de SKUs y kits"],putaway:["Almacenado","Guardar recepción en almacenaje"],assembly:["Armado de kit","Ensamblar kits desde sus componentes"],locations:["Ubicaciones","Ocupación de la bodega"],bins:["Bins","Contenedores con número propio (pallet, caja, tote) y su contenido"],movements:["Movimientos","Kardex del ledger de inventario"],counts:["Conteo cíclico","Tareas propuestas"],billing:["Facturación","Tarifario y facturas 3PL por cliente"],costos:["Rentabilidad","Costo por actividad, margen por cliente y eficiencia estándar vs. real"],chat:["Canal clientes","Chat interno con cada cliente de la bodega"],voicechannel:["Canal operaciones","Mensajes de voz entre operarios y administración"],branding:["Marca","White-label de la operación (documentos y panel)"],clients:["Clientes","Cuentas de cliente (sellers)"],users:["Usuarios","Roles y permisos"],operations:["Operaciones","Tenants de la plataforma"],usage:["Uso de plataforma","Nivel de uso por operación"],announcements:["Anuncios","Barra superior y clics"],webhooks:["Webhooks","Suscripciones por evento"],activity:["Actividad","Registro por usuario: quién hizo qué y cuándo"],aiaudit:["Auditoría IA","Recomendaciones y acciones de agentes (gobernanza)"],asignaciones:["Asignaciones","Balanceo de carga de tareas entre operarios"],deadlines:["Deadlines","Reglas de deadline automático por cliente"],lotes:["Lotes y vencimiento","Lotes con stock, vencimientos y alertas de próximo vencimiento"],cargas:["Cargas","Trabajo asignado y en ejecución por operario, en tiempo real"],agente:["Agente","Estado y autonomía, ventanas horarias, instrucciones y reglas"],consignees:["Destinatarios","Libreta de direcciones frecuentes del cliente"],mcp:["Conexión MCP","Llaves para que agentes externos operen este WMS"],agdiario:["Diario del agente","Ciclos, decisiones y resultados del agente"],agalertas:["Alertas activas","Lo que el agente detectó y sigue sin resolver"],torre:["Torre en vivo","Lo que el agente ejecuta y cómo queda la carga, en una pantalla"],plan:["Plan","Tu plan, uso y límites"],pkgmatrix:["Empaquetado","Matriz de módulos y planes"]};
   function go(pg){var allowed=NAV_BY_ROLE[role]||[];if(allowed.indexOf(pg)<0||moduleHidden(pg))pg="dashboard";
     // Un módulo fuera de plan ya NO devuelve al usuario a otra página: entra, lo ve
     // con los datos reales de su bodega y se topa con el muro recién al operar.
@@ -9010,7 +9045,7 @@
     // servidor están sobre las escrituras, así que la pantalla se ve con el contenido
     // real de la bodega — que es justamente lo que hace que valga la pena activarla.
     // Ver una tabla vacía no convence a nadie de nada.
-    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="consignees")renderConsignees();if(pg==="mcp")renderMcp();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="lotes")renderLotes();if(pg==="deadlines")renderDeadlines();if(pg==="cargas"){renderCargas();cargasTick();}else{clearTimeout(CARGAS.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
+    if(pg==="aidash"){renderAiDash();aidTick();}else{clearTimeout(AID.timer);}if(pg==="pickqueue")renderPickQueue();if(pg==="bins"&&window.NinjaBins)NinjaBins.render();if(pg==="packaging")renderPackaging();if(pg==="branding")renderBranding();if(pg==="returns")renderReturns();if(pg==="billing")renderBilling();if(pg==="costos")renderCostos();if(pg==="chat")renderChat();if(pg==="voicechannel")renderVoiceChannel();if(pg==="copilot")renderCopilot();if(pg==="voz")renderVoice();if(pg==="usage")renderUsage();if(pg==="announcements")renderAnnouncements();if(pg==="webhooks")renderWebhooks();if(pg==="activity")renderUserActivity();if(pg==="aiaudit")renderAiAudit();if(pg==="asignaciones")renderAssignments();if(pg==="consignees")renderConsignees();if(pg==="mcp")renderMcp();if(pg==="agente")renderAgente();if(pg==="agalertas")renderAgAlertas();if(pg==="agdiario")renderAgDiario();if(pg==="torre"){renderTorre();torreTick();}else{clearTimeout(TORRE.timer);}if(pg==="lotes")renderLotes();if(pg==="deadlines")renderDeadlines();if(pg==="cargas"){renderCargas();cargasTick();}else{clearTimeout(CARGAS.timer);}if(pg==="plan")renderPlan();if(pg==="pkgmatrix")renderPkgMatrix();expandActiveCat(pg);if(window.NinjaTour)NinjaTour.onPage(pg);if(typeof paintLive==='function')paintLive();}
   $$(".nav").forEach(function(n){n.addEventListener("click",function(){go(n.getAttribute("data-pg"));});});
   // Cabeceras de categoría: despliegan/pliegan su submenú.
   $$('.navcat-h').forEach(function(h){h.addEventListener('click',function(){toggleNavCat(h.parentElement);});});

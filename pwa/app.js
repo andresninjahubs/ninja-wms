@@ -16,7 +16,7 @@
   var boardTimer = null;
   var steps = [];             // secuencia de escaneos de la operación
   var stepIdx = 0;
-  var captured = {};          // { product, resolved, bin, from, to, loc, maxBase }
+  var captured = {};          // { product, resolved, dock, from, to, loc, maxBase }  (dock = ubicación de recepción; un «Bin» es un contenedor, no una ubicación)
   var lastRejected = '';      // último código rechazado como ubicación (evita repetir el aviso)
   var ALL_LOCS = [];          // TODAS las ubicaciones de la operación del seller (activas e inactivas)
   var LOCS = [];              // solo activas (candidatas para recepción/destino)
@@ -30,11 +30,11 @@
   /**
    * La ubicación donde ocurrió el trabajo, como id (no como código escaneado).
    * Cada operación la guarda en un paso distinto: el picking en `loc`, el guardado en
-   * su destino `to`, la recepción en el andén `bin`. Es lo que después permite medir
+   * su destino `to`, la recepción en el andén `dock`. Es lo que después permite medir
    * cuánto cuesta cada pasillo, que es la razón de tener esta columna.
    */
   function laborLocationId(which) {
-    var code = which === 'pick' ? captured.loc : which === 'putaway' ? captured.to : which === 'receive' ? captured.bin : null;
+    var code = which === 'pick' ? captured.loc : which === 'putaway' ? captured.to : which === 'receive' ? captured.dock : null;
     if (!code) return null;
     var l = findLocByCode(code);
     return l ? l.id : null;   // sin ubicación conocida es mejor null que un código suelto
@@ -151,7 +151,7 @@
 
   // ---- Navegación -----------------------------------------------------------
   function show(id) {
-    ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship', 'pickst', 'pickrun', 'recvst', 'taskst', 'count', 'ret', 'kit'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
+    ['login', 'home', 'scan', 'quick', 'msgs', 'pack', 'ship', 'pickst', 'pickrun', 'recvst', 'taskst', 'count', 'ret', 'kit', 'binop'].forEach(function (s) { $(s).classList.toggle('on', s === id); });
     if (id !== 'scan') stopCamera();
     if (typeof camDockStop === 'function') camDockStop();
     // Pantallas de lista o menú: el operario no está trabajando en nada concreto.
@@ -200,6 +200,7 @@
         laborFlush();
         loadFreeSellers();
         liveConnect();
+        if (window.NinjaBinsOp) { NinjaBinsOp.recvReset(); NinjaBinsOp.refresh(); }
         show('home');
       })
       .catch(function (e) { toast('No se pudo conectar: ' + e.message, false); });
@@ -250,14 +251,14 @@
 
   // ---- Selección de operación ----------------------------------------------
   var OP_META = {
-    receive: { title: 'Recepción', steps: ['product', 'bin'], perm: 'recibir' },
+    receive: { title: 'Recepción', steps: ['product', 'dock'], perm: 'recibir' },
     putaway: { title: 'Guardado', steps: ['product', 'from', 'to'] },
     pick:    { title: 'Picking', steps: ['product', 'loc'] },
     stock:   { title: 'Consultar stock', steps: ['product'] },
   };
   var STEP_HINT = {
     product: 'Escanea el PRODUCTO (EAN o DUN)',
-    bin: 'Toca o escanea la ubicación de recepción',
+    dock: 'Toca o escanea la ubicación de recepción',
     from: 'Toca o escanea la ubicación de ORIGEN',
     to: 'Toca o escanea la ubicación de DESTINO',
     loc: 'Toca o escanea la ubicación a pickear',
@@ -278,6 +279,7 @@
       if (which === 'countst') { openTaskStation('count'); return; }
       if (which === 'retst') { openReturns(); return; }
       if (which === 'kitst') { openKits(); return; }
+      if (which === 'binst') { openTaskStation('bins'); return; }
       if (!cfg.seller) { toast('Elige primero el cliente en «Operar libre»', false); var fs = $('free-seller'); if (fs) fs.focus(); return; }
       startOp(which);
     });
@@ -312,8 +314,8 @@
   }
 
   // ---- Bandeja de tareas (tablero del operario) ------------------------------
-  var TL = { PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', PUTAWAY: 'Guardado', RESTOCK: 'Reposición', COUNT: 'Conteo', RECEIVE: 'Recepción', RESLOT: 'Re-slotting' };
-  var TI = { PICK: '🛒', PACK: '📦', SHIP: '🚚', PUTAWAY: '⇄', RESTOCK: '↩', COUNT: '🔢', RECEIVE: '📥', RESLOT: '↔' };
+  var TL = { PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', PUTAWAY: 'Guardado', RESTOCK: 'Reposición', COUNT: 'Conteo', RECEIVE: 'Recepción', RESLOT: 'Re-slotting', BIN_PUTAWAY: 'Ubicar Bin', BIN_MOVE: 'Mover Bin', BIN_CONSOLIDATE: 'Consolidar Bins' };
+  var TI = { PICK: '🛒', PACK: '📦', SHIP: '🚚', PUTAWAY: '⇄', RESTOCK: '↩', COUNT: '🔢', RECEIVE: '📥', RESLOT: '↔', BIN_PUTAWAY: '📦', BIN_MOVE: '📦', BIN_CONSOLIDATE: '📦' };
   function opIdOrNull() { return opId || (user && user.operationId) || null; }
   function loadBoard() {
     var oid = opIdOrNull(); if (!oid || !user) return;
@@ -414,6 +416,8 @@
     task = t;
     if (t.sellerId) { cfg.seller = t.sellerId; save(); }
     liveTask();
+    // Tareas de Bins: ubicar / mover / consolidar contenedores completos.
+    if (/^BIN_/.test(t.type) && window.NinjaBinsOp) { var vb = PI.back === 'ts:bins' ? 'ts' : 'home'; PI.back = false; NinjaBinsOp.openTask(t, vb); return; }
     // Picking: recorrido por ubicación (ubicación → productos → siguiente ubicación).
     if (t.type === 'PICK') { var volverA = PI.back ? 'pickst' : 'home'; PI.back = false; openPickRun([{ sellerId: t.sellerId, orderId: t.entityId }], { back: volverA }); return; }
     if (t.type === 'RESTOCK') {
@@ -574,7 +578,7 @@
     $('s-title').textContent = OP_META[op].title;
     $('reso').style.display = 'none';
     $('picklist').style.display = 'none'; $('picklist').innerHTML = '';
-    $('bins').style.display = 'none'; $('bins').innerHTML = '';
+    $('capturas').style.display = 'none'; $('capturas').innerHTML = '';
     $('qtywrap').style.display = 'none';
     $('btn-confirm').style.display = 'none'; $('btn-confirm').textContent = 'Confirmar';
     PA.on = false; $('pa-panel').style.display = 'none';
@@ -611,6 +615,7 @@
     $('picklist').style.display = 'none'; $('picklist').innerHTML = '';
     if (s && s !== 'product') renderPicklist(s);
     if (s === 'product') renderProductPicker(); else { $('prodpick').style.display = 'none'; $('prodpick').innerHTML = ''; }
+    if (window.NinjaBinsOp) NinjaBinsOp.recvBar(esRecepcion());
     // Con todos los pasos resueltos solo queda la cantidad: el campo de código sobra.
     $('manual').style.display = s ? '' : 'none';
     paintTaskActs();
@@ -620,7 +625,7 @@
   // Ordena y rotula las ubicaciones candidatas según el paso.
   function renderPicklist(step) {
     var box = $('picklist');
-    if (step === 'bin') {
+    if (step === 'dock') {
       // Recepción: ubicaciones de recepción primero.
       var opts = LOCS.slice().sort(function (a, b) { return (a.zoneType === 'RECEIVING' ? 0 : 1) - (b.zoneType === 'RECEIVING' ? 0 : 1); });
       paintLocs(step, 'Toca la ubicación de recepción (o escanéala):', opts.map(function (l) { return { loc: l }; }), false);
@@ -723,7 +728,7 @@
   function pickValue(step, code) {
     captured[step] = code;
     $('picklist').style.display = 'none';
-    renderBins(); advance();
+    renderCapturas(); advance();
   }
 
   function zoneName(z) { return { RECEIVING: 'Recepción', STORAGE: 'Almacenaje', PICKING: 'Picking', SHIPPING: 'Despacho', QUARANTINE: 'Cuarentena' }[z] || z || ''; }
@@ -743,6 +748,8 @@
     var s = steps[stepIdx];
     if (!s) { if (op === 'putaway' && PA.on) paScan(raw); return; }
     if (s === 'product') {
+      // Recepción: si lo leído es un Bin (contenedor), se toma como el Bin donde se recibe.
+      if (window.NinjaBinsOp && NinjaBinsOp.tryRecvCode(raw, esRecepcion())) return;
       api('/sellers/' + encodeURIComponent(cfg.seller) + '/barcodes/' + encodeURIComponent(raw))
         .then(function (pack) {
           captured.product = raw; captured.resolved = pack; tono(true);
@@ -756,7 +763,7 @@
     } else {
       // Paso de UBICACIÓN: solo se acepta si el código es una ubicación real de la
       // operación. Así, si la cámara relee el producto (o se teclea otra cosa), no se
-      // toma por error como bin. Si no tenemos la lista cargada, confiamos (el backend valida).
+      // toma por error como ubicación. Si no tenemos la lista cargada, confiamos (el backend valida).
       var loc = findLocByCode(raw);
       if (ALL_LOCS.length && !loc) {
         if (raw !== lastRejected) { tono(false); toast('Ese código no es una ubicación. Toca la ubicación en la lista.', false); lastRejected = raw; }
@@ -787,15 +794,15 @@
     setupQty();
   }
 
-  function renderBins() {
+  function renderCapturas() {
     var rows = [];
-    ['bin', 'from', 'to', 'loc'].forEach(function (k) {
+    ['dock', 'from', 'to', 'loc'].forEach(function (k) {
       if (captured[k]) {
         var lbl = k === 'from' ? 'Origen' : k === 'to' ? 'Destino' : 'Ubicación';
         rows.push('<div class="kv"><span>' + lbl + '</span><b class="code">' + esc(captured[k]) + '</b></div>');
       }
     });
-    if (rows.length) { $('bins').innerHTML = '<div class="card">' + rows.join('') + '</div>'; $('bins').style.display = ''; }
+    if (rows.length) { $('capturas').innerHTML = '<div class="card">' + rows.join('') + '</div>'; $('capturas').style.display = ''; }
   }
 
   function esRecepcion() { return op === 'receive' || !!(task && task.type === 'RECEIVE'); }
@@ -868,7 +875,7 @@
     stopCamera();
     PA.on = false; $('pa-panel').style.display = 'none';
     $('qtywrap').style.display = 'none'; $('btn-confirm').style.display = 'none';
-    captured.to = null; renderBins();
+    captured.to = null; renderCapturas();
     stepIdx = steps.indexOf('to'); enterStep(); startCamera();
   }
   /** Un escaneo del producto en «Por guardar» = guardar 1 (o la caja completa si es DUN). */
@@ -1009,10 +1016,12 @@
       var line = rc && (rc.lines || []).filter(function (l) { return l.sku === sku; })[0];
       if (!line) { toast('El producto ' + (sku ? skuTxt(sku, task.sellerId) : captured.product) + ' no está en esta recepción', false); return; }
       var rq = packCount * (captured.resolved ? captured.resolved.factor : 1);
-      call = api(base + '/receipts/' + encodeURIComponent(task.entityId) + '/receive', { method: 'POST', body: { counts: [Object.assign({ lineNo: line.lineNo, qty: rq }, lotV ? { lot: lotV } : {}, expV ? { expiry: expV } : {})] } })
+      var rbin = window.NinjaBinsOp ? NinjaBinsOp.recvBinNum() : null;
+      call = api(base + '/receipts/' + encodeURIComponent(task.entityId) + '/receive', { method: 'POST', body: { counts: [Object.assign({ lineNo: line.lineNo, qty: rq }, lotV ? { lot: lotV } : {}, expV ? { expiry: expV } : {}, rbin ? { binId: rbin } : {})] } })
         .then(function (o) { return { scan: { baseQty: rq, code: captured.resolved.code, sku: sku }, receipt: o }; });
     } else if (op === 'receive') {
-      call = api(base + '/scan/inbound', { method: 'POST', body: Object.assign({ barcode: captured.product, packCount: packCount, locationCode: captured.bin }, lotV ? { lot: lotV } : {}, expV ? { expiry: expV } : {}) });
+      var rbin2 = window.NinjaBinsOp ? NinjaBinsOp.recvBinNum() : null;
+      call = api(base + '/scan/inbound', { method: 'POST', body: Object.assign({ barcode: captured.product, packCount: packCount, locationCode: captured.dock }, lotV ? { lot: lotV } : {}, expV ? { expiry: expV } : {}, rbin2 ? { bin: rbin2 } : {}) });
     } else if (op === 'putaway') {
       call = api(base + '/scan/putaway', { method: 'POST', body: { productBarcode: captured.product, packCount: packCount, fromLocationCode: captured.from, toLocationCode: captured.to } });
     } else if (task && task.type === 'PICK') {
@@ -1028,6 +1037,7 @@
     call.then(function (r) {
       var q = r.scan.baseQty;
       if (task && task.type !== 'PICK' && task.type !== 'RECEIVE') { task._done = (task._done || 0) + q; liveTask(); }
+      if (esRecepcion() && window.NinjaBinsOp && NinjaBinsOp.recvBinNum()) NinjaBinsOp.recvNote(q);
       $('res-big').textContent = '✓ ' + packCount + ' × ' + r.scan.code + ' = ' + q + ' un';
       $('res-sub').textContent = OP_META[op].title + ' de ' + skuTxt(r.scan.sku, cfg.seller) + ' confirmada (' + q + ' unidades base).';
       $('result').style.display = '';
@@ -2170,7 +2180,7 @@
   /** refs: [{sellerId, orderId}] · opts.back: a dónde volver al terminar ('pickst' | 'home'). */
   function openPickRun(refs, opts) {
     opts = opts || {};
-    task = null; PR = { orders: [], stops: [], i: 0, phase: 'loc', queue: [], busy: false, back: opts.back || 'home', est: {}, done: {} };
+    task = null; PR = { orders: [], stops: [], i: 0, phase: 'loc', queue: [], busy: false, back: opts.back || 'home', est: {}, done: {}, binOk: {} };
     show('pickrun');
     $('pr-title').textContent = refs.length > 1 ? 'Picking en lote · ' + refs.length + ' pedidos' : 'Picking';
     $('pr-sub').textContent = 'Armando el recorrido…'; $('pr-top').innerHTML = ''; $('pr-body').innerHTML = '';
@@ -2187,6 +2197,10 @@
     }).catch(function (e) { $('pr-sub').textContent = 'Error'; $('pr-body').innerHTML = '<div class="pk-empty">No pude armar el recorrido: ' + esc(e.message) + '</div>'; });
   }
   function prNextStop(from) { for (var k = from; k < PR.stops.length; k++) if (prStopPend(PR.stops[k]) > 0) return k; for (k = 0; k < from; k++) if (prStopPend(PR.stops[k]) > 0) return k; return -1; }
+  // Picking desde un Bin: en la ubicación se escanea primero el Bin (contenedor) y luego el SKU.
+  function prBinOk(it) { return !it.binId || !!PR.binOk[PR.i + '|' + it.binId]; }
+  function prBinsPend(s) { var o = {}; s.items.forEach(function (it) { if (it.binId && prPend(it) > 0 && !PR.binOk[PR.i + '|' + it.binId]) o[it.binId] = it.binNumero || it.binId; }); return o; }
+  function prConfirmBin(binId, num) { PR.binOk[PR.i + '|' + binId] = true; bip(true); toast('Bin ' + (num || '') + ' confirmado: escanea los productos', true); renderPickRun(); }
   function renderPickRun() {
     var s = PR.stops[PR.i]; if (!s) return;
     var tt = prTotals(), pct = tt.tot ? Math.round(100 * tt.hech / tt.tot) : 0;
@@ -2196,20 +2210,23 @@
     $('pr-top').innerHTML = '<div class="pr-stopcard' + (enLoc ? '' : ' ok') + '"><div><div class="k">' + (enLoc ? 'Ve a la ubicación' : '✓ Estás en') + '</div><div class="c">' + esc(s.code) + '</div><div class="z">' + esc(zoneName(s.zoneType)) + '</div></div>'
       + '<div class="n">Parada ' + (PR.i + 1) + ' de ' + PR.stops.length + '<br>' + restantes + ' por visitar</div></div>'
       + '<div class="pr-bar"><i style="width:' + pct + '%"></i></div><div class="pr-meta"><span>' + tt.hech + ' / ' + tt.tot + ' unidades</span><span>' + pct + '%</span></div>';
-    $('pr-label').textContent = enLoc ? 'Escanea la ubicación ' + s.code : 'Escanea el producto (una vez por unidad)';
-    $('pr-code').placeholder = enLoc ? 'Código de ubicación' : 'EAN / DUN del producto';
+    var binsPend = prBinsPend(s), hayBinPend = !enLoc && Object.keys(binsPend).length > 0;
+    $('pr-label').textContent = enLoc ? 'Escanea la ubicación ' + s.code : (hayBinPend ? 'Escanea el Bin (contenedor) y luego cada producto' : 'Escanea el producto (una vez por unidad)');
+    $('pr-code').placeholder = enLoc ? 'Código de ubicación' : (hayBinPend ? 'N° de Bin o EAN del producto' : 'EAN / DUN del producto');
     camDockHint(enLoc ? 'Escanea la ubicación ' + s.code : 'Escanea cada unidad');
     var html = '';
     if (enLoc) html += '<button class="btn" id="pr-here">Estoy en ' + esc(s.code) + ' (confirmar sin escanear)</button><div class="sec" style="margin:14px 0 8px">Aquí vas a tomar</div>';
     html += s.items.map(function (it, ix) {
-      var p = prPend(it), hecho = it.picked + (it.local || 0), done = p <= 0;
+      var p = prPend(it), hecho = it.picked + (it.local || 0), done = p <= 0, binFalta = !done && !enLoc && !prBinOk(it);
+      var binTag = it.binId ? '<div class="lt">📦 Bin <b>' + esc(it.binNumero || '') + '</b>' + (binFalta ? ' · escanéalo primero' : (enLoc ? '' : ' ✓')) + '</div>' : '';
       var ords = it.porOrden.length > 1 ? '<div class="ords">Para ' + it.porOrden.length + ' pedidos: ' + it.porOrden.map(function (o) { return esc(o.ref) + ' (' + o.qty + ')'; }).join(' · ') + '</div>'
         : (PR.orders.length > 1 ? '<div class="ords">Para ' + esc(it.porOrden[0].ref) + '</div>' : '');
       return '<div class="pr-item' + (done ? (it.shortQty ? ' short' : ' done') : '') + '">'
-        + '<button type="button" class="pr-tap" data-prtap="' + ix + '"' + (enLoc || done ? ' disabled' : '') + '><div class="row"><div style="min-width:0"><div class="sku">' + esc(it.sku) + (done && !it.shortQty ? ' ✓' : '') + '</div>'
-        + '<div class="ds">' + esc(it.description || descOf(it.sku, it.sellerId)) + '</div>' + (it.lot ? '<div class="lt">Lote ' + esc(it.lot) + '</div>' : '') + ords + '</div>'
-        + '<div class="qn"><b>' + hecho + '/' + it.qty + '</b><span>' + (it.shortQty ? 'faltan ' + it.shortQty : (done ? 'listo' : 'toca o escanea')) + '</span></div></div></button>'
-        + (!enLoc && !done ? '<div class="acts"><button type="button" data-pradd="' + ix + '">+1</button><button type="button" class="pri" data-prall="' + ix + '">' + (p === 1 ? 'Tomar 1' : 'Tomar las ' + p) + '</button><button type="button" class="warn" data-prshort="' + ix + '">Falta</button></div>' : '')
+        + '<button type="button" class="pr-tap" data-prtap="' + ix + '"' + (enLoc || done || binFalta ? ' disabled' : '') + '><div class="row"><div style="min-width:0"><div class="sku">' + esc(it.sku) + (done && !it.shortQty ? ' ✓' : '') + '</div>'
+        + '<div class="ds">' + esc(it.description || descOf(it.sku, it.sellerId)) + '</div>' + (it.lot ? '<div class="lt">Lote ' + esc(it.lot) + '</div>' : '') + binTag + ords + '</div>'
+        + '<div class="qn"><b>' + hecho + '/' + it.qty + '</b><span>' + (it.shortQty ? 'faltan ' + it.shortQty : (done ? 'listo' : (binFalta ? 'primero el Bin' : 'toca o escanea'))) + '</span></div></div></button>'
+        + (binFalta ? '<div class="acts"><button type="button" class="pri" data-prbin="' + esc(it.binId) + '" data-prbinnum="' + esc(it.binNumero || '') + '">Tengo el Bin ' + esc(it.binNumero || '') + ' (confirmar sin escanear)</button></div>' : '')
+        + (!enLoc && !done && !binFalta ? '<div class="acts"><button type="button" data-pradd="' + ix + '">+1</button><button type="button" class="pri" data-prall="' + ix + '">' + (p === 1 ? 'Tomar 1' : 'Tomar las ' + p) + '</button><button type="button" class="warn" data-prshort="' + ix + '">Falta</button></div>' : '')
         + '</div>';
     }).join('');
     var sig = prNextStop(PR.i + 1);
@@ -2222,6 +2239,7 @@
   function prAdd(ix, n) {
     var s = PR.stops[PR.i], it = s && s.items[ix]; if (!it) return;
     var p = prPend(it); if (p <= 0) { bip(false); toast('Ya tomaste todas las de ' + it.sku, false); return; }
+    if (!prBinOk(it)) { bip(false); toast('Primero escanea el Bin ' + (it.binNumero || ''), false); return; }
     n = Math.min(n, p);
     it.local = (it.local || 0) + n;
     PR.queue.push({ stop: PR.i, ix: ix, n: n });
@@ -2233,7 +2251,7 @@
     while (PR.queue.length && PR.queue[0].stop === q.stop && PR.queue[0].ix === q.ix) q.n += PR.queue.shift().n;   // tomas seguidas del mismo producto van juntas
     var s = PR.stops[q.stop], it = s.items[q.ix];
     PR.busy = true;
-    api('/picking/pick', { method: 'POST', body: { operationId: opIdOrNull(), sellerId: it.sellerId, sku: it.sku, locationId: s.locationId, lot: it.lot || null, qty: q.n, orderIds: it.porOrden.map(function (o) { return o.orderId; }) } })
+    api('/picking/pick', { method: 'POST', body: { operationId: opIdOrNull(), sellerId: it.sellerId, sku: it.sku, locationId: s.locationId, lot: it.lot || null, binId: it.binId || null, qty: q.n, orderIds: it.porOrden.map(function (o) { return o.orderId; }) } })
       .then(function (r) {
         it.picked += q.n; it.local -= q.n;
         (r.porOrden || []).forEach(function (x) { PR.est[x.orderId] = x.status; PR.done[x.orderId] = (PR.done[x.orderId] || 0) + x.qty; var po = it.porOrden.filter(function (o) { return o.orderId === x.orderId; })[0]; if (po) po.picked += x.qty; });
@@ -2290,11 +2308,17 @@
       return;
     }
     if (loc) { if (loc.id !== s.locationId) { bip(false); toast('Aún te falta tomar productos en ' + s.code, false); } return; }
+    // ¿Escaneó un Bin? (número del contenedor). Se confirma y se siguen escaneando productos.
+    var cBin = String(code).trim().toUpperCase(), binHit = s.items.filter(function (it) { return it.binNumero && String(it.binNumero).toUpperCase() === cBin; })[0];
+    if (binHit) { if (prBinOk(binHit)) { bip(true); toast('Bin ' + binHit.binNumero + ' ya confirmado', true); return; } prConfirmBin(binHit.binId, binHit.binNumero); return; }
+    if (/^[A-Z]{2,6}-\d{3,}$/.test(cBin) && s.items.some(function (it) { return it.binId; })) { bip(false); toast('El Bin ' + cBin + ' no tiene nada que tomar aquí', false); return; }
     var sellers = []; s.items.forEach(function (it) { if (sellers.indexOf(it.sellerId) < 0) sellers.push(it.sellerId); });
     (function intenta(k) {
       if (k >= sellers.length) { bip(false); toast('Ese producto no va en ' + s.code + ': ' + code, false); return; }
       resolveCode(sellers[k], code).then(function (r) {
-        var ix = -1; s.items.forEach(function (it, j) { if (ix < 0 && it.sellerId === sellers[k] && it.sku === r.sku && prPend(it) > 0) ix = j; });
+        // Prefiere la línea cuyo Bin ya se confirmó (o suelta); si solo hay líneas en Bins sin confirmar, pide el Bin.
+        var ix = -1, ixSinBin = -1; s.items.forEach(function (it, j) { if (it.sellerId === sellers[k] && it.sku === r.sku && prPend(it) > 0) { if (ix < 0 && prBinOk(it)) ix = j; if (ixSinBin < 0 && !prBinOk(it)) ixSinBin = j; } });
+        if (ix < 0 && ixSinBin >= 0) { bip(false); toast('Ese producto está dentro del Bin ' + (s.items[ixSinBin].binNumero || '') + ': escanéalo primero', false); return; }
         if (ix < 0) {
           var hay = s.items.some(function (it) { return it.sellerId === sellers[k] && it.sku === r.sku; });
           if (hay) { bip(false); toast('Ya tomaste todas las de ' + skuTxt(r.sku, sellers[k]), false); return; }
@@ -2308,7 +2332,8 @@
     e.preventDefault(); var el = $('pr-code'), c = (el.value || '').trim(); el.value = ''; if (!c) return; onPrCode(c); enfoca('pr-code');
   });
   $('pr-body').addEventListener('click', function (e) {
-    var b = e.target.closest('[data-prtap],[data-pradd],[data-prall],[data-prshort]'); if (!b || b.disabled) return;
+    var b = e.target.closest('[data-prtap],[data-pradd],[data-prall],[data-prshort],[data-prbin]'); if (!b || b.disabled) return;
+    if (b.hasAttribute('data-prbin')) { prConfirmBin(b.getAttribute('data-prbin'), b.getAttribute('data-prbinnum')); return; }
     if (b.hasAttribute('data-prshort')) { prShort(+b.getAttribute('data-prshort')); return; }
     if (b.hasAttribute('data-prall')) { var ix = +b.getAttribute('data-prall'); prAdd(ix, prPend(PR.stops[PR.i].items[ix])); return; }
     prAdd(+(b.getAttribute('data-pradd') || b.getAttribute('data-prtap')), 1);
@@ -2667,15 +2692,17 @@
     putaway: { types: 'PUTAWAY,RECEIVE,RESLOT,RESTOCK', title: 'Guardado', mine: 'Asignadas a mí', label: 'Escanea la ubicación de origen, el SKU o la guía', loose: 'Guardado suelto (sin tarea)', nada: 'No hay tareas de este tipo ahora.', skill: 'el guardado',
       // Filtro por tipo dentro de la estación (se recuerda en el aparato).
       filtros: [['', 'Todas'], ['PUTAWAY', 'Guardado'], ['RECEIVE', 'Recepción'], ['RESLOT', 'Re-slot'], ['RESTOCK', 'Reposición']] },
+    bins: { types: 'BIN_PUTAWAY,BIN_MOVE,BIN_CONSOLIDATE', title: 'Bins', mine: 'Asignadas a mí', label: 'Escanea el N° del Bin', loose: 'Otras acciones con Bins (ubicar, mover, consolidar, contar, consultar, crear)', nada: 'No hay tareas de Bins ahora.', skill: 'el guardado',
+      filtros: [['', 'Todas'], ['BIN_PUTAWAY', 'Ubicar'], ['BIN_MOVE', 'Mover'], ['BIN_CONSOLIDATE', 'Consolidar']] },
     count: { types: 'COUNT', title: 'Conteo', mine: 'Asignados a mí', label: 'Escanea la ubicación a contar o escribe el SKU', loose: 'Conteo libre de una ubicación', nada: 'No hay conteos pendientes hoy. 🎉', skill: 'el conteo' },
   };
-  var TS_TL = { PUTAWAY: 'Guardado', RECEIVE: 'Recepción', RESLOT: 'Re-slot', RESTOCK: 'Reposición', COUNT: 'Conteo' };
+  var TS_TL = { PUTAWAY: 'Guardado', RECEIVE: 'Recepción', RESLOT: 'Re-slot', RESTOCK: 'Reposición', COUNT: 'Conteo', BIN_PUTAWAY: 'Ubicar Bin', BIN_MOVE: 'Mover Bin', BIN_CONSOLIDATE: 'Consolidar' };
   var TS = { kind: null, tab: 'mine', board: null, busy: false, tipo: (function () { try { return localStorage.getItem('wms.ts.tipo') || ''; } catch (e) { return ''; } })() };
   function openTaskStation(kind) {
     task = null; TS.kind = kind; var K = TS_KINDS[kind];
     show('taskst');
     $('ts-title').textContent = K.title; $('ts-label').textContent = K.label; $('ts-lmine').textContent = K.mine;
-    $('ts-code').placeholder = kind === 'count' ? 'Ubicación o SKU' : 'Ubicación o SKU';
+    $('ts-code').placeholder = kind === 'bins' ? 'N° de Bin' : 'Ubicación o SKU';
     $('ts-loose').textContent = K.loose;
     $('ts-list').innerHTML = '<div class="pk-empty">Cargando…</div>';
     loadTaskStation(); enfoca('ts-code');
@@ -2755,6 +2782,7 @@
     var el = $('ts-code'), c = norm(el.value); el.value = ''; if (!c) return;
     var b = TS.board || {};
     var hit = function (t) {
+      if (TS.kind === 'bins') return norm(String(t.entityRef || '').split(/[\s:←]/)[0]) === c;
       var p = tsParts(t), lc = TS.kind === 'count' ? LOC_BY_ID[p.ref] : LOC_BY_ID[p.loc];
       return norm(t.entityRef) === c || (lc && norm(lc.code) === c) || norm(TS.kind === 'count' ? p.ref : p.sku) === c;
     };
@@ -2768,6 +2796,7 @@
   $('ts-loose').addEventListener('click', function () {
     PI.back = false;
     if (TS.kind === 'count') { openCount(null, { free: true }); return; }
+    if (TS.kind === 'bins') { if (window.NinjaBinsOp) NinjaBinsOp.open('menu', null, 'ts'); return; }
     if (!cfg.seller) { toast('Para el guardado suelto elige primero el cliente en «Operar libre»', false); show('home'); switchTab('free'); var fs = $('free-seller'); if (fs) fs.focus(); return; }
     startOp('putaway');
   });
@@ -2775,7 +2804,7 @@
   // ---------------------------------------------------------------------
   // CONTEO CÍCLICO (ciego)
   // ---------------------------------------------------------------------
-  // Por UBICACIÓN: el operario va al bin, lo confirma, y registra TODO lo que hay del
+  // Por UBICACIÓN: el operario va a la ubicación, la confirma, y registra TODO lo que hay del
   // cliente (lo que no registra cuenta como 0). Por SKU: cuenta ese producto en cada
   // ubicación donde el sistema lo tiene, y puede sumar otras donde lo encuentre.
   // Nunca se muestra la cantidad esperada: así el conteo mide lo real.
@@ -3240,6 +3269,14 @@
 
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  // Bins (contenedores): el módulo bins.js recibe los helpers de la app.
+  if (window.NinjaBinsOp) NinjaBinsOp.init({
+    api: api, toast: toast, bip: bip, esc: esc, show: show, enfoca: enfoca,
+    opId: opIdOrNull, findLoc: findLocByCode, resolveCode: resolveCode, descOf: descOf, sellerNom: sellerNom,
+    camStart: function (h, cb, hint) { camDockStart(h, cb, hint); }, camStop: camDockStop, camHint: camDockHint, camToggle: camDockToggle,
+    goHome: function () { show('home'); }, openStation: function () { openTaskStation('bins'); }, openRecv: openRecvStation,
+    taskDone: function () { task = null; liveIdle(); loadBoard(); },
+  });
 
   // ---- Producto = SKU + descripción, en TODAS las pantallas ------------------
   // Las líneas de órdenes, recepciones, tareas, etc. solo traen el SKU; la descripción

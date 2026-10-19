@@ -93,7 +93,7 @@ export class ReceiptsController {
     return this.wms.receiveReceipt(
       sellerId,
       orderId,
-      dto.counts.map((c) => ({ lineNo: c.lineNo, qty: c.qty, lot: c.lot ?? null, expiry: c.expiry ?? null, serials: c.serials ?? [] })),
+      dto.counts.map((c) => ({ lineNo: c.lineNo, qty: c.qty, lot: c.lot ?? null, expiry: c.expiry ?? null, serials: c.serials ?? [], binId: c.binId ?? null })),
       actorOf(user),
     );
   }

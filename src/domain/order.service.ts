@@ -484,7 +484,7 @@ export class OrderService {
     const tasks: PickTask[] = [];
     for (const line of order.lines) {
       for (const a of line.allocations) {
-        tasks.push({ lineNo: line.lineNo, sku: a.sku ?? line.sku, locationId: a.locationId, lot: a.lot, qty: a.qty, pickedQty: a.pickedQty ?? 0, uom: line.uom });
+        tasks.push({ lineNo: line.lineNo, sku: a.sku ?? line.sku, locationId: a.locationId, lot: a.lot, qty: a.qty, pickedQty: a.pickedQty ?? 0, uom: line.uom, binId: a.binId ?? null });
       }
     }
     tasks.sort((a, b) => (a.locationId < b.locationId ? -1 : a.locationId > b.locationId ? 1 : a.lineNo - b.lineNo));
@@ -522,7 +522,7 @@ export class OrderService {
   async pickTask(
     sellerId: string,
     orderId: string,
-    input: { sku: string; locationId: string; lot?: string | null; qty?: number },
+    input: { sku: string; locationId: string; lot?: string | null; qty?: number; binId?: string | null },
     actor?: string,
   ): Promise<SalesOrder> {
     const order = await this.mustGet(sellerId, orderId);
@@ -531,10 +531,14 @@ export class OrderService {
     }
     const lot = input.lot ?? null;
     // El SKU puede ser el de la línea o —si es un kit VIRTUAL— el de un componente.
+    // Con Bins puede haber varias reservas en la misma ubicación y lote (suelto y uno o
+    // más Bins): si se indica el Bin manda; si no, la primera que todavía tenga pendiente.
     let line: OrderLine | undefined;
     let alloc: Allocation | undefined;
+    const calza = (x: Allocation, l: OrderLine) => (x.sku ?? l.sku) === input.sku && x.locationId === input.locationId && (x.lot ?? null) === lot
+      && (input.binId === undefined || (x.binId ?? null) === (input.binId ?? null));
     for (const l of order.lines) {
-      const a = l.allocations.find((x) => (x.sku ?? l.sku) === input.sku && x.locationId === input.locationId && (x.lot ?? null) === lot);
+      const a = l.allocations.find((x) => calza(x, l) && x.qty - (x.pickedQty ?? 0) > 0) || l.allocations.find((x) => calza(x, l));
       if (a) { line = l; alloc = a; break; }
     }
     if (!line || !alloc) throw new NotFoundError(`No hay reserva de ${input.sku} en la ubicación indicada`);
@@ -549,6 +553,7 @@ export class OrderService {
       qty: take,
       locationId: alloc.locationId,
       lot: alloc.lot,
+      binId: alloc.binId ?? null,
       reference: `PICK:${order.id}`,
       // El movimiento queda atribuido a quien lo hizo. Faltaba acá (y sí estaba en
       // `confirmPick`), así que TODO el picking dirigido —el flujo principal del
@@ -591,6 +596,7 @@ export class OrderService {
           qty: remaining,
           locationId: a.locationId,
           lot: a.lot,
+          binId: a.binId ?? null,
           reference: `PICK:${order.id}`,
           actor, // G4: el movimiento PICK queda atribuido al operario (no a 'system')
         });
@@ -891,6 +897,28 @@ export class OrderService {
       }
     }
     return order;
+  }
+
+  /**
+   * Las reservas SIGUEN al Bin: cuando un Bin se mueve o se consolida en otro, las
+   * reservas de órdenes en curso que apuntaban a él pasan a la nueva ubicación (y Bin).
+   * Así la picklist se actualiza sola. Devuelve cuántas órdenes se tocaron.
+   */
+  async rehomeBinAllocations(sellerId: string, fromBinId: string, to: { binId: string; locationId: string; detail?: string | null }, actor?: string): Promise<number> {
+    let n = 0;
+    for (const o of await this.orders.list(sellerId)) {
+      if (o.status !== OrderStatus.ALLOCATED && o.status !== OrderStatus.PICKING) continue;
+      let toco = false;
+      for (const l of o.lines) for (const a of l.allocations || []) {
+        if ((a.binId ?? null) === fromBinId && a.qty - (a.pickedQty ?? 0) > 0) { a.binId = to.binId; a.locationId = to.locationId; toco = true; }
+      }
+      if (toco) {
+        o.events = (o.events || []).concat(this.ev('RESERVA REUBICADA', actor, to.detail || null));
+        await this.orders.save(o);
+        n++;
+      }
+    }
+    return n;
   }
 
   async getOrder(sellerId: string, orderId: string): Promise<SalesOrder | null> {

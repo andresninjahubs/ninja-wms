@@ -104,6 +104,19 @@ export const AGENT_RULES: AgentRuleDef[] = [
     unit: 'horas', defaultThreshold: 12, defaultSeverity: 'warn', defaultCooldownMin: 180, link: 'putaway',
     autoAction: { tool: 'atender_reposicion', label: 'Repartir la reposición pendiente entre operarios activos' },
   },
+  // ---- Bins (contenedores / LPN) -------------------------------------------------
+  {
+    key: 'bin_por_ubicar',
+    name: 'Bin por ubicar',
+    description: 'Bins cerrados (POR UBICAR) que llevan más de N horas sin putaway. Su contenido sigue en el andén.',
+    unit: 'horas', defaultThreshold: 4, defaultSeverity: 'crit', defaultCooldownMin: 60, link: 'bins',
+  },
+  {
+    key: 'bin_armado_abandonado',
+    name: 'Bin en armado abandonado',
+    description: 'Bins EN ARMADO sin movimiento hace más de N horas: alguien empezó a armarlos y no los cerró.',
+    unit: 'horas', defaultThreshold: 12, defaultSeverity: 'warn', defaultCooldownMin: 240, link: 'bins',
+  },
   // ---- Insumos, devoluciones y calidad de la data ---------------------------
   {
     key: 'embalaje_bajo',

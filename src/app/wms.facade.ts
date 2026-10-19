@@ -118,6 +118,9 @@ import {
   StockState,
   User,
   ZoneType,
+  Bin,
+  BinEstado,
+  BinSettings,
 } from '../domain/types';
 import { TaskEvent, TaskEventType, proyectarTarea, tiemposDeTarea, TaskProjection } from '../domain/task-event';
 import { conFactor, estimarHoras, estimarMinutos, modeloPorDefecto, tareaTipica, unidadesPorHoraEquivalente, TaskTimeModel, TaskTimeCoefficients, TaskTimeSource } from '../domain/task-time';
@@ -140,6 +143,7 @@ import {
 } from '../domain/copilot';
 import { askCopilotAgent, askCopilotChat, askCopilotLlmDetailed, listModels as listLlmModels, PROVIDER_DEFAULTS as COPILOT_PROVIDERS } from '../domain/copilot-llm';
 import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS, COPILOT_MANAGE_TOOLS, COPILOT_VISUAL_TOOL } from '../domain/copilot-tools';
+import { BinService, BinView, BinLinea, BinItem, BIN_ESTADO_ES } from '../domain/bin.service';
 import { validarWidget as validarWidgetVisual, transformar as transformarVisual } from '../domain/ai-dashboard';
 
 /** SHA-256 del secreto de una llave. Lo mismo al emitir y al autenticar. */
@@ -970,6 +974,7 @@ export class WmsFacade {
       'NO uses tablas, NO uses encabezados (#, ##), NO uses listas con viñetas salvo que el usuario lo pida explícitamente; si enumeras pocas cosas, hazlo dentro de una frase separadas por comas.',
       'Cuando propongas un siguiente paso, hazlo como una pregunta u ofrecimiento natural (ej: "¿Quieres que revise…?") para invitar a continuar la conversación.',
       'Tienes HERRAMIENTAS para consultar datos en vivo del WMS (kardex, línea de tiempo de órdenes, facturación, canal de voz, etc.). Úsalas cuando necesites un dato que no esté en el resumen. Responde SOLO con datos reales (del resumen o de las herramientas); nunca inventes cifras.',
+      'QUIÉN HIZO CADA COSA — REGLA CLAVE: cuando hables de un cambio (una orden cancelada, una recepción eliminada, un automatismo activado, una tarea reasignada), di QUIÉN lo hizo usando EXACTAMENTE el autor registrado: el campo "HECHO POR" de CAMBIOS RECIENTES, o "hechoPor" en el historial que devuelven detalle_orden, linea_tiempo_orden, listar_ordenes, kardex_sku o detalle_recepcion. Si no está en lo que tienes, consulta esas herramientas antes de responder. NUNCA digas que algo lo hizo «el sistema», que fue «automático» o que lo hizo el agente salvo que el autor registrado sea exactamente el sistema o el agente. Y NUNCA inventes el MOTIVO de un cambio: solo menciónalo si está en el detalle registrado; si no, di que no quedó registrado el motivo. Si el autor no está registrado, dilo así.',
       'DATOS FRESCOS — REGLA CLAVE: el RESUMEN de abajo se recalcula en ESTE momento, en cada pregunta. La bodega cambia mientras conversan: el usuario u otras personas activan o desactivan automatismos, crean o eliminan recepciones, cancelan órdenes, asignan tareas desde el portal o la app. Por eso las cifras y estados que aparecen en tus respuestas ANTERIORES de esta conversación pueden estar desactualizados: NUNCA los repitas sin verificarlos contra el resumen actual o una herramienta consultada ahora. Si el resumen o una herramienta contradice algo que dijiste antes, manda el dato actual y dilo con naturalidad («ahora el auto-balanceo está desactivado», «esa recepción ya no existe»). Revisa también la sección de CAMBIOS RECIENTES si aparece.',
     ].join(' ');
     const canWrite = this.copilotCanWrite(actor?.role);
@@ -988,6 +993,8 @@ export class WmsFacade {
         sys += ' NO puedes asignar, liberar ni redistribuir tareas: eso lo hace un supervisor o administrador. Si te lo piden, dilo así de simple y, si es para uno mismo, recuerda que el trabajo disponible se toma desde la app del operario cuando la operación lo tiene habilitado. Puedes SÍ consultar la carga del equipo (carga_operarios, tareas_operario) para informar.';
       }
       sys += ' También puedes CERRAR los flujos que antes quedaban a medias: recibir mercadería contra una recepción y cerrarla (recibir_recepcion, cerrar_recepcion), cancelar y reactivar órdenes (cancelar_orden, reactivar_orden), reservar varias de una vez (reservar_ordenes), manejar devoluciones (crear_devolucion, procesar_devolucion, cancelar_devolucion), avisarle a un operario en su app (mensaje_a_operario) e ingresar insumos de embalaje (recibir_insumos_embalaje). Antes de opinar o actuar sobre algo que ya está configurado, MÍRALO: instrucciones_vigentes para las directrices que ya te dieron, estado_automatismos para el modo de asignación y el auto-balanceo, y reglas_agente para entender por qué el agente hizo o no hizo algo. Para crear órdenes o recepciones, si no sabes el id del cliente usa clientes_operacion y si no conoces los SKU usa catalogo_productos antes de crear. REGLA INNEGOCIABLE sobre lo que informas: describe SOLO lo que la herramienta devolvió. Si el resultado trae sinCambios:true, o un contador en 0, o ok:false, di claramente que NO se hizo el cambio y por qué; nunca lo cuentes como hecho ni inventes a qué operario pasó cada tarea. Si te piden confirmar algo que acabas de hacer, vuelve a consultarlo con la herramienta de lectura antes de responder.';
+      sys += ' BINS: un Bin es un CONTENEDOR (pallet, caja, tote, jaula) con número correlativo (BIN-000123) que se ubica DENTRO de una ubicación; NUNCA llames "bin" a una ubicación. Consulta con buscar_bin, bins_en_ubicacion, bins_con_sku, bins_por_ubicar, bins_vacios, bins_baja_ocupacion, historial_bin, sugerir_ubicacion_bin y proponer_consolidacion; actúa con crear_bins, crear_tarea_putaway_bin, crear_tarea_mover_bin y crear_tarea_consolidacion. Un Bin puede tener mercadería de varios clientes (multi-cliente): la propiedad es por línea y nunca se mezclan líneas de clientes distintos.';
+      sys += ' RECEPCIONES DE PUNTA A PUNTA: puedes gestionar una recepción completa. Leer: recepciones (lista, filtra "abiertas") y detalle_recepcion (líneas, pendientes, por guardar, asignado, siguiente paso). Crear: crear_recepcion. Modificar mientras no se recibe: editar_recepcion (proveedor, referencia, notas, ubicación, agregar/quitar líneas, cambiar cantidades). Llegada al andén: marcar_llegada_recepcion. Cotejo: recibir_recepcion (por línea o por SKU, o todo=true para recibir todo lo pendiente; respeta lote/vencimiento si el SKU los exige). Cierre con faltante: cerrar_recepcion. Guardado: guardar_recepcion (mueve lo recibido a almacenaje en la ubicación sugerida o la que te indiquen; hasta guardarlo NO se puede reservar). Asignar el cotejo o el guardado a un operario: asignar_tarea (RECEIVE con el id OR-…; PUTAWAY con tareas_pendientes). Eliminar: eliminar_recepcion (revierte lo recibido si sigue íntegro; pide confirmación explícita al usuario antes). Antes de modificar, recibir, guardar o eliminar, consulta detalle_recepcion; después de cada paso dile al usuario el estado y el siguiente paso.';
       sys += mode === 'confirm'
         ? ' El modo es CONFIRMACIÓN: las acciones que la política no permite ejecutar directamente NO se ejecutan al invocar la herramienta; quedan PROPUESTAS para que el usuario confirme (el resultado de la herramienta te dirá si se ejecutó o quedó propuesta). Si el usuario pide avanzar VARIAS órdenes (ej. "despacha las 3 que están listas"), invoca la herramienta UNA VEZ POR CADA orden en este mismo turno, para dejarlas TODAS propuestas. Nunca digas que algo se ejecutó si la herramienta respondió que quedó propuesto. No inventes órdenes: usa las herramientas de consulta (listar_ordenes) para saber cuáles corresponden.'
         : ' El modo es DIRECTO: la acción se ejecuta al invocar la herramienta salvo que la política de autonomía la deje propuesta (la herramienta te lo dirá). Si el usuario pide varias órdenes, invoca la herramienta una vez por cada una y confírmale lo realizado.';
@@ -1192,44 +1199,226 @@ export class WmsFacade {
     }
     // ---- Acciones incorporadas en v111 ----
     // Helper local: resolver una recepción por referencia o id dentro del alcance.
-    if (name === 'recibir_recepcion' || name === 'cerrar_recepcion') {
+    // ---- BINS (contenedores; NO son ubicaciones) ------------------------------------
+    if (name === 'crear_bins' || name === 'crear_tarea_putaway_bin' || name === 'crear_tarea_mover_bin' || name === 'crear_tarea_consolidacion') {
+      if (!canWrite) return { error: 'No tienes permisos sobre Bins.' };
+      if (!(await this.binsHabilitado(operationId))) return { error: 'Los Bins no están activos en esta operación.' };
+      const quien = actor?.id || 'copiloto';
+      const asignarA = async (tipo: WorkTaskType, binId: string, ref: string, sellerId: string | null, unidades: number) => {
+        if (!args?.operario) return null;
+        if (!(ctx.canManage ?? this.copilotCanManage(actor?.role))) return 'no asignada: solo un supervisor o administrador asigna tareas';
+        const op = await this.copilotResolveOperator(operationId, args.operario);
+        if (!op) return `no asignada: no identifiqué al operario "${args.operario}"`;
+        await this.assignTask(operationId, { type: tipo, entityId: binId, entityRef: ref, sellerId, operator: op.id, unitsEstimate: unidades, by: quien });
+        return `asignada a ${op.name}`;
+      };
+      try {
+        if (name === 'crear_bins') {
+          const r = await this.createBins(operationId, { cantidad: Number(args?.cantidad || 1), tipo: args?.tipo ?? null, ubicacion: args?.ubicacion ?? null }, quien);
+          await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `crear ${r.creados} Bins`, actor: quien, orderRef: null, result: 'ok', recommendationId: null });
+          return { ok: true, creados: r.creados, desde: r.bins[0]?.numero, hasta: r.bins[r.bins.length - 1]?.numero };
+        }
+        if (name === 'crear_tarea_putaway_bin') {
+          let bin = await this.bins().get(operationId, String(args?.numero || ''));
+          if (bin.estado === BinEstado.EN_ARMADO) { await this.closeBin(operationId, bin.id, quien); bin = await this.bins().get(operationId, bin.id); }
+          if (bin.estado !== BinEstado.POR_UBICAR) return { error: `El Bin ${bin.numero} está ${BIN_ESTADO_ES[bin.estado]}: no necesita putaway.` };
+          const v = await this.bins().view(bin);
+          await this.openTask(operationId, { type: 'BIN_PUTAWAY', sellerId: v.clientes[0] || null, entityId: bin.id, entityRef: bin.numero, unitsEstimate: v.unidades, by: quien });
+          const asign = await asignarA('BIN_PUTAWAY', bin.id, bin.numero, v.clientes[0] || null, v.unidades);
+          const sug = await this.suggestBinLocation(operationId, bin.id).catch(() => []);
+          await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `tarea putaway ${bin.numero}`, actor: quien, orderRef: bin.numero, result: asign || 'en cola', recommendationId: null });
+          return { ok: true, bin: bin.numero, estado: 'POR UBICAR', tarea: asign || 'en la cola de putaway', ubicacionSugerida: sug[0]?.code ?? null };
+        }
+        if (name === 'crear_tarea_mover_bin') {
+          const r: any = await this.moveBin(operationId, String(args?.numero || ''), { destino: args?.destino ?? null, comoTarea: true }, quien);
+          const asign = await asignarA('BIN_MOVE', r.bin.id, r.bin.numero, r.bin.clientes[0] || null, r.bin.unidades);
+          await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `tarea mover ${r.bin.numero}`, actor: quien, orderRef: r.bin.numero, result: asign || 'en cola', recommendationId: null });
+          return { ok: true, bin: r.bin.numero, estado: 'EN MOVIMIENTO', destino: args?.destino || 'a elección del operario', tarea: asign || 'en la cola de traslados' };
+        }
+        const origenes = (Array.isArray(args?.origenes) ? args.origenes : String(args?.origenes || '').split(',')).map((x: any) => String(x).trim()).filter(Boolean);
+        const r: any = await this.consolidateBins(operationId, { origenes, destino: args?.destino || null }, quien);
+        let asign: string | null = null;
+        if (!r.ejecutada) asign = await asignarA('BIN_CONSOLIDATE', r.destino.id, r.destino.numero, r.destino.clientes[0] || null, r.destino.unidades);
+        await this.recordAgentAction({ operationId, sellerId: null, agent: 'copilot', decision: `consolidar ${origenes.join(',')} → ${r.destino.numero}`, actor: quien, orderRef: r.destino.numero, result: r.ejecutada ? 'ejecutada' : (asign || 'tarea en cola'), recommendationId: null });
+        return { ok: true, ejecutada: r.ejecutada, destino: r.destino.numero, origenes: r.origenes, ordenesReubicadas: r.ordenesReubicadas || 0, tarea: r.ejecutada ? null : (asign || 'en la cola de consolidaciones (los Bins están en ubicaciones distintas)') };
+      } catch (e: any) { return { error: (e && e.message) || 'no se pudo completar la acción sobre Bins' }; }
+    }
+    // ---- RECEPCIONES DE PUNTA A PUNTA ------------------------------------------
+    // crear → (marcar llegada) → editar si hace falta → recibir (cotejo) → cerrar si
+    // falta algo → guardar lo recibido → (o eliminar). Todas resuelven la recepción por
+    // id (OR-…) o por referencia del proveedor.
+    if (name === 'recibir_recepcion' || name === 'cerrar_recepcion' || name === 'editar_recepcion' || name === 'marcar_llegada_recepcion' || name === 'guardar_recepcion' || name === 'eliminar_recepcion') {
       if (!canWrite) return { error: 'No tienes permisos sobre recepciones.' };
       const clave = String(args?.recepcion ?? args?.referencia ?? '').trim();
-      if (!clave) return { error: 'Falta la recepción. Usa recepciones para ver las pendientes.' };
-      let encontrada: { sellerId: string; rec: any } | null = null;
-      for (const sid of await this.copilotScope(operationId, sellerId)) {
-        const rec = (await this.listReceipts(sid).catch(() => [] as any[])).find((r: any) => r.id === clave || r.reference === clave);
-        if (rec) { encontrada = { sellerId: sid, rec }; break; }
-      }
-      if (!encontrada) return { error: `No encontré la recepción "${clave}".` };
+      if (!clave) return { error: 'Falta la recepción. Usa recepciones para ver las abiertas.' };
+      const encontrada = await this.copilotFindReceipt(operationId, sellerId, clave);
+      if (!encontrada) return { error: `No encontré la recepción "${clave}". Usa recepciones para ver las que existen.` };
+      if ('ambigua' in encontrada) return { error: `Hay varias recepciones que calzan con "${clave}": ${encontrada.ambigua.join(', ')}. Dime cuál (usa el id OR-…).` };
+      const sid = encontrada.sellerId, rec: ReceiptOrder = encontrada.rec;
+      const ref = rec.reference ? `${rec.id} (${rec.reference})` : rec.id;
+      const quien = actor?.id || 'copiloto';
+      const audit = (decision: string, result: string) => this.recordAgentAction({ operationId, sellerId: sid, agent: 'copilot', decision, actor: quien, orderRef: rec.id, result, recommendationId: null });
+
       if (name === 'cerrar_recepcion') {
         // Si ya quedó completa al recibir, cerrarla otra vez no es un error:
         // es que no había nada que hacer. Decirlo es más útil que reventar.
-        if (String(encontrada.rec.status) === 'RECEIVED') {
-          return { ok: true, sinCambios: true, recepcion: encontrada.rec.reference || encontrada.rec.id, estado: encontrada.rec.status, mensaje: 'Esa recepción ya estaba cerrada (se completó al recibir).' };
+        if (String(rec.status) === 'RECEIVED') {
+          return { ok: true, sinCambios: true, recepcion: ref, estado: rec.status, mensaje: 'Esa recepción ya estaba cerrada (se completó al recibir).' };
         }
         try {
-          const r = await this.closeReceipt(encontrada.sellerId, encontrada.rec.id, actor?.id || 'copiloto');
-          await this.recordAgentAction({ operationId, sellerId: encontrada.sellerId, agent: 'copilot', decision: `cerrar recepción ${clave}`, actor: actor?.id || 'copiloto', orderRef: clave, result: `ok: ${r.status}`, recommendationId: null });
-          return { ok: true, recepcion: r.reference || r.id, estado: r.status };
+          const r = await this.closeReceipt(sid, rec.id, quien);
+          await audit(`cerrar recepción ${ref}`, `ok: ${r.status}`);
+          const falt = (r.lines || []).filter((l) => l.receivedQty < l.expectedQty).map((l) => `${l.sku}: faltaron ${l.expectedQty - l.receivedQty}`);
+          return { ok: true, recepcion: ref, estado: r.status, faltantes: falt, siguientePaso: 'Guardar lo recibido con guardar_recepcion.' };
         } catch (e: any) { return { error: (e && e.message) || 'no se pudo cerrar la recepción' }; }
       }
+
+      if (name === 'marcar_llegada_recepcion') {
+        const deshacer = args?.deshacer === true || args?.deshacer === 'true';
+        try {
+          const r = deshacer ? await this.unmarkReceiptArrived(sid, rec.id, quien) : await this.markReceiptArrived(sid, rec.id, quien, args?.nota ?? null);
+          await this.anotarCambioSeller(sid, `Recepción ${ref} ${deshacer ? 'vuelve a Creada (se deshizo la llegada)' : 'marcada EN BODEGA (llegó la carga)'}`, quien);
+          await audit(`${deshacer ? 'deshacer llegada' : 'marcar llegada'} ${ref}`, `ok: ${r.status}`);
+          return { ok: true, recepcion: ref, estado: r.status, siguientePaso: deshacer ? null : 'Recibir (cotejar) con recibir_recepcion.' };
+        } catch (e: any) { return { error: (e && e.message) || 'no se pudo marcar la llegada' }; }
+      }
+
+      if (name === 'eliminar_recepcion') {
+        try {
+          await this.deleteReceipt(sid, rec.id, quien);
+          await audit(`eliminar recepción ${ref}`, 'ok');
+          const recibido = (rec.lines || []).reduce((t, l) => t + (l.receivedQty || 0), 0);
+          return { ok: true, recepcion: ref, eliminada: true, stockRevertido: recibido };
+        } catch (e: any) { return { error: (e && e.message) || 'no se pudo eliminar la recepción' }; }
+      }
+
+      if (name === 'editar_recepcion') {
+        if (rec.status !== ReceiptOrderStatus.PENDING && rec.status !== ReceiptOrderStatus.ARRIVED) {
+          return { error: `La recepción ${ref} ya está ${WmsFacade.ESTADO_RECEP_ES[rec.status] || rec.status}: solo se edita una Creada o En bodega (aún sin recibir).` };
+        }
+        let lineas: Array<{ sku: string; qty: number; lot?: string | null; expiry?: string | null }> = (rec.lines || []).map((l) => ({ sku: l.sku, qty: l.expectedQty, lot: l.lot, expiry: l.expiry }));
+        const reemplazo = this.copilotParseLines(args?.lineas, true);
+        if (reemplazo.length) lineas = reemplazo;
+        const quitar = (Array.isArray(args?.quitarSkus) ? args.quitarSkus : []).map((x: any) => String(x).trim().toUpperCase());
+        if (quitar.length) lineas = lineas.filter((l) => !quitar.includes(l.sku.toUpperCase()));
+        const cambios = this.copilotParseLines(args?.cambiarCantidades, false);
+        const noEsta: string[] = [];
+        for (const c of cambios) { const l = lineas.find((x) => x.sku.toUpperCase() === c.sku.toUpperCase()); if (l) l.qty = c.qty; else noEsta.push(c.sku); }
+        if (noEsta.length) return { error: `Estos SKU no están en la recepción: ${noEsta.join(', ')}. Para sumarlos usa agregarLineas.` };
+        lineas.push(...this.copilotParseLines(args?.agregarLineas, true));
+        if (!lineas.length) return { error: 'La recepción quedaría sin líneas. Si ya no corresponde, elimínala.' };
+        let locationId = rec.locationId;
+        if (args?.ubicacion) {
+          const l = await this.locations.findByCode(operationId, String(args.ubicacion)).catch(() => null);
+          if (!l) return { error: `No existe la ubicación ${args.ubicacion}.` };
+          locationId = l.id;
+        }
+        try {
+          const r = await this.updateReceipt(sid, rec.id, {
+            supplier: args?.proveedor !== undefined ? args.proveedor : rec.supplier,
+            reference: args?.referencia !== undefined ? args.referencia : rec.reference,
+            notes: args?.notas !== undefined ? args.notas : rec.notes,
+            locationId, lines: lineas,
+          }, quien);
+          await audit(`editar recepción ${ref}`, `ok: ${(r.lines || []).length} líneas`);
+          return { ok: true, recepcion: r.reference ? `${r.id} (${r.reference})` : r.id, estado: r.status, proveedor: r.supplier, lineas: (r.lines || []).map((l) => ({ linea: l.lineNo, sku: l.sku, esperado: l.expectedQty, lote: l.lot, vencimiento: l.expiry })) };
+        } catch (e: any) { return { error: (e && e.message) || 'no se pudo editar la recepción' }; }
+      }
+
+      if (name === 'guardar_recepcion') {
+        if (!(rec.lines || []).some((l) => (l.receivedQty || 0) > 0)) return { error: `La recepción ${ref} todavía no tiene nada recibido: primero hay que recibirla (recibir_recepcion).` };
+        const skuArg = String(args?.sku ?? '').trim().toUpperCase();
+        const lineas = (rec.lines || []).filter((l) => (l.receivedQty || 0) > 0 && (!skuArg || l.sku.toUpperCase() === skuArg));
+        if (!lineas.length) return { error: `El SKU ${args?.sku} no tiene unidades recibidas en ${ref}.` };
+        const origen = await this.locations.findById(rec.locationId).catch(() => null);
+        if (!origen) return { error: 'No encontré la ubicación de recepción de esa recepción.' };
+        let destinoFijo: Location | null = null;
+        if (args?.destino) {
+          destinoFijo = await this.locations.findByCode(operationId, String(args.destino)).catch(() => null);
+          if (!destinoFijo) return { error: `No existe la ubicación ${args.destino}.` };
+          if (destinoFijo.id === origen.id) return { error: 'El destino no puede ser la misma ubicación de recepción.' };
+        }
+        const pedida = Number(args?.cantidad);
+        if (args?.cantidad != null && !(pedida > 0)) return { error: 'La cantidad a guardar debe ser mayor que cero.' };
+        const hechos: Array<{ sku: string; cantidad: number; destino: string; sugerida: boolean }> = [];
+        const saltados: Array<{ sku: string; motivo: string }> = [];
+        const vistos = new Set<string>();
+        for (const l of lineas) {
+          if (vistos.has(l.sku)) continue; vistos.add(l.sku);
+          const recibidoSku = lineas.filter((x) => x.sku === l.sku).reduce((t, x) => t + (x.receivedQty || 0), 0);
+          const enOrigen = await this.disponibleEnOrigen(sid, l.sku, origen.id);
+          const hay = enOrigen.reduce((t, b) => t + b.qty, 0);
+          // Lo de ESTA recepción: nunca más de lo recibido en ella ni de lo que hay físicamente.
+          const tope = Math.min(recibidoSku, hay);
+          if (tope <= 0) { saltados.push({ sku: l.sku, motivo: `no queda nada por guardar en ${origen.code} (ya se guardó)` }); continue; }
+          const qty = pedida > 0 ? Math.min(pedida, tope) : tope;
+          if (pedida > tope) saltados.push({ sku: l.sku, motivo: `pediste ${pedida} y solo quedan ${tope} por guardar; guardé ${tope}` });
+          let destino = destinoFijo, sugerida = false;
+          if (!destino) {
+            const sug = (await this.suggestPutaway(sid, { sku: l.sku, qty }).catch(() => [] as PutawaySuggestion[])).find((x) => x.locationId !== origen.id);
+            if (!sug) { saltados.push({ sku: l.sku, motivo: 'el sistema no encontró una ubicación con capacidad; indícame el destino' }); continue; }
+            destino = await this.locations.findById(sug.locationId).catch(() => null); sugerida = true;
+            if (!destino) { saltados.push({ sku: l.sku, motivo: 'la ubicación sugerida ya no existe' }); continue; }
+          }
+          try {
+            let falta = qty;
+            for (const b of enOrigen) {
+              if (falta <= 0) break;
+              const q = Math.min(falta, b.qty);
+              await this.putaway(sid, { sku: l.sku, qty: q, fromLocationId: origen.id, toLocationId: destino.id, lot: b.lot, reference: `GUARDADO ${rec.id}`, actor: quien });
+              falta -= q;
+            }
+            await this.markPutawayRecommendationTaken(operationId, sid, l.sku, destino.id, destino.code).catch(() => undefined);
+            hechos.push({ sku: l.sku, cantidad: qty, destino: destino.code, sugerida });
+          } catch (e: any) { saltados.push({ sku: l.sku, motivo: (e && e.message) || 'no se pudo guardar' }); }
+        }
+        if (hechos.length) {
+          await audit(`guardar recepción ${ref}`, `ok: ${hechos.map((h) => `${h.cantidad} ${h.sku}→${h.destino}`).join(', ')}`);
+          await this.anotarCambioSeller(sid, `Guardado de la recepción ${ref}: ${hechos.map((h) => `${h.cantidad} ${h.sku} → ${h.destino}`).join(', ')}`, quien);
+        }
+        if (!hechos.length) return { error: 'No se guardó nada: ' + saltados.map((x) => `${x.sku}: ${x.motivo}`).join('; ') };
+        return { ok: true, recepcion: ref, guardado: hechos, noGuardado: saltados.length ? saltados : undefined, nota: 'El stock guardado ya está disponible para reservar y vender.' };
+      }
+
+      // ---- recibir_recepcion ----
+      if (rec.status === ReceiptOrderStatus.RECEIVED || rec.status === ReceiptOrderStatus.CANCELLED) {
+        return { error: `La recepción ${ref} ya está ${WmsFacade.ESTADO_RECEP_ES[rec.status] || rec.status}: no admite más ingresos.` };
+      }
+      const todo = args?.todo === true || args?.todo === 'true';
       const conteos = Array.isArray(args?.conteos) ? args.conteos : [];
-      if (!conteos.length) return { error: 'Faltan los conteos por línea. Ej: [{ "linea": 1, "cantidad": 80 }].' };
-      const counts = conteos.map((c: any) => ({
-        lineNo: Math.trunc(Number(c?.linea ?? c?.lineNo)),
-        qty: Number(c?.cantidad ?? c?.qty),
-        lot: c?.lote ?? c?.lot ?? null,
-        expiry: c?.vencimiento ?? c?.expiry ?? null,
-      }));
-      const mala = counts.find((c: any) => !Number.isFinite(c.lineNo) || !(c.qty > 0));
-      if (mala) return { error: 'Cada conteo necesita un n° de línea y una cantidad mayor que cero.' };
+      let counts: Array<{ lineNo: number; qty: number; lot: string | null; expiry: string | null }> = [];
+      if (todo) {
+        counts = (rec.lines || []).filter((l) => l.expectedQty - (l.receivedQty || 0) > 0)
+          .map((l) => ({ lineNo: l.lineNo, qty: l.expectedQty - (l.receivedQty || 0), lot: l.lot ?? null, expiry: l.expiry ?? null }));
+        if (!counts.length) return { ok: true, sinCambios: true, recepcion: ref, mensaje: 'No queda nada pendiente por recibir en esa recepción.' };
+      } else {
+        if (!conteos.length) return { error: 'Faltan los conteos. Ej: [{ "linea": 1, "cantidad": 80 }] o [{ "sku": "CAM", "cantidad": 80 }], o todo=true para recibir todo lo pendiente.' };
+        for (const c of conteos) {
+          let lineNo = Math.trunc(Number(c?.linea ?? c?.lineNo));
+          if (!Number.isFinite(lineNo) && c?.sku) {
+            const cands = (rec.lines || []).filter((l) => l.sku.toUpperCase() === String(c.sku).trim().toUpperCase());
+            if (!cands.length) return { error: `El SKU ${c.sku} no está en la recepción ${ref}.` };
+            // Si el SKU aparece en varias líneas (ej. lotes distintos), la primera con pendiente.
+            lineNo = (cands.find((l) => l.expectedQty - (l.receivedQty || 0) > 0) || cands[0]).lineNo;
+          }
+          const linea = (rec.lines || []).find((l) => l.lineNo === lineNo);
+          const qty = Number(c?.cantidad ?? c?.qty);
+          if (!linea) return { error: `La recepción ${ref} no tiene la línea ${c?.linea ?? c?.sku ?? '?'}. Líneas: ${(rec.lines || []).map((l) => `${l.lineNo}=${l.sku}`).join(', ')}.` };
+          if (!(qty > 0)) return { error: 'Cada conteo necesita una cantidad mayor que cero.' };
+          counts.push({ lineNo, qty, lot: c?.lote ?? c?.lot ?? linea.lot ?? null, expiry: c?.vencimiento ?? c?.expiry ?? linea.expiry ?? null });
+        }
+      }
       try {
-        const r: any = await this.receiveReceipt(encontrada.sellerId, encontrada.rec.id, counts as any, actor?.id || 'copiloto');
+        const r: any = await this.receiveReceipt(sid, rec.id, counts as any, quien);
         const recibidas = (r.lines || []).reduce((t: number, l: any) => t + (l.receivedQty || 0), 0);
         const esperadas = (r.lines || []).reduce((t: number, l: any) => t + (l.expectedQty || 0), 0);
-        await this.recordAgentAction({ operationId, sellerId: encontrada.sellerId, agent: 'copilot', decision: `recibir recepción ${clave}`, actor: actor?.id || 'copiloto', orderRef: clave, result: `ok: ${recibidas}/${esperadas}`, recommendationId: null });
-        return { ok: true, recepcion: r.reference || r.id, estado: r.status, unidadesRecibidas: recibidas, unidadesEsperadas: esperadas, pendientes: Math.max(0, esperadas - recibidas) };
+        await audit(`recibir recepción ${ref}`, `ok: ${recibidas}/${esperadas}`);
+        await this.anotarCambioSeller(sid, `Recepción ${ref}: se recibieron ${counts.reduce((t, c) => t + c.qty, 0)} un (${recibidas}/${esperadas})`, quien);
+        return {
+          ok: true, recepcion: ref, estado: r.status, estadoTexto: WmsFacade.ESTADO_RECEP_ES[r.status] || r.status,
+          unidadesRecibidas: recibidas, unidadesEsperadas: esperadas, pendientes: Math.max(0, esperadas - recibidas),
+          siguientePaso: r.status === 'RECEIVED' ? 'Guardar lo recibido con guardar_recepcion.' : 'Recibir lo que falta, o cerrarla con faltante (cerrar_recepcion) y guardar lo recibido.',
+        };
       } catch (e: any) { return { error: (e && e.message) || 'no se pudo recibir' }; }
     }
     if (name === 'cancelar_orden' || name === 'reactivar_orden') {
@@ -1485,8 +1674,16 @@ export class WmsFacade {
       case 'reservar_ordenes': return (a.ordenes || []).length ? `reservar ${(a.ordenes || []).length} orden(es)` : 'reservar todas las órdenes que se pueda';
       case 'cancelar_orden': return `cancelar la orden ${a.orden || '?'}`;
       case 'reactivar_orden': return `reactivar la orden ${a.orden || '?'}`;
-      case 'recibir_recepcion': return `recibir ${(a.conteos || []).reduce((t: number, c: any) => t + (Number(c?.cantidad) || 0), 0)} un en la recepción ${a.recepcion || '?'}`;
+      case 'recibir_recepcion': return a.todo ? `recibir TODO lo pendiente de la recepción ${a.recepcion || '?'}` : `recibir ${(a.conteos || []).reduce((t: number, c: any) => t + (Number(c?.cantidad) || 0), 0)} un en la recepción ${a.recepcion || '?'} (${(a.conteos || []).map((c: any) => `${c.sku || 'línea ' + c.linea}: ${c.cantidad}`).join(', ')})`;
       case 'cerrar_recepcion': return `cerrar la recepción ${a.recepcion || '?'}`;
+      case 'editar_recepcion': return `editar la recepción ${a.recepcion || '?'}${a.proveedor ? ' · proveedor ' + a.proveedor : ''}${a.referencia ? ' · ref ' + a.referencia : ''}${(a.cambiarCantidades || []).length ? ' · cantidades ' + (a.cambiarCantidades || []).map((x: any) => `${x.sku}=${x.qty}`).join(', ') : ''}${(a.agregarLineas || []).length ? ' · agrega ' + (a.agregarLineas || []).map((x: any) => `${x.qty} ${x.sku}`).join(', ') : ''}${(a.quitarSkus || []).length ? ' · quita ' + (a.quitarSkus || []).join(', ') : ''}${(a.lineas || []).length ? ' · ' + (a.lineas || []).length + ' línea(s) nuevas' : ''}`;
+      case 'marcar_llegada_recepcion': return `${a.deshacer ? 'deshacer la llegada de' : 'marcar en bodega'} la recepción ${a.recepcion || '?'}${a.nota ? ' · ' + a.nota : ''}`;
+      case 'guardar_recepcion': return `guardar ${a.cantidad ? a.cantidad + ' un de ' : ''}${a.sku || 'todo lo recibido'} de la recepción ${a.recepcion || '?'} en ${a.destino || 'la ubicación sugerida'}`;
+      case 'eliminar_recepcion': return `ELIMINAR la recepción ${a.recepcion || '?'} (revierte lo recibido si sigue íntegro)`;
+      case 'crear_bins': return `crear ${a.cantidad || 1} Bin(s)${a.tipo ? ' tipo ' + a.tipo : ''}${a.ubicacion ? ' en ' + a.ubicacion : ''}`;
+      case 'crear_tarea_putaway_bin': return `putaway del Bin ${a.numero || '?'}${a.operario ? ' → ' + a.operario : ''}`;
+      case 'crear_tarea_mover_bin': return `trasladar el Bin ${a.numero || '?'} a ${a.destino || 'ubicación a elegir'}${a.operario ? ' → ' + a.operario : ''}`;
+      case 'crear_tarea_consolidacion': return `consolidar ${(Array.isArray(a.origenes) ? a.origenes : [a.origenes]).join(', ')} en ${a.destino || 'un Bin nuevo'}${a.operario ? ' → ' + a.operario : ''}`;
       case 'crear_devolucion': return `abrir devolución de la orden ${a.orden || '?'}`;
       case 'procesar_devolucion': return `procesar la devolución ${a.devolucion || '?'} (${(a.lineas || []).length} línea(s))`;
       case 'cancelar_devolucion': return `cancelar la devolución ${a.devolucion || '?'}`;
@@ -1642,10 +1839,10 @@ export class WmsFacade {
             // G2+G6: la línea de tiempo se lee del event store (indexado por entidad),
             // no del JSON de la orden. Fallback al JSON si el store no está disponible.
             const evs = await this.timelineOf(o.id, o.events);
-            const linea = evs.map((e, i) => {
+            const linea = await Promise.all(evs.map(async (e, i) => {
               const prev = i > 0 ? Date.parse(e.at) - Date.parse(evs[i - 1].at) : 0;
-              return { estado: e.type, fecha: e.at, hrsDesdeAnterior: i > 0 ? Math.round(prev / 3600000 * 10) / 10 : 0, detalle: e.detail || null, actor: e.actor };
-            });
+              return { estado: e.type, fecha: e.at, hrsDesdeAnterior: i > 0 ? Math.round(prev / 3600000 * 10) / 10 : 0, detalle: e.detail || null, hechoPor: await this.describirActor(e.actor) };
+            }));
             const totalHrs = evs.length > 1 ? Math.round((Date.parse(evs[evs.length - 1].at) - Date.parse(evs[0].at)) / 3600000 * 10) / 10 : 0;
             return { orden: o.externalOrderId || o.id, sellerId: sid, estadoActual: o.status, courier: o.carrier, lineaTiempo: linea, horasTotales: totalHrs };
           }
@@ -1658,7 +1855,9 @@ export class WmsFacade {
           for (const sid of targets) {
             for (const o of await this.orders.listOrders(sid)) {
               if (a.estado && o.status !== String(a.estado).toUpperCase()) continue;
-              rows.push({ id: o.externalOrderId || o.id, sellerId: sid, estado: o.status, courier: o.carrier, creada: o.createdAt, lineas: (o.lines || []).length });
+              const ult = (o.events || [])[(o.events || []).length - 1];
+              rows.push({ id: o.externalOrderId || o.id, sellerId: sid, estado: o.status, courier: o.carrier, creada: o.createdAt, lineas: (o.lines || []).length,
+                ultimoCambio: ult ? { tipo: ult.type, fecha: ult.at, hechoPor: await this.describirActor(ult.actor), detalle: ult.detail ?? null } : null });
             }
           }
           rows.sort((x, y) => (x.creada < y.creada ? 1 : -1));
@@ -1677,7 +1876,9 @@ export class WmsFacade {
             }
           }
           movs.sort((x, y) => (x.fecha < y.fecha ? 1 : -1));
-          return { sku: a.sku, total: movs.length, movimientos: movs.slice(0, lim) };
+          const ver = movs.slice(0, lim);
+          for (const m of ver) { m.hechoPor = await this.describirActor(m.actor); delete m.actor; }
+          return { sku: a.sku, total: movs.length, movimientos: ver };
         }
         case 'facturacion_cliente': {
           const sid = pickSeller(a.sellerId) || a.sellerId;
@@ -1729,10 +1930,26 @@ export class WmsFacade {
         case 'recepciones': {
           const targets = pickSeller(a.sellerId) ? [pickSeller(a.sellerId)!] : scopeSellers;
           const lim = Math.min(Number(a.limite) || 30, 80);
+          const filtro = String(a.estado || '').trim().toUpperCase();
+          const busca = String(a.buscar || '').trim().toUpperCase();
+          const ABIERTAS = ['PENDING', 'ARRIVED', 'PARTIAL'];
+          const nombres = new Map((await this.listSellers(operationId).catch(() => [] as any[])).map((x: any) => [x.id, x.name] as [string, string]));
           const out: any[] = [];
-          for (const sid of targets) for (const r of await this.listReceipts(sid)) out.push({ sellerId: sid, id: r.id, estado: r.status, creada: r.createdAt, lineas: (r.lines || []).length });
+          for (const sid of targets) for (const r of await this.listReceipts(sid)) {
+            const st = String(r.status);
+            if (filtro && (filtro === 'ABIERTAS' ? !ABIERTAS.includes(st) : st !== filtro)) continue;
+            if (busca && ![r.id, r.reference || '', r.supplier || ''].some((x) => String(x).toUpperCase().includes(busca))) continue;
+            const esp = (r.lines || []).reduce((t, l) => t + l.expectedQty, 0), rec = (r.lines || []).reduce((t, l) => t + (l.receivedQty || 0), 0);
+            out.push({ id: r.id, referencia: r.reference, proveedor: r.supplier, cliente: nombres.get(sid) || sid, sellerId: sid, estado: st, estadoTexto: WmsFacade.ESTADO_RECEP_ES[st] || st, creada: r.createdAt, llegada: r.arrivedAt ?? null, lineas: (r.lines || []).length, unidadesEsperadas: esp, unidadesRecibidas: rec });
+          }
           out.sort((x, y) => (x.creada < y.creada ? 1 : -1));
-          return { recepciones: out.slice(0, lim) };
+          return { total: out.length, recepciones: out.slice(0, lim) };
+        }
+        case 'detalle_recepcion': {
+          const f = await this.copilotFindReceipt(operationId, sellerScope, String(a.recepcion || a.referencia || ''));
+          if (!f) return { error: `No encontré la recepción "${a.recepcion ?? ''}". Usa recepciones para listarlas.` };
+          if ('ambigua' in f) return { error: `Hay varias que calzan: ${f.ambigua.join(', ')}. Usa el id OR-….` };
+          return this.copilotReceiptDetail(operationId, f.sellerId, f.rec);
         }
         case 'tiempos_preparacion': {
           const targets = pickSeller(a.sellerId) ? [pickSeller(a.sellerId)!] : scopeSellers;
@@ -1880,6 +2097,25 @@ export class WmsFacade {
             operariosTomanSolos: self,
           };
         }
+        // ---- Bins (contenedores; NO son ubicaciones) ----
+        case 'buscar_bin': case 'historial_bin': case 'bins_en_ubicacion': case 'bins_con_sku': case 'bins_por_ubicar': case 'bins_vacios': case 'bins_baja_ocupacion': case 'sugerir_ubicacion_bin': case 'proponer_consolidacion': {
+          if (!(await this.binsHabilitado(operationId))) return { error: 'Los Bins no están activos en esta operación (no los incluye el plan o están desactivados en Bins → Ajustes).' };
+          const scope = sellerScope || null;
+          const corto = (v: any) => ({ numero: v.numero, estado: v.estadoTexto, ubicacion: v.ubicacion, tipo: v.tipo, unidades: v.unidades, reservadas: v.reservadas, multiCliente: v.multiCliente, clientes: v.clientesNombre || v.clientes, contenido: (v.lineas || []).slice(0, 12).map((l: any) => `${l.cantidad} ${l.sku}${l.lot ? ' lote ' + l.lot : ''}`) });
+          if (name === 'buscar_bin' || name === 'historial_bin') {
+            const d: any = await this.getBinDetail(operationId, String(a.numero || a.bin || ''), scope).catch((e: any) => ({ error: e?.message || 'Bin no encontrado' }));
+            if (d.error) return d;
+            if (name === 'historial_bin') return { numero: d.numero, estado: d.estadoTexto, historial: d.historial.slice(-60).map((h: any) => ({ fecha: h.at, evento: h.tipo, detalle: h.detalle, hechoPor: h.hechoPor, sku: h.sku, cantidad: h.qty, ubicacion: h.ubicacion, cliente: h.cliente })) };
+            return { ...corto(d), lineas: d.lineasDesc.map((l: any) => ({ cliente: l.cliente, sku: l.sku, descripcion: l.descripcion, lote: l.lot, vencimiento: l.vencimiento, cantidad: l.cantidad, reservada: l.reservada, disponible: l.disponible })), pendiente: d.pendiente, tarea: d.tarea, creado: d.createdAt, recepcionOrigen: d.receiptId, consolidadoEn: d.consolidadoEn, ultimosEventos: d.historial.slice(-8).map((h: any) => `${h.at.slice(0, 16)} ${h.tipo}${h.detalle ? ' · ' + h.detalle : ''} (${h.hechoPor})`) };
+          }
+          if (name === 'bins_en_ubicacion') { const r: any = await this.listBins(operationId, { ubicacion: String(a.ubicacion || '') }, scope).catch((e: any) => ({ error: e?.message })); return r.error ? r : { ubicacion: a.ubicacion, total: r.total, bins: r.bins.map(corto) }; }
+          if (name === 'bins_con_sku') { const r: any = await this.listBins(operationId, { sku: String(a.sku || ''), sellerId: pickSeller(a.sellerId) }, scope); return { sku: a.sku, total: r.total, bins: r.bins.map((v: any) => ({ ...corto(v), cantidadDelSku: (v.lineas || []).filter((l: any) => l.sku.toUpperCase() === String(a.sku).toUpperCase()).reduce((t: number, l: any) => t + l.cantidad, 0) })) }; }
+          if (name === 'bins_por_ubicar') { const at = await this.bins().atascados(operationId); const r: any = await this.listBins(operationId, { estado: 'POR_UBICAR' }, scope); return { total: r.total, bins: r.bins.map(corto), atrasados: at.porUbicar }; }
+          if (name === 'bins_vacios') { const r: any = await this.listBins(operationId, { estado: 'VACIO' }, scope); return { total: r.total, bins: r.bins.map((v: any) => ({ numero: v.numero, ubicacion: v.ubicacion, tipo: v.tipo })) }; }
+          if (name === 'bins_baja_ocupacion') { const l = await this.bins().bajaOcupacion(operationId, a.umbral != null ? Number(a.umbral) : undefined); return { total: l.length, bins: l.filter((v) => !scope || v.clientes.includes(scope)).map((v) => ({ ...corto(v), mismaUbicacionCon: v.mismaUbicacionCon })) }; }
+          if (name === 'sugerir_ubicacion_bin') return { numero: a.numero, sugerencias: await this.suggestBinLocation(operationId, String(a.numero || '')) };
+          return { propuestas: await this.bins().proponerConsolidacion(operationId, a.umbral != null ? Number(a.umbral) : undefined) };
+        }
         case 'picklist_orden': {
           const r = await this.copilotResolveOrder(operationId, pickSeller(a.sellerId), String(a.orden || ''));
           if (!r) return { error: `No encontré la orden "${a.orden ?? ''}".` };
@@ -1911,6 +2147,7 @@ export class WmsFacade {
             lineas: (o.lines || []).map((l: any) => ({ sku: l.sku, cantidad: l.qty, lote: l.lot ?? null })),
             unidades: (o.lines || []).reduce((t: number, l: any) => t + (l.qty || 0), 0),
             empaque: o.packing ? { bultos: o.packing.bultos ?? null, empacadaEn: o.packing.packedAt ?? null, verificacion: o.packing.verification ?? null } : null,
+            historial: await Promise.all((o.events || []).slice(-12).map(async (e: any) => ({ tipo: e.type, fecha: e.at, hechoPor: await this.describirActor(e.actor), detalle: e.detail ?? null }))),
           };
         }
         case 'tareas_operario': {
@@ -2426,12 +2663,34 @@ export class WmsFacade {
 
   // ---- Contexto en capas para el LLM y el agente (Fase 1 agente autónomo) ----------------
 
+  private static ROL_ES: Record<string, string> = { PLATFORM_ADMIN: 'administrador de plataforma Ninja', ADMIN: 'administrador', SUPERVISOR: 'supervisor', OPERATOR: 'operario', CLIENT: 'usuario del cliente' };
+  private actorCache = new Map<string, { at: number; txt: string }>();
+  /**
+   * Quién hizo algo, en palabras: «Andrés Rojas (administrador de plataforma Ninja)»,
+   * «el sistema (automático)», «agente IA»… El copiloto NUNCA debe deducir el autor:
+   * se lo damos resuelto. Los ids se traducen a nombre + rol; lo que no se puede
+   * resolver se dice tal cual, sin inventar.
+   */
+  async describirActor(actor?: string | null): Promise<string> {
+    const a = String(actor ?? '').trim();
+    if (!a) return 'autor no registrado';
+    const k = a.toLowerCase();
+    if (k === 'system' || k === 'sistema') return 'el sistema (automático)';
+    if (k === 'agente' || k === 'agent' || k === 'agente-ia') return 'el agente IA (automático)';
+    if (k === 'copiloto' || k === 'copilot') return 'el copiloto IA';
+    if (k === 'api' || k.startsWith('api:') || k.startsWith('key:')) return `una integración por API (${a})`;
+    const now = Date.now(); const c = this.actorCache.get(a);
+    if (c && now - c.at < 60000) return c.txt;
+    let u = await this.usersService.getUser(a).catch(() => null);
+    if (!u && a.includes('@')) u = (await this.usersService.listUsers().catch(() => [] as User[])).find((x) => String(x.email).toLowerCase() === k) || null;
+    const txt = u ? `${u.name || u.email} (${WmsFacade.ROL_ES[String(u.role)] || String(u.role).toLowerCase()})` : `${a} (usuario no encontrado)`;
+    this.actorCache.set(a, { at: now, txt });
+    return txt;
+  }
   /** Anota un cambio manual para el copiloto (best-effort, nunca rompe la operación). */
   private async anotarCambio(operationId: string | null | undefined, texto: string, actor?: string | null): Promise<void> {
     try {
-      let quien: string | null = actor ?? null;
-      if (quien && quien !== 'system' && quien !== 'sistema') { const u = await this.usersService.getUser(quien).catch(() => null); if (u) quien = u.name || u.email || quien; }
-      this.registrarCambio(operationId, texto, quien === 'system' ? 'sistema' : quien);
+      this.registrarCambio(operationId, texto, await this.describirActor(actor));
     } catch { /* best-effort */ }
   }
   private async anotarCambioSeller(sellerId: string, texto: string, actor?: string | null): Promise<void> {
@@ -2567,7 +2826,7 @@ export class WmsFacade {
     const cfg = await this.getDeadlineConfig(operationId).catch(() => ({} as DeadlineConfig));
     const off = typeof (cfg as any).offsetHoras === 'number' ? (cfg as any).offsetHoras : -3;
     const hh = (iso: string) => new Date(Date.parse(iso) + off * 3600000).toISOString().slice(11, 16);
-    return l.slice(0, 20).map((c) => `- ${hh(c.at)} ${c.texto}${c.actor ? ` (por ${c.actor})` : ''}`).join('\n');
+    return l.slice(0, 20).map((c) => `- ${hh(c.at)} ${c.texto} — HECHO POR: ${c.actor || 'autor no registrado'}`).join('\n');
   }
 
   /**
@@ -2635,7 +2894,7 @@ export class WmsFacade {
     // Tareas sin asignar por tipo (con refs) y carga de operarios.
     try {
       const parts: string[] = [];
-      for (const t of ['PICK', 'PUTAWAY', 'RESTOCK', 'RECEIVE', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
+      for (const t of ['PICK', 'PUTAWAY', 'RESTOCK', 'RECEIVE', 'COUNT', 'RESLOT', 'BIN_PUTAWAY', 'BIN_MOVE', 'BIN_CONSOLIDATE'] as WorkTaskType[]) {
         const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: 200 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
         const mine = sellerId ? pool.filter((x) => x.sellerId === sellerId) : pool;
         counters[`sinAsignar_${t}`] = mine.length;
@@ -2727,6 +2986,7 @@ export class WmsFacade {
     await push('perfil', 1, () => this.agentProfileContext(operationId));
     await push('estado', 1, () => this.agentStateContext(operationId, sellerId));
     await push('memoria', 1, () => this.agentMemoryContext(operationId));
+    await push('bins', 2, () => this.binsContextText(operationId));
     await push('detalle', 3, () => this.copilotDetailContext(operationId, sellerId, { skus: 80, locs: 60 }, missing));
     const CAP = 48000;
     let total = sections.reduce((a, x) => a + x.text.length + 2, 0);
@@ -3438,11 +3698,12 @@ export class WmsFacade {
       barcode: string;
       packCount: number;
       locationId?: string; // por id...
-      locationCode?: string; // ...o por código de bin (lo que pistolea la PWA)
+      locationCode?: string; // ...o por código de ubicación (lo que pistolea la PWA)
       lot?: string | null;
       expiry?: string | null;
       reference?: string | null;
       actor?: string;
+      bin?: string | null; // recibir dentro de un Bin (número o id)
     },
   ): Promise<{ scan: ScanResult; movement: StockMovement }> {
     const scan = await this.scanToBaseUnits(sellerId, input.barcode, input.packCount);
@@ -3451,6 +3712,8 @@ export class WmsFacade {
     validarLoteVencimientoRecepcion(skuDef ?? { sku: scan.sku }, input.lot, input.expiry, 'La recepción');
     const opId = await this.operationOfSeller(sellerId);
     const locationId = input.locationId ?? (await this.mustLocationByCode(opId, input.locationCode ?? '')).id;
+    let bin: Bin | null = null;
+    if (input.bin) { await this.assertBins(opId); bin = await this.bins().prepareReceive(opId, input.bin, locationId, null, input.actor || 'system'); }
     const movement = await this.inventory.receive(sellerId, {
       sku: scan.sku,
       qty: scan.baseQty,
@@ -3459,7 +3722,9 @@ export class WmsFacade {
       expiry: limpioLote(input.expiry),
       reference: input.reference ?? `SCAN ${scan.packCount}x${scan.code} (${input.barcode})`,
       actor: input.actor,
+      binId: bin ? bin.id : null,
     });
+    if (bin) await this.bins().noteReceived(bin, `${scan.baseQty} ${scan.sku} (recepción suelta)`, input.actor || 'system');
     return { scan, movement };
   }
 
@@ -3518,7 +3783,7 @@ export class WmsFacade {
 
   /** Stock DISPONIBLE de un SKU en una ubicación, por lote (sin lote primero). */
   private async disponibleEnOrigen(sellerId: string, sku: string, locationId: string): Promise<Array<{ lot: string | null; qty: number }>> {
-    const bal = await this.inventory.getStock({ sellerId, sku, locationId });
+    const bal = await this.inventory.getStock({ sellerId, sku, locationId, binId: null });
     return bal
       .filter((b) => b.sku === sku && b.locationId === locationId && b.state === StockState.AVAILABLE && b.qty > 0)
       .map((b) => ({ lot: b.lot ?? null, qty: b.qty }))
@@ -4669,7 +4934,7 @@ export class WmsFacade {
     // bucles de asignación y consultar la base por tarea sería absurdo.
     const coefDe = new Map<string, TaskTimeCoefficients>();
     const factorOf = new Map<string, number>();
-    const ETAPAS = ['PICK', 'PUTAWAY', 'PACK', 'SHIP', 'RECEIVE', 'COUNT', 'RESLOT', 'RESTOCK'];
+    const ETAPAS = ['PICK', 'PUTAWAY', 'PACK', 'SHIP', 'RECEIVE', 'COUNT', 'RESLOT', 'RESTOCK', 'BIN_PUTAWAY', 'BIN_MOVE', 'BIN_CONSOLIDATE'];
     if (this.taskTimeModels) {
       try {
         for (const etapa of ETAPAS) {
@@ -4724,6 +4989,8 @@ export class WmsFacade {
         const bal = await this.inventory.getStock({ sellerId: sid });
         const byKey = new Map<string, { sku: string; loc: string; qty: number }>();
         for (const b of bal) {
+          // El stock dentro de un Bin se guarda con el Bin completo (tarea BIN_PUTAWAY).
+          if (b.binId) continue;
           if (!recv.has(b.locationId) || b.qty <= 0 || b.state !== StockState.AVAILABLE) continue;
           const k = `${b.sku}:${b.locationId}`;
           const e = byKey.get(k) || { sku: b.sku, loc: b.locationId, qty: 0 };
@@ -4744,7 +5011,7 @@ export class WmsFacade {
       if (repo) {
         const codeById = new Map(locs.map((l) => [l.id, l.code] as [string, string]));
         for (const sid of sellers) {
-          const bal = await this.inventory.getStock({ sellerId: sid, locationId: repo.id });
+          const bal = await this.inventory.getStock({ sellerId: sid, locationId: repo.id, binId: null });
           const pend = new Map<string, number>();
           for (const b of bal) {
             if (b.qty <= 0 || b.state !== StockState.AVAILABLE) continue;
@@ -4816,7 +5083,7 @@ export class WmsFacade {
         if (count >= 50 || !nearest) break;
         const classOf = new Map((await this.skus.list(sid)).map((s) => [s.sku, s.rotationClass] as [string, string]));
         const buckets = new Map<string, { sku: string; loc: string; qty: number }>();
-        for (const b of await this.inventory.getStock({ sellerId: sid })) {
+        for (const b of await this.inventory.getStock({ sellerId: sid, binId: null })) {
           if (!storageIds.has(b.locationId) || b.qty <= 0 || b.state !== StockState.AVAILABLE) continue;
           const k = `${b.sku}:${b.locationId}`;
           const e = buckets.get(k) || { sku: b.sku, loc: b.locationId, qty: 0 };
@@ -4832,6 +5099,20 @@ export class WmsFacade {
           const entityId = `${sid}:${e.sku}:${e.loc}`;
           out.push({ type, entityId, entityRef: `${e.sku}: ${codeOf.get(e.loc)} → ${target.code}`, sellerId: sid, unidades: e.qty, paradas: 1, prioridad: 1, asignadoA: assigneeOf.get(entityId) ?? null, note: target.id });
         }
+      }
+    } else if ((type === 'BIN_PUTAWAY' || type === 'BIN_MOVE' || type === 'BIN_CONSOLIDATE') && this.binsSvc && await this.binsHabilitado(operationId)) {
+      // Tareas de Bins: putaway de los cerrados, traslados pedidos y consolidaciones pendientes.
+      const lista = type === 'BIN_PUTAWAY'
+        ? await this.binsSvc.list(operationId, { estado: 'POR_UBICAR,EN_MOVIMIENTO' }).then((l) => l.filter((b) => b.estado === 'POR_UBICAR' || !b.pending))
+        : await this.binsSvc.list(operationId, { estado: 'EN_MOVIMIENTO' }).then((l) => l.filter((b) => b.pending && b.pending.kind === (type === 'BIN_MOVE' ? 'MOVE' : 'CONSOLIDATE') && !b.pending.intoBinId));
+      const codes = new Map((await this.locations.listByOperation(operationId)).map((l) => [l.id, l.code] as [string, string]));
+      let pr = 1;
+      for (const b of lista) {
+        const destino = b.pending?.toLocationId ? codes.get(b.pending.toLocationId) || null : null;
+        const ref = type === 'BIN_PUTAWAY' ? `${b.numero}${b.ubicacion ? ' @ ' + b.ubicacion : ''}`
+          : type === 'BIN_MOVE' ? `${b.numero}: ${b.ubicacion || '?'} → ${destino || 'a elegir'}`
+          : `${b.numero} ← ${(b.pending?.sourceBinIds || []).length} Bin(s)`;
+        out.push({ type, entityId: b.id, entityRef: ref, sellerId: b.clientes[0] || '', unidades: b.unidades, paradas: type === 'BIN_CONSOLIDATE' ? 1 + (b.pending?.sourceBinIds || []).length : 1, prioridad: pr++, asignadoA: assigneeOf.get(b.id) ?? null, note: b.pending?.toLocationId ?? null });
       }
     } else if (type === 'PACK') {
       // Órdenes recolectadas (PICKED) listas para EMPACAR.
@@ -4941,6 +5222,7 @@ export class WmsFacade {
     // completó nunca— y ese detalle se vuelve indistinguible al leerla. El evento sí
     // distingue: RELEASED no es DONE.
     await this.assignments.save({ ...a, status: 'released', completedBy: by, completedAt: this.clockNow() });
+    if (type === 'BIN_PUTAWAY' && this.binsSvc) await this.binsSvc.revertPutawayStarted(entityId, by).catch(() => undefined);
     const info = await this.taskIdDe(operationId, type as WorkTaskStage, entityId);
     await this.emitTaskEvent(operationId, {
       type: 'RELEASED', stage: type as WorkTaskStage, entityId, entityRef: a.entityRef ?? info.entityRef,
@@ -5156,7 +5438,7 @@ export class WmsFacade {
       velocidadUH: nOps ? r1(operarios.reduce((t, o) => t + o.velocidadUH, 0) / nOps) : null,
     };
     const pendientesSinAsignar: Record<string, number> = {};
-    for (const t of ['PICK', 'PUTAWAY', 'RESTOCK', 'PACK', 'SHIP', 'COUNT', 'RECEIVE', 'RESLOT'] as WorkTaskType[]) pendientesSinAsignar[t] = (await this.getTaskPool(operationId, t, { onlyUnassigned: true })).length;
+    for (const t of ['PICK', 'PUTAWAY', 'RESTOCK', 'PACK', 'SHIP', 'COUNT', 'RECEIVE', 'RESLOT', 'BIN_PUTAWAY', 'BIN_MOVE', 'BIN_CONSOLIDATE'] as WorkTaskType[]) pendientesSinAsignar[t] = (await this.getTaskPool(operationId, t, { onlyUnassigned: true })).length;
     return { operarios, totales, promedios, pendientesSinAsignar };
   }
 
@@ -5288,7 +5570,7 @@ export class WmsFacade {
       minutosEstimados: operarios.reduce((t, o) => t + o.minutosEstimados, 0),
     };
     const pendientesSinAsignar: Record<string, number> = {};
-    for (const t of ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'COUNT', 'RESLOT'] as WorkTaskType[]) {
+    for (const t of ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'COUNT', 'RESLOT', 'BIN_PUTAWAY', 'BIN_MOVE', 'BIN_CONSOLIDATE'] as WorkTaskType[]) {
       const n = (await this.getTaskPool(operationId, t, { onlyUnassigned: true }).catch(() => [])).length;
       if (n) pendientesSinAsignar[t] = n;
     }
@@ -5540,7 +5822,7 @@ export class WmsFacade {
     return Number.isNaN(t) ? 0 : Math.max(0, (nowMs - t) / 3600000);
   }
 
-  private async evalAgentRule(operationId: string, def: AgentRuleDef, cfg: AgentRuleConfig): Promise<Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'ORDER' | 'SKU' | 'LOT' | 'OPERATOR' }>> {
+  private async evalAgentRule(operationId: string, def: AgentRuleDef, cfg: AgentRuleConfig): Promise<Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'ORDER' | 'SKU' | 'LOT' | 'OPERATOR' | 'BIN' }>> {
     const sid = cfg.sellerId || undefined;
     const nm = new Map<string, string>();
     try { for (const x of await this.listSellers(operationId)) nm.set(x.id, x.name); } catch { /* ignore */ }
@@ -5631,6 +5913,28 @@ export class WmsFacade {
       return out.sort((a, b) => a.title.localeCompare(b.title));
     }
     // ---- v122: flujo de entrada, insumos, devoluciones y duplicados ----------
+    if (def.key === 'bin_por_ubicar' || def.key === 'bin_armado_abandonado') {
+      if (!(await this.binsHabilitado(operationId))) return [];
+      const nowMs = Date.parse(this.clockNow());
+      const porUbicar = def.key === 'bin_por_ubicar';
+      const list = await this.bins().list(operationId, { estado: porUbicar ? 'POR_UBICAR' : 'EN_ARMADO' });
+      const out: Array<{ sellerId: string | null; title: string; detail: string; action: string; entityRef: string; entityType: 'BIN' }> = [];
+      for (const v of list) {
+        const b = await this.bins().findQuietById(v.id);
+        if (!b) continue;
+        if (!porUbicar && !v.unidades) continue; // un Bin vacío recién creado no es "abandonado"
+        const desde = porUbicar ? (b.closedAt || b.updatedAt) : (b.events.length ? b.events[b.events.length - 1].at : b.updatedAt);
+        const horas = (nowMs - Date.parse(desde)) / 3600000;
+        if (horas < cfg.threshold) continue;
+        out.push({
+          sellerId: v.clientes.length === 1 ? v.clientes[0] : null, entityRef: v.numero, entityType: 'BIN' as const,
+          title: porUbicar ? `Bin ${v.numero} lleva ${Math.round(horas)} h por ubicar` : `Bin ${v.numero} lleva ${Math.round(horas)} h en armado sin cerrarse`,
+          detail: `${v.unidades} un · ${v.lineas.length} línea(s)${v.multiCliente ? ' · multi-cliente' : ''}${v.ubicacion ? ' · en ' + v.ubicacion : ''}.` + (porUbicar ? ' Mientras no se ubique queda en el andén.' : ''),
+          action: porUbicar ? 'Asigna el putaway del Bin a un operario o ubícalo desde Bins.' : 'Ciérralo (si está completo) o revisa con quien lo estaba armando.',
+        });
+      }
+      return out;
+    }
     if (def.key === 'guardado_pendiente' || def.key === 'reposicion_pendiente') {
       const esGuardado = def.key === 'guardado_pendiente';
       const nowMs = Date.parse(this.clockNow());
@@ -5652,6 +5956,7 @@ export class WmsFacade {
         const espera = await this.esperaEnUbicacion(s, ids);
         const agg = new Map<string, { sku: string; loc: string; qty: number }>();
         for (const b of bal) {
+          if (b.binId) continue; // el contenido de los Bins tiene su propia regla (Bin por ubicar)
           if (b.qty <= 0 || b.state !== StockState.AVAILABLE || !ids.has(b.locationId)) continue;
           const k = `${b.sku}:${b.locationId}`;
           const e = agg.get(k) || { sku: b.sku, loc: b.locationId, qty: 0 };
@@ -6086,13 +6391,13 @@ export class WmsFacade {
     const mineOut = mine.map((a) => ({ ...a, estado: (running.has(`${a.type}:${a.entityId}`) ? 'in_progress' : 'assigned') as 'in_progress' | 'assigned', cliente: a.sellerId ? sname.get(a.sellerId) || a.sellerId : null }));
     const available: Array<{ type: WorkTaskType; entityId: string; entityRef: string; sellerId: string; cliente: string | null; unidades: number; prioridad: number; motivo: string }> = [];
     if (selfPickup) {
-      const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, RESTOCK: 6, COUNT: 7, RESLOT: 8 };
-      const LABEL: Record<string, string> = { SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: 'cola de picking', RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', RESTOCK: 'devolver a su ubicación', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' };
+      const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, RESTOCK: 6, COUNT: 7, RESLOT: 8, BIN_PUTAWAY: 5, BIN_MOVE: 8, BIN_CONSOLIDATE: 9 };
+      const LABEL: Record<string, string> = { SHIP: 'despacho pendiente', PACK: 'listo para empacar', PICK: 'cola de picking', RECEIVE: 'recepción abierta', PUTAWAY: 'guardado pendiente', BIN_PUTAWAY: 'Bin por ubicar', BIN_MOVE: 'traslado de Bin', BIN_CONSOLIDATE: 'consolidación de Bins', RESTOCK: 'devolver a su ubicación', COUNT: 'conteo del día', RESLOT: 're-slot sugerido' };
       // Solo se le ofrece trabajo de las actividades que tiene habilitadas.
       const yo = (await this.listUsers(operationId)).find((u) => u.id === operator);
       // Con `type` (p. ej. la estación de picking de la app) se trae solo ese tipo y más profundo.
       const filtro = opts?.types && opts.types.length ? opts.types : (opts?.type ? [opts.type] : null);
-      const tipos = filtro || (['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT'] as WorkTaskType[]);
+      const tipos = filtro || (['SHIP', 'PACK', 'PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'COUNT', 'RESLOT', 'BIN_PUTAWAY', 'BIN_MOVE', 'BIN_CONSOLIDATE'] as WorkTaskType[]);
       for (const t of tipos) {
         if (yo && !puedeHacer(yo, t)) continue;
         const pool = await this.getTaskPool(operationId, t, { onlyUnassigned: true, limit: filtro ? 100 : 30 }).catch(() => [] as Awaited<ReturnType<WmsFacade['getTaskPool']>>);
@@ -6168,6 +6473,7 @@ export class WmsFacade {
     const startedAt = a && a.startedAt ? a.startedAt : this.clockNow();
     const yaHabiaEmpezado = !!(a && a.startedAt);
     if (a && (a.status === 'assigned')) await this.assignments.save({ ...a, status: 'in_progress', startedAt });
+    if (input.type === 'BIN_PUTAWAY' && this.binsSvc) await this.binsSvc.markPutawayStarted(input.entityId, operator).catch(() => undefined);
     // Un reingreso a una tarea ya empezada no es un STARTED nuevo: es volver a ella.
     // Distinguirlo importa porque STARTED marca el fin del tiempo en cola, y repetirlo
     // haría parecer que la tarea arrancó recién cada vez que el operario la abre.
@@ -6206,7 +6512,7 @@ export class WmsFacade {
     if (!this.assignments) return { recalculadas: 0, cambiadas: 0 };
     const open = (await this.assignments.list(operationId, { limit: 5000 })).filter((a) => a.status === 'assigned' || a.status === 'in_progress');
     if (!open.length) return { recalculadas: 0, cambiadas: 0 };
-    const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, RESTOCK: 6, COUNT: 7, RESLOT: 8 };
+    const TYPE_W: Record<string, number> = { SHIP: 1, PACK: 2, PICK: 3, RECEIVE: 4, PUTAWAY: 5, RESTOCK: 6, COUNT: 7, RESLOT: 8, BIN_PUTAWAY: 5, BIN_MOVE: 8, BIN_CONSOLIDATE: 9 };
     const dlCfg = await this.getDeadlineConfig(operationId).catch(() => ({} as DeadlineConfig));
     // Posición dentro de la cola de cada tipo (normalizada a 1..n).
     const rank = new Map<string, number>();
@@ -6293,14 +6599,83 @@ export class WmsFacade {
   // tarea ejecuta. Si la orden avanzó por cualquier camino (panel, app, agente, API,
   // datos de versiones antiguas), la tarea de una etapa ya superada NO puede seguir
   // abierta ni volver a empezarse: se cierra sola, dejando constancia en su historia.
+  private static ESTADO_RECEP_ES: Record<string, string> = { PENDING: 'Creada', ARRIVED: 'En bodega', PARTIAL: 'Parcial', RECEIVED: 'Recibida', CANCELLED: 'Anulada' };
+  /** Busca una recepción por id (OR-…) o referencia del proveedor dentro del alcance. */
+  private async copilotFindReceipt(operationId: string, sellerScope: string | null, clave: string): Promise<{ sellerId: string; rec: ReceiptOrder } | { ambigua: string[] } | null> {
+    const k = String(clave || '').trim().toUpperCase(); if (!k) return null;
+    const exactas: Array<{ sellerId: string; rec: ReceiptOrder }> = [], parciales: Array<{ sellerId: string; rec: ReceiptOrder }> = [];
+    for (const sid of await this.copilotScope(operationId, sellerScope)) {
+      for (const r of await this.listReceipts(sid).catch(() => [] as ReceiptOrder[])) {
+        const id = r.id.toUpperCase(), ref = String(r.reference || '').toUpperCase();
+        if (id === k || ref === k) exactas.push({ sellerId: sid, rec: r });
+        else if (k.length >= 4 && (id.endsWith(k) || (ref && ref.includes(k)))) parciales.push({ sellerId: sid, rec: r });
+      }
+    }
+    const pool = exactas.length ? exactas : parciales;
+    if (pool.length === 1) return pool[0];
+    if (pool.length > 1) {
+      // Si hay varias, se prefiere la única abierta.
+      const abiertas = pool.filter((x) => ['PENDING', 'ARRIVED', 'PARTIAL'].includes(String(x.rec.status)));
+      if (abiertas.length === 1) return abiertas[0];
+      return { ambigua: pool.slice(0, 6).map((x) => `${x.rec.id}${x.rec.reference ? ' (' + x.rec.reference + ')' : ''} [${WmsFacade.ESTADO_RECEP_ES[x.rec.status] || x.rec.status}]`) };
+    }
+    return null;
+  }
+  /** Detalle completo de una recepción para el copiloto (y el siguiente paso). */
+  private async copilotReceiptDetail(operationId: string, sid: string, rec: ReceiptOrder): Promise<Record<string, unknown>> {
+    const seller = await this.sellers.findById(sid).catch(() => null);
+    const loc = await this.locations.findById(rec.locationId).catch(() => null);
+    const nombreDe = async (id?: string | null) => (id ? this.describirActor(id) : null);
+    const lineas: any[] = [];
+    for (const l of rec.lines || []) {
+      const sk = await this.skus.find(sid, l.sku).catch(() => null);
+      lineas.push({ linea: l.lineNo, sku: l.sku, descripcion: sk?.description ?? null, esperado: l.expectedQty, recibido: l.receivedQty || 0, pendiente: Math.max(0, l.expectedQty - (l.receivedQty || 0)), lote: l.lot, vencimiento: l.expiry, exigeLote: !!sk?.lotControlled, exigeVencimiento: !!sk?.expiryControlled });
+    }
+    const esperado = lineas.reduce((t, l) => t + l.esperado, 0), recibido = lineas.reduce((t, l) => t + l.recibido, 0);
+    const porGuardar: any[] = [];
+    if (loc) for (const sku of [...new Set(lineas.filter((l) => l.recibido > 0).map((l) => l.sku as string))]) {
+      const hay = (await this.disponibleEnOrigen(sid, sku, loc.id)).reduce((t, b) => t + b.qty, 0);
+      const rec_ = lineas.filter((l) => l.sku === sku).reduce((t, l) => t + l.recibido, 0);
+      porGuardar.push({ sku, recibidoEnEstaRecepcion: rec_, quedaEnUbicacionDeRecepcion: Math.min(hay, rec_) });
+    }
+    let tarea: any = null;
+    if (this.assignments) {
+      const a = await this.assignments.get(`RECEIVE:${rec.id}`).catch(() => null);
+      if (a) tarea = { operario: await nombreDe(a.operator), estado: a.status };
+    }
+    const st = String(rec.status);
+    const siguiente = st === 'PENDING' ? 'Cuando llegue la carga: marcar llegada (opcional) y recibir (cotejo).'
+      : st === 'ARRIVED' ? 'Recibir (cotejo) lo que llegó.'
+      : st === 'PARTIAL' ? 'Recibir lo que falta, o cerrarla con faltante; y guardar lo ya recibido.'
+      : st === 'RECEIVED' ? (porGuardar.some((x) => x.quedaEnUbicacionDeRecepcion > 0) ? 'Guardar lo recibido (putaway) para que quede disponible.' : 'Completa y guardada: no queda nada pendiente.')
+      : 'Anulada: no admite movimientos.';
+    return {
+      id: rec.id, referencia: rec.reference, proveedor: rec.supplier, cliente: { id: sid, nombre: seller?.name || sid },
+      estado: st, estadoTexto: WmsFacade.ESTADO_RECEP_ES[st] || st, ubicacionRecepcion: loc?.code ?? rec.locationId,
+      creada: rec.createdAt, creadaPor: await nombreDe(rec.createdBy), llegada: rec.arrivedAt ? { at: rec.arrivedAt, por: await nombreDe(rec.arrivedBy) } : null,
+      notas: rec.notes, lineas, totales: { esperado, recibido, pendiente: Math.max(0, esperado - recibido) },
+      porGuardar, tareaRecepcion: tarea,
+      historial: await Promise.all((rec.events || []).slice(-10).map(async (e) => ({ tipo: e.type, at: e.at, por: await nombreDe(e.actor), detalle: e.detail ?? null }))),
+      siguientePaso: siguiente,
+    };
+  }
   private static ESTADO_ORDEN_ES: Record<string, string> = { RECEIVED: 'Ingresada', ALLOCATED: 'Reservada', PICKING: 'En picking', PICKED: 'Pickeada', PACKED: 'Empacada', SHIPPED: 'Despachada', CANCELLED: 'Cancelada' };
-  private static ETAPA_ES: Record<string, string> = { PICK: 'picking', PACK: 'empaque', SHIP: 'despacho', RECEIVE: 'recepción' };
+  private static ETAPA_ES: Record<string, string> = { PICK: 'picking', PACK: 'empaque', SHIP: 'despacho', RECEIVE: 'recepción', BIN_PUTAWAY: 'putaway de Bin', BIN_MOVE: 'traslado de Bin', BIN_CONSOLIDATE: 'consolidación de Bins' };
   /**
    * ¿La tarea `type` sobre `entityId` ya no corresponde? Devuelve el motivo (para el
    * operario y el historial) y si la etapa quedó HECHA (la orden la superó) o
    * CANCELADA (la entidad se anuló o ya no existe); `null` si sigue vigente.
    */
   private async tareaVencida(type: WorkTaskType, entityId: string, sellerId: string | null): Promise<{ motivo: string; cierre: 'done' | 'cancelled' } | null> {
+    if ((type === 'BIN_PUTAWAY' || type === 'BIN_MOVE' || type === 'BIN_CONSOLIDATE') && this.binsSvc) {
+      const b = await this.binsSvc.findQuietById(entityId);
+      if (!b) return null;
+      if (b.estado === 'ELIMINADO' || b.estado === 'CONSOLIDADO') return { motivo: `el Bin ${b.numero} ya no existe (${b.estado.toLowerCase()})`, cierre: 'cancelled' };
+      if (type === 'BIN_PUTAWAY' && b.estado !== 'POR_UBICAR' && !(b.estado === 'EN_MOVIMIENTO' && !b.pending)) return { motivo: `el Bin ${b.numero} ya está ${BIN_ESTADO_ES[b.estado]?.toLowerCase() || b.estado}`, cierre: b.estado === 'UBICADO' ? 'done' : 'cancelled' };
+      if (type === 'BIN_MOVE' && (!b.pending || b.pending.kind !== 'MOVE')) return { motivo: `el Bin ${b.numero} ya no tiene un traslado pendiente`, cierre: 'done' };
+      if (type === 'BIN_CONSOLIDATE' && (!b.pending || b.pending.kind !== 'CONSOLIDATE')) return { motivo: `el Bin ${b.numero} ya no tiene una consolidación pendiente`, cierre: 'done' };
+      return null;
+    }
     if (type !== 'PICK' && type !== 'PACK' && type !== 'SHIP' && type !== 'RECEIVE') return null;
     if (!sellerId) return null;
     if (type === 'RECEIVE') {
@@ -6375,7 +6750,7 @@ export class WmsFacade {
       const v = await this.tareaVencida(type, entityId, sellerId).catch(() => null);
       if (v && await this.cerrarTareaVencida(operationId, type, entityId, v)) cerradas++;
     };
-    const tipos = ['PICK', 'PACK', 'SHIP', 'RECEIVE'] as WorkTaskType[];
+    const tipos = ['PICK', 'PACK', 'SHIP', 'RECEIVE', 'BIN_PUTAWAY', 'BIN_MOVE', 'BIN_CONSOLIDATE'] as WorkTaskType[];
     if (this.assignments) {
       for (const a of await this.assignments.listOpen(operationId).catch(() => [] as WorkAssignment[])) {
         if (tipos.includes(a.type)) await revisar(a.type, a.entityId, a.sellerId ?? null);
@@ -6830,7 +7205,12 @@ export class WmsFacade {
     if ((await this.getAssignmentMode(operationId)) !== 'strict') return;
     const a = await this.assignments.get(`${type}:${entityId}`);
     if (a && (a.status === 'assigned' || a.status === 'in_progress') && a.operator !== actor) {
-      throw new ForbiddenError(`Tarea asignada a otro operario (modo estricto). Solo ${a.operator} puede ejecutarla.`);
+      // El modo estricto ordena a los OPERARIOS entre sí; un supervisor o administrador
+      // (desde el panel o el copiloto) puede ejecutar igual.
+      const u = actor && actor !== 'system' ? await this.usersService.getUser(actor).catch(() => null) : null;
+      if (u && String(u.role) !== 'OPERATOR' && String(u.role) !== 'CLIENT') return;
+      const due = await this.usersService.getUser(a.operator).catch(() => null);
+      throw new ForbiddenError(`Tarea asignada a otro operario (modo estricto). Solo ${due?.name || a.operator} puede ejecutarla.`);
     }
   }
 
@@ -6845,7 +7225,7 @@ export class WmsFacade {
   private async setAutoBalanceContinuousImpl(operationId: string, on: boolean): Promise<{ autoBalance: boolean; asignadasInicial: number }> {
     await this.operationsService.setAutoBalance(operationId, on);
     let asignadasInicial = 0;
-    if (on) for (const t of ['PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'RESLOT', 'COUNT'] as WorkTaskType[]) asignadasInicial += await this.rebalancePending(operationId, t);
+    if (on) for (const t of ['PICK', 'RECEIVE', 'PUTAWAY', 'RESTOCK', 'RESLOT', 'COUNT', 'BIN_PUTAWAY', 'BIN_MOVE', 'BIN_CONSOLIDATE'] as WorkTaskType[]) asignadasInicial += await this.rebalancePending(operationId, t);
     return { autoBalance: on, asignadasInicial };
   }
 
@@ -7498,7 +7878,18 @@ export class WmsFacade {
     // Camino B: en modo estricto, no recibir una recepción asignada a otro operario.
     const opId = await this.operationOfSeller(sellerId).catch(() => null);
     if (opId) await this.assertAssignmentAllowed(opId, 'RECEIVE', orderId, actor || 'system');
+    // Recepción hacia Bin: los conteos con `binId` (id o número del Bin) se reciben DENTRO del Bin.
+    let binsUsados = new Map<string, Bin>();
+    if (counts.some((c) => c.binId)) {
+      const rc = await this.receipts.get(sellerId, orderId);
+      if (!rc) throw new NotFoundError(`Orden de recepción no encontrada: ${orderId}`);
+      binsUsados = await this.prepararBinesDeRecepcion(sellerId, rc, counts, actor || 'system');
+    }
     const order = await this.receipts.receive(sellerId, orderId, counts, actor);
+    for (const bin of binsUsados.values()) {
+      const det = counts.filter((c) => c.binId === bin.id).map((c) => { const l = order.lines.find((x) => x.lineNo === c.lineNo); return `${c.qty} ${l ? l.sku : 'línea ' + c.lineNo}`; }).join(', ');
+      await this.bins().noteReceived(bin, `${det} · recepción ${order.reference || order.id}`, actor || 'system');
+    }
     // Dispara reception.received a las suscripciones que matcheen (sin bloquear).
     void this.dispatchWebhook('reception.received', sellerId, { orderId, counts });
     // Cierra la asignación de recepción cuando la orden queda RECIBIDA (cotejo completo).
@@ -7793,7 +8184,7 @@ export class WmsFacade {
     opts: { types?: WorkTaskType[]; by?: string; reason?: string } = {},
   ): Promise<{ liberadas: number }> {
     if (!operationId) return { liberadas: 0 };
-    const types = opts.types ?? (['PICK', 'PACK', 'SHIP', 'RECEIVE', 'COUNT', 'PUTAWAY', 'RESLOT'] as WorkTaskType[]);
+    const types = opts.types ?? (['PICK', 'PACK', 'SHIP', 'RECEIVE', 'COUNT', 'PUTAWAY', 'RESLOT', 'BIN_PUTAWAY', 'BIN_MOVE', 'BIN_CONSOLIDATE'] as WorkTaskType[]);
     const by = opts.by ?? 'system';
     const reason = opts.reason ?? 'la entidad se canceló';
     let liberadas = 0;
@@ -7819,15 +8210,21 @@ export class WmsFacade {
   }
 
   // ---- Picking y despacho ---------------------------------------------------
-  getPickList(sellerId: string, orderId: string): Promise<PickTask[]> {
-    return this.orders.pickList(sellerId, orderId);
+  async getPickList(sellerId: string, orderId: string): Promise<Array<PickTask & { binNumero?: string | null }>> {
+    const tasks = await this.orders.pickList(sellerId, orderId);
+    if (!tasks.some((t) => t.binId)) return tasks;
+    // Picklist con Bin: Ubicación → Bin → SKU → cantidad.
+    const nums = await this.binNumeros(tasks.map((t) => t.binId));
+    return tasks.map((t) => ({ ...t, binNumero: t.binId ? nums.get(t.binId) || null : null }));
   }
 
   async confirmPick(sellerId: string, orderId: string, actor?: string): Promise<SalesOrder> {
     // Camino B: en modo estricto, no dejar pickear una orden asignada a otro operario.
     const opId = await this.operationOfSeller(sellerId).catch(() => null);
     if (opId) await this.assertAssignmentAllowed(opId, 'PICK', orderId, actor || 'system');
+    const antesPick = this.binsSvc ? await this.orders.getOrder(sellerId, orderId).catch(() => null) : null;
     const order = await this.orders.confirmPick(sellerId, orderId, actor);
+    await this.binsTrasPick(antesPick, order, actor || 'system');
     this.fireOrderWebhook(sellerId, order); // order.picked (o en picking según estado)
     if (opId) {
       // Lo REALMENTE recolectado, que es lo que la tarea debe registrar como hecho.
@@ -7881,7 +8278,7 @@ export class WmsFacade {
     const { ordenes, omitidas } = await this.ordenesDeRuta(operationId, refs);
     const locs = await this.locations.listByOperation(operationId);
     const L = new Map(locs.map((l) => [l.id, l] as [string, typeof locs[number]]));
-    type Item = { sellerId: string; sku: string; lot: string | null; qty: number; picked: number; porOrden: Array<{ orderId: string; ref: string; qty: number; picked: number }> };
+    type Item = { sellerId: string; sku: string; lot: string | null; binId: string | null; binNumero: string | null; qty: number; picked: number; porOrden: Array<{ orderId: string; ref: string; qty: number; picked: number }> };
     const stops = new Map<string, { locationId: string; code: string; zoneType: string; rank: number; x: number | null; y: number | null; items: Map<string, Item> }>();
     for (const o of ordenes) {
       const ref = o.externalOrderId || o.id;
@@ -7890,9 +8287,9 @@ export class WmsFacade {
         const l = L.get(a.locationId);
         let st = stops.get(a.locationId);
         if (!st) { st = { locationId: a.locationId, code: l ? l.code : a.locationId, zoneType: l ? String(l.zoneType) : '', rank: l && l.pickRank != null ? l.pickRank : 999, x: l && l.x != null ? l.x : null, y: l && l.y != null ? l.y : null, items: new Map() }; stops.set(a.locationId, st); }
-        const k = `${o.sellerId}|${sku}|${lot ?? ''}`;
+        const k = `${o.sellerId}|${sku}|${lot ?? ''}|${a.binId ?? ''}`;
         let it = st.items.get(k);
-        if (!it) { it = { sellerId: o.sellerId, sku, lot, qty: 0, picked: 0, porOrden: [] }; st.items.set(k, it); }
+        if (!it) { it = { sellerId: o.sellerId, sku, lot, binId: a.binId ?? null, binNumero: null, qty: 0, picked: 0, porOrden: [] }; st.items.set(k, it); }
         it.qty += a.qty; it.picked += a.pickedQty ?? 0;
         const po = it.porOrden.find((x) => x.orderId === o.id);
         if (po) { po.qty += a.qty; po.picked += a.pickedQty ?? 0; } else it.porOrden.push({ orderId: o.id, ref, qty: a.qty, picked: a.pickedQty ?? 0 });
@@ -7912,6 +8309,13 @@ export class WmsFacade {
       }
       lista = out;
     }
+    // Picklist con Bins: en cada parada, Ubicación → Bin → SKU (lo suelto primero).
+    const binIds: string[] = [];
+    for (const st of stops.values()) for (const it of st.items.values()) if (it.binId) binIds.push(it.binId);
+    if (binIds.length) {
+      const nums = await this.binNumeros(binIds);
+      for (const st of stops.values()) for (const it of st.items.values()) if (it.binId) it.binNumero = nums.get(it.binId) || null;
+    }
     const descr = new Map<string, string>();
     for (const sid of [...new Set(ordenes.map((o) => o.sellerId))]) {
       try { for (const k of await this.listSkus(sid)) descr.set(sid + '|' + k.sku, k.description || ''); } catch { /* sin descripción */ }
@@ -7922,7 +8326,7 @@ export class WmsFacade {
         pickeadas: (o.lines || []).reduce((t, l) => t + (l.allocations || []).reduce((u, a) => u + (a.pickedQty ?? 0), 0), 0) })),
       omitidas,
       paradas: lista.map((s, i) => ({ n: i + 1, locationId: s.locationId, code: s.code, zoneType: s.zoneType,
-        items: [...s.items.values()].map((it) => ({ ...it, description: descr.get(it.sellerId + '|' + it.sku) || '' })) })),
+        items: [...s.items.values()].sort((a, b) => (a.binNumero || '').localeCompare(b.binNumero || '') || a.sku.localeCompare(b.sku)).map((it) => ({ ...it, description: descr.get(it.sellerId + '|' + it.sku) || '' })) })),
     };
   }
 
@@ -7931,24 +8335,40 @@ export class WmsFacade {
    * reparte entre los pedidos del recorrido, primero los que vencen antes. Cada parte
    * pasa por el picking dirigido normal (stock, ledger, productividad, tareas).
    */
-  async pickConsolidated(operationId: string, input: { sellerId: string; sku: string; locationId: string; lot?: string | null; qty: number; orderIds: string[] }, actor?: string) {
+  async pickConsolidated(operationId: string, input: { sellerId: string; sku: string; locationId: string; lot?: string | null; qty: number; orderIds: string[]; binId?: string | null }, actor?: string) {
     const qty = Math.round(Number(input.qty));
     if (!(qty > 0)) throw new ValidationError('Cantidad de picking inválida');
     const { ordenes } = await this.ordenesDeRuta(operationId, (input.orderIds || []).map((orderId) => ({ sellerId: input.sellerId, orderId })));
     const lot = input.lot ?? null;
+    // Con Bin: solo las reservas de ESE Bin (se escanea ubicación → Bin → producto).
+    let binId: string | null | undefined = undefined;
+    if (input.binId !== undefined) {
+      binId = null;
+      if (input.binId) { const b = this.binsSvc ? await this.binsSvc.findQuiet(operationId, input.binId) : null; if (!b) throw new NotFoundError(`Bin no encontrado: ${input.binId}`); binId = b.id; }
+    }
+    const binOk = (a: { binId?: string | null }) => binId === undefined || (a.binId ?? null) === binId;
     const plan: Array<{ o: SalesOrder; take: number }> = [];
     let falta = qty;
     for (const o of ordenes) {
       if (falta <= 0) break;
       let rem = 0;
-      for (const l of o.lines || []) for (const a of l.allocations || []) if ((a.sku ?? l.sku) === input.sku && a.locationId === input.locationId && (a.lot ?? null) === lot) rem += a.qty - (a.pickedQty ?? 0);
+      for (const l of o.lines || []) for (const a of l.allocations || []) if ((a.sku ?? l.sku) === input.sku && a.locationId === input.locationId && (a.lot ?? null) === lot && binOk(a)) rem += a.qty - (a.pickedQty ?? 0);
       if (rem <= 0) continue;
       const take = Math.min(rem, falta); plan.push({ o, take }); falta -= take;
     }
     if (falta > 0) throw new ValidationError(`Sobran ${falta} un: en esta ubicación solo quedan ${qty - falta} de ${input.sku} para estos pedidos.`);
     const porOrden: Array<{ orderId: string; ref: string; qty: number; status: string }> = [];
     for (const p of plan) {
-      const r = await this.pickTask(input.sellerId, p.o.id, { sku: input.sku, locationId: input.locationId, lot, qty: p.take }, actor);
+      // Si el pedido tiene la cantidad repartida entre suelto y Bins, se toma en orden.
+      let resta = p.take; let r: SalesOrder = p.o;
+      const fuentes: Array<{ binId: string | null; rem: number }> = [];
+      for (const l of p.o.lines || []) for (const a of l.allocations || []) if ((a.sku ?? l.sku) === input.sku && a.locationId === input.locationId && (a.lot ?? null) === lot && binOk(a)) { const rm = a.qty - (a.pickedQty ?? 0); if (rm > 0) fuentes.push({ binId: a.binId ?? null, rem: rm }); }
+      for (const f of fuentes) {
+        if (resta <= 0) break;
+        const q = Math.min(resta, f.rem);
+        r = await this.pickTask(input.sellerId, p.o.id, { sku: input.sku, locationId: input.locationId, lot, qty: q, binId: f.binId }, actor);
+        resta -= q;
+      }
       porOrden.push({ orderId: r.id, ref: r.externalOrderId || r.id, qty: p.take, status: r.status });
     }
     return { pickeadas: qty, porOrden };
@@ -8007,13 +8427,17 @@ export class WmsFacade {
   async pickTask(
     sellerId: string,
     orderId: string,
-    input: { sku: string; locationId: string; lot?: string | null; qty?: number },
+    input: { sku: string; locationId: string; lot?: string | null; qty?: number; binId?: string | null },
     actor?: string,
   ): Promise<SalesOrder> {
     // Camino B: en modo estricto, no dejar pickear una orden asignada a otro operario.
     const opId = await this.operationOfSeller(sellerId).catch(() => null);
     if (opId) await this.assertAssignmentAllowed(opId, 'PICK', orderId, actor || 'system');
+    // El Bin puede venir por número (lo escaneado en la app): se resuelve a su id.
+    if (input.binId && opId && this.binsSvc) { const b = await this.binsSvc.findQuiet(opId, input.binId); if (b) input = { ...input, binId: b.id }; }
+    const antesPick = this.binsSvc ? await this.orders.getOrder(sellerId, orderId).catch(() => null) : null;
     const order = await this.orders.pickTask(sellerId, orderId, input, actor);
+    await this.binsTrasPick(antesPick, order, actor || 'system');
     this.fireOrderWebhook(sellerId, order); // order.picking (parcial) u order.picked (completo)
     // Bandeja + ledger: el picking dirigido (app del operario) también cierra la asignación
     // PICK cuando la orden queda PICKED y abre la tarea PACK. Antes solo lo hacía confirmPick,
@@ -8261,5 +8685,442 @@ export class WmsFacade {
       }
     }
     return { groups: audit.groups.length, removed };
+  }
+
+  // =====================================================================================
+  // BINS (contenedores lógicos: LPN / license plate). Un Bin NO es una ubicación: es un
+  // contenedor (pallet, caja, tote) que vive DENTRO de una ubicación. Ver domain/bin.service.
+  // =====================================================================================
+  private binsSvc: BinService | null = null;
+  /** Conecta el servicio de Bins (lo hace el contenedor de dependencias al arrancar). */
+  attachBins(svc: BinService): void { this.binsSvc = svc; }
+  private bins(): BinService {
+    if (!this.binsSvc) throw new ValidationError('El módulo de Bins no está disponible en esta instalación.');
+    return this.binsSvc;
+  }
+
+  /** ¿Bins activos para la operación? Plan con la feature + toggle de la operación. */
+  async binsHabilitado(operationId: string | null): Promise<boolean> {
+    if (!this.binsSvc || !operationId) return false;
+    if (!(await this.hasFeature(operationId, 'bins'))) return false;
+    return (await this.binsSvc.settings(operationId)).habilitado !== false;
+  }
+  private async assertBins(operationId: string): Promise<void> {
+    await this.assertFeature(operationId, 'bins', 'Bins (contenedores)');
+    if ((await this.bins().settings(operationId)).habilitado === false) throw new ValidationError('Los Bins están desactivados en esta operación. Actívalos en Bins → Ajustes.');
+  }
+
+  async binSettings(operationId: string): Promise<BinSettings & { planIncluye: boolean }> {
+    const s = await this.bins().settings(operationId);
+    return { ...s, planIncluye: await this.hasFeature(operationId, 'bins') };
+  }
+  async updateBinSettings(operationId: string, patch: Partial<BinSettings>, actor: string): Promise<BinSettings> {
+    if (patch.habilitado !== false) await this.assertFeature(operationId, 'bins', 'Bins (contenedores)');
+    const s = await this.bins().updateSettings(operationId, patch);
+    await this.anotarCambio(operationId, `Ajustes de Bins actualizados${patch.habilitado != null ? (patch.habilitado ? ' (módulo ACTIVADO)' : ' (módulo DESACTIVADO)') : ''}`, actor);
+    return s;
+  }
+
+  /** Vista enriquecida: nombres de clientes y número del Bin destino. */
+  private async binViewOut(operationId: string, v: BinView): Promise<BinView & { clientesNombre: Record<string, string>; lineasDesc: Array<BinLinea & { cliente: string; descripcion: string }> }> {
+    const nombres: Record<string, string> = {};
+    for (const s of await this.listSellers(operationId).catch(() => [] as Seller[])) nombres[s.id] = s.name;
+    const desc = new Map<string, string>();
+    for (const sid of new Set(v.lineas.map((l) => l.sellerId))) {
+      for (const k of await this.skus.list(sid).catch(() => [] as Sku[])) desc.set(sid + '|' + k.sku, k.description);
+    }
+    return { ...v, clientesNombre: nombres, lineasDesc: v.lineas.map((l) => ({ ...l, cliente: nombres[l.sellerId] || l.sellerId, descripcion: desc.get(l.sellerId + '|' + l.sku) || '' })) };
+  }
+
+  async createBins(operationId: string, input: { cantidad?: number; tipo?: string | null; ubicacion?: string | null; receiptId?: string | null }, actor: string) {
+    await this.assertBins(operationId);
+    let locationId: string | null = null;
+    if (input.ubicacion) locationId = (await this.locByIdOrCode(operationId, input.ubicacion)).id;
+    const list = await this.bins().create(operationId, { cantidad: input.cantidad, tipo: input.tipo, locationId, receiptId: input.receiptId ?? null }, actor);
+    await this.anotarCambio(operationId, `${list.length === 1 ? 'Bin ' + list[0].numero + ' CREADO' : list.length + ' Bins CREADOS (' + list[0].numero + ' a ' + list[list.length - 1].numero + ')'}`, actor);
+    return { creados: list.length, bins: list.map((b) => ({ id: b.id, numero: b.numero, estado: b.estado, tipo: b.tipo })) };
+  }
+
+  async listBins(operationId: string, f: { sellerId?: string | null; estado?: string | null; ubicacion?: string | null; sku?: string | null; q?: string | null; incluirInactivos?: boolean }, sellerScope?: string | null) {
+    await this.assertFeature(operationId, 'bins', 'Bins (contenedores)');
+    let locationId: string | null = null;
+    if (f.ubicacion) locationId = (await this.locByIdOrCode(operationId, f.ubicacion)).id;
+    const list = await this.bins().list(operationId, { sellerId: f.sellerId ?? null, estado: f.estado ?? null, locationId, sku: f.sku ?? null, q: f.q ?? null, sellerScope: sellerScope ?? null, incluirInactivos: !!f.incluirInactivos });
+    const nombres: Record<string, string> = {};
+    for (const s of await this.listSellers(operationId).catch(() => [] as Seller[])) nombres[s.id] = s.name;
+    const resumen: Record<string, number> = {};
+    for (const b of list) resumen[b.estado] = (resumen[b.estado] || 0) + 1;
+    return { total: list.length, resumen, bins: list.map((b) => ({ ...b, clientesNombre: b.clientes.map((c) => nombres[c] || c) })) };
+  }
+
+  async getBinDetail(operationId: string, ref: string, sellerScope?: string | null) {
+    await this.assertFeature(operationId, 'bins', 'Bins (contenedores)');
+    const bin = await this.bins().get(operationId, ref);
+    const v = await this.bins().view(bin, { sellerScope: sellerScope ?? null });
+    if (sellerScope && !v.lineas.length) throw new NotFoundError(`Bin no encontrado: ${ref}`);
+    const out = await this.binViewOut(operationId, v);
+    const locs = new Map((await this.locations.listByOperation(operationId)).map((l) => [l.id, l.code] as [string, string]));
+    const hist = await this.bins().history(bin, sellerScope ?? null);
+    const historial = [];
+    for (const h of hist) historial.push({ ...h, hechoPor: await this.describirActor(h.actor), ubicacion: h.ubicacionId ? locs.get(h.ubicacionId) || null : null, cliente: h.sellerId ? (out.clientesNombre[h.sellerId] || h.sellerId) : null });
+    let tarea: any = null;
+    if (this.assignments) {
+      for (const t of ['BIN_PUTAWAY', 'BIN_MOVE', 'BIN_CONSOLIDATE'] as WorkTaskType[]) {
+        const a = await this.assignments.get(`${t}:${bin.id}`).catch(() => null);
+        if (a && (a.status === 'assigned' || a.status === 'in_progress')) { tarea = { tipo: t, operario: await this.describirActor(a.operator), estado: a.status }; break; }
+      }
+    }
+    let pendiente: any = null;
+    if (bin.pending) {
+      const dest = bin.pending.toLocationId ? locs.get(bin.pending.toLocationId) || null : null;
+      const srcs: string[] = [];
+      for (const id of bin.pending.sourceBinIds || []) { const s = await this.bins().findQuiet(operationId, id); if (s) srcs.push(s.numero); }
+      pendiente = { tipo: bin.pending.kind, destino: dest, origenes: srcs, pedidoPor: await this.describirActor(bin.pending.requestedBy), pedidoEn: bin.pending.requestedAt };
+    }
+    return { ...out, historial, tarea, pendiente };
+  }
+
+  async binLabel(operationId: string, ref: string) {
+    await this.assertFeature(operationId, 'bins', 'Bins (contenedores)');
+    return this.bins().label(operationId, ref);
+  }
+
+  async binSettingsSafe(operationId: string): Promise<BinSettings | null> { return this.binsSvc ? this.binsSvc.settings(operationId).catch(() => null) : null; }
+
+  /** Cierra el Bin (EN_ARMADO → POR_UBICAR) y genera su tarea de putaway. */
+  async closeBin(operationId: string, ref: string, actor: string) {
+    await this.assertBins(operationId);
+    const bin = await this.bins().close(operationId, ref, actor);
+    const v = await this.bins().view(bin);
+    const sellerId = v.clientes[0] || null;
+    await this.openTask(operationId, { type: 'BIN_PUTAWAY', sellerId, entityId: bin.id, entityRef: bin.numero, unitsEstimate: v.unidades, by: actor });
+    await this.continuousHook(operationId, 'BIN_PUTAWAY', { entityId: bin.id, entityRef: bin.numero, sellerId, unidades: v.unidades });
+    await this.anotarCambio(operationId, `Bin ${bin.numero} CERRADO (${v.unidades} un) — queda la tarea de putaway`, actor);
+    return { bin: await this.binViewOut(operationId, v), sugerencias: await this.suggestBinLocation(operationId, bin.id).catch(() => []) };
+  }
+  async reopenBin(operationId: string, ref: string, actor: string) {
+    await this.assertBins(operationId);
+    const bin = await this.bins().reopen(operationId, ref, actor);
+    await this.cerrarTareaBin(operationId, 'BIN_PUTAWAY', bin.id, 'el Bin se reabrió', 'cancelled');
+    return this.bins().view(bin);
+  }
+
+  /** Reubica las reservas de órdenes en curso que apuntaban a un Bin movido/consolidado. */
+  private async rehomeBin(operationId: string, fromBinId: string, to: { binId: string; locationId: string; detail: string }, sellers: string[], actor: string): Promise<number> {
+    let n = 0;
+    for (const sid of Array.from(new Set(sellers))) n += await this.orders.rehomeBinAllocations(sid, fromBinId, to, actor).catch(() => 0);
+    return n;
+  }
+
+  /**
+   * Putaway del Bin: escanear el Bin y la ubicación destino. Todo el contenido queda ahí
+   * con UN movimiento. También ejecuta un traslado pendiente (tarea de mover Bin).
+   */
+  async putawayBin(operationId: string, ref: string, destino: string, actor: string) {
+    await this.assertBins(operationId);
+    const antes = await this.bins().get(operationId, ref);
+    const loc = await this.locByIdOrCode(operationId, destino);
+    const viaTarea = antes.estado === BinEstado.EN_MOVIMIENTO && antes.pending?.kind === 'MOVE';
+    const enPutaway = antes.estado === BinEstado.POR_UBICAR || (antes.estado === BinEstado.EN_MOVIMIENTO && !antes.pending);
+    const r = await this.bins().place(operationId, antes.id, loc.id, actor, { viaTarea: viaTarea || enPutaway, tipo: enPutaway ? 'PUTAWAY' : 'MOVE' });
+    const sellers = Object.keys(r.reservadoPorCliente);
+    const reubicadas = sellers.length ? await this.rehomeBin(operationId, antes.id, { binId: antes.id, locationId: loc.id, detail: `Bin ${antes.numero} → ${loc.code}` }, sellers, actor) : 0;
+    const tipo: WorkTaskType = enPutaway ? 'BIN_PUTAWAY' : 'BIN_MOVE';
+    await this.cerrarTareaBin(operationId, tipo, antes.id, null, 'done', actor);
+    if (!enPutaway) await this.cerrarTareaBin(operationId, 'BIN_PUTAWAY', antes.id, null, 'done', actor);
+    await this.markPutawayRecommendationTaken(operationId, (await this.bins().view(r.bin)).clientes[0] || '', `BIN:${antes.numero}`, loc.id, loc.code).catch(() => undefined);
+    await this.anotarCambio(operationId, `Bin ${antes.numero} ${enPutaway ? 'UBICADO' : 'MOVIDO'} en ${loc.code}${reubicadas ? ` (${reubicadas} orden(es) con reservas reubicadas)` : ''}`, actor);
+    return { ok: true, bin: await this.binViewOut(operationId, await this.bins().view(r.bin)), ordenesReubicadas: reubicadas };
+  }
+
+  /** Mover un Bin: directo (ahora) o como tarea asignable (queda EN_MOVIMIENTO). */
+  async moveBin(operationId: string, ref: string, input: { destino?: string | null; comoTarea?: boolean; nota?: string | null }, actor: string) {
+    await this.assertBins(operationId);
+    if (!input.comoTarea) {
+      if (!input.destino) throw new ValidationError('Indica la ubicación destino.');
+      return this.putawayBin(operationId, ref, input.destino, actor);
+    }
+    const locId = input.destino ? (await this.locByIdOrCode(operationId, input.destino)).id : null;
+    const bin = await this.bins().requestMove(operationId, ref, locId, actor, input.nota ?? null);
+    const v = await this.bins().view(bin);
+    await this.openTask(operationId, { type: 'BIN_MOVE', sellerId: v.clientes[0] || null, entityId: bin.id, entityRef: bin.numero, unitsEstimate: v.unidades, by: actor, note: locId });
+    await this.continuousHook(operationId, 'BIN_MOVE', { entityId: bin.id, entityRef: bin.numero, sellerId: v.clientes[0] || null, unidades: v.unidades, note: locId });
+    await this.anotarCambio(operationId, `Traslado del Bin ${bin.numero} pedido como tarea${input.destino ? ' hacia ' + input.destino : ''}`, actor);
+    return { ok: true, tarea: true, bin: await this.binViewOut(operationId, v) };
+  }
+
+  async cancelBinPending(operationId: string, ref: string, actor: string) {
+    await this.assertBins(operationId);
+    const antes0 = await this.bins().get(operationId, ref);
+    const antes = antes0.pending?.intoBinId ? await this.bins().get(operationId, antes0.pending.intoBinId) : antes0;
+    const kind = antes.pending?.kind;
+    const bin = await this.bins().cancelPending(operationId, ref, actor);
+    await this.cerrarTareaBin(operationId, kind === 'CONSOLIDATE' ? 'BIN_CONSOLIDATE' : 'BIN_MOVE', bin.id, 'se canceló el trabajo pendiente', 'cancelled', actor);
+    await this.anotarCambio(operationId, `${kind === 'CONSOLIDATE' ? 'Consolidación' : 'Traslado'} del Bin ${bin.numero} CANCELADO`, actor);
+    return this.bins().view(bin);
+  }
+
+  /** Cierra la asignación + la tarea del ledger de una tarea de Bin. */
+  private async cerrarTareaBin(operationId: string, tipo: WorkTaskType, binId: string, motivo: string | null, cierre: 'done' | 'cancelled', actor = 'sistema'): Promise<void> {
+    try {
+      if (cierre === 'done') {
+        await this.completeAssignments(tipo, [binId], actor);
+        const t = this.taskLedger ? await this.taskLedger.findOpen(operationId, tipo as WorkTaskStage, binId).catch(() => null) : null;
+        if (t) await this.advanceTask(operationId, tipo as WorkTaskStage, binId, { state: 'done', by: actor });
+      } else {
+        await this.cerrarTareaVencida(operationId, tipo, binId, { motivo: motivo || 'ya no corresponde', cierre: 'cancelled' });
+      }
+      await this.continuousHook(operationId, tipo, null);
+    } catch { /* best-effort */ }
+  }
+
+  async addLooseToBin(operationId: string, ref: string, input: { ubicacion: string; items: BinItem[] }, actor: string) {
+    await this.assertBins(operationId);
+    const loc = await this.locByIdOrCode(operationId, input.ubicacion);
+    const bin = await this.bins().addLoose(operationId, ref, loc.id, input.items || [], actor);
+    await this.anotarCambio(operationId, `Stock suelto de ${loc.code} pasado al Bin ${bin.numero}: ${(input.items || []).map((i) => `${i.qty} ${i.sku}`).join(', ')}`, actor);
+    return this.binViewOut(operationId, await this.bins().view(bin));
+  }
+  async removeFromBin(operationId: string, ref: string, input: { items: BinItem[]; ubicacion?: string | null }, actor: string) {
+    await this.assertBins(operationId);
+    const locId = input.ubicacion ? (await this.locByIdOrCode(operationId, input.ubicacion)).id : null;
+    const bin = await this.bins().removeToLoose(operationId, ref, input.items || [], actor, locId);
+    await this.anotarCambio(operationId, `Contenido retirado del Bin ${bin.numero} a stock suelto: ${(input.items || []).map((i) => `${i.qty} ${i.sku}`).join(', ')}`, actor);
+    return this.binViewOut(operationId, await this.bins().view(bin));
+  }
+  /** Transfiere líneas/cantidades entre Bins. `hacia: 'nuevo'` = dividir el Bin en uno nuevo. */
+  async transferBetweenBins(operationId: string, desde: string, hacia: string, items: BinItem[] | null, actor: string) {
+    await this.assertBins(operationId);
+    let destRef = hacia;
+    if (!hacia || hacia === 'nuevo') {
+      const src = await this.bins().get(operationId, desde);
+      const nuevo = (await this.bins().create(operationId, { cantidad: 1, tipo: src.tipo, locationId: src.locationId }, actor))[0];
+      destRef = nuevo.id;
+    }
+    const r = await this.bins().transfer(operationId, desde, destRef, items && items.length ? items : null, actor);
+    await this.anotarCambio(operationId, `Transferencia de ${r.unidades} un del Bin ${r.desde.numero} al ${r.hacia.numero}`, actor);
+    return { unidades: r.unidades, desde: await this.binViewOut(operationId, await this.bins().view(r.desde)), hacia: await this.binViewOut(operationId, await this.bins().view(r.hacia)) };
+  }
+
+  /**
+   * Consolidar N Bins en uno (existente o nuevo). Juntos → al instante; en ubicaciones
+   * distintas → tarea para juntarlos. Las reservas activas viajan al destino.
+   */
+  async consolidateBins(operationId: string, input: { origenes: string[]; destino?: string | null; tipo?: string | null; comoTarea?: boolean }, actor: string) {
+    await this.assertBins(operationId);
+    const r = await this.bins().consolidate(operationId, input.origenes, input.destino || null, actor, { tipo: input.tipo ?? null, forzarTarea: !!input.comoTarea });
+    if (!r.ejecutada) {
+      const v = await this.bins().view(r.destino);
+      await this.openTask(operationId, { type: 'BIN_CONSOLIDATE', sellerId: v.clientes[0] || null, entityId: r.destino.id, entityRef: `${r.destino.numero} ← ${r.origenes.map((o) => o.numero).join(', ')}`, unitsEstimate: v.unidades, linesEstimate: r.origenes.length + 1, by: actor });
+      await this.continuousHook(operationId, 'BIN_CONSOLIDATE', { entityId: r.destino.id, entityRef: r.destino.numero, sellerId: v.clientes[0] || null, unidades: v.unidades });
+      await this.anotarCambio(operationId, `Consolidación pedida como tarea: ${r.origenes.map((o) => o.numero).join(', ')} → ${r.destino.numero} (están en ubicaciones distintas)`, actor);
+      return { ejecutada: false, tarea: true, destino: await this.binViewOut(operationId, v), origenes: r.origenes.map((o) => o.numero) };
+    }
+    const reub = await this.rehomeConsolidation(operationId, r.destino, r.movidos, actor);
+    await this.anotarCambio(operationId, `Bins ${r.origenes.map((o) => o.numero).join(', ')} CONSOLIDADOS en ${r.destino.numero}${reub ? ` (${reub} orden(es) con reservas reubicadas)` : ''}`, actor);
+    return { ejecutada: true, destino: await this.binViewOut(operationId, await this.bins().view(r.destino)), origenes: r.origenes.map((o) => o.numero), ordenesReubicadas: reub };
+  }
+  private async rehomeConsolidation(operationId: string, destino: Bin, movidos: Array<{ fromBinId: string; sellerId: string; reservado: number }>, actor: string): Promise<number> {
+    let n = 0;
+    const porBin = new Map<string, string[]>();
+    for (const m of movidos) { const a = porBin.get(m.fromBinId) || []; a.push(m.sellerId); porBin.set(m.fromBinId, a); }
+    for (const [binId, sellers] of porBin) n += await this.rehomeBin(operationId, binId, { binId: destino.id, locationId: destino.locationId!, detail: `consolidado en Bin ${destino.numero}` }, sellers, actor);
+    return n;
+  }
+  /** Ejecuta la tarea de consolidación (el operario ya juntó los Bins). */
+  async executeBinConsolidation(operationId: string, destRef: string, actor: string) {
+    await this.assertBins(operationId);
+    const dst = await this.bins().get(operationId, destRef);
+    if (!dst.pending || dst.pending.kind !== 'CONSOLIDATE') throw new ValidationError(`El Bin ${dst.numero} no tiene una consolidación pendiente.`);
+    const r = await this.bins().executeConsolidation(operationId, dst.id, dst.pending.sourceBinIds || [], actor);
+    const reub = await this.rehomeConsolidation(operationId, r.destino, r.movidos, actor);
+    await this.cerrarTareaBin(operationId, 'BIN_CONSOLIDATE', dst.id, null, 'done', actor);
+    await this.anotarCambio(operationId, `Consolidación ejecutada: ${r.origenes.map((o) => o.numero).join(', ')} → ${r.destino.numero}`, actor);
+    return { ejecutada: true, destino: await this.binViewOut(operationId, await this.bins().view(r.destino)), origenes: r.origenes.map((o) => o.numero), ordenesReubicadas: reub };
+  }
+
+  async deleteBin(operationId: string, ref: string, actor: string) {
+    await this.assertBins(operationId);
+    const bin = await this.bins().remove(operationId, ref, actor);
+    await this.anotarCambio(operationId, `Bin ${bin.numero} ELIMINADO`, actor);
+    return this.bins().view(bin);
+  }
+  async unpackBin(operationId: string, ref: string, input: { haciaBin?: string | null }, actor: string) {
+    await this.assertBins(operationId);
+    const r = await this.bins().unpack(operationId, ref, actor, { toBinRef: input.haciaBin ?? null });
+    await this.anotarCambio(operationId, `Bin ${r.bin.numero} DESARMADO: ${r.unidades} un → ${r.destino}; el Bin quedó eliminado`, actor);
+    return { ok: true, unidades: r.unidades, destino: r.destino, bin: await this.bins().view(r.bin) };
+  }
+
+  /**
+   * Conteo de Bin completo: se compara lo contado (físico, incluye lo reservado) contra el
+   * contenido teórico. Las diferencias generan ajustes CON MOTIVO sobre el disponible de
+   * cada línea (imputados al cliente de la línea) y quedan en el historial del Bin.
+   */
+  async countBin(operationId: string, ref: string, input: { lineas: Array<{ sellerId: string; sku: string; lot?: string | null; qty: number }>; motivo?: string | null }, actor: string) {
+    await this.assertBins(operationId);
+    const bin = await this.bins().get(operationId, ref);
+    if (!bin.locationId) throw new ValidationError(`El Bin ${bin.numero} no tiene ubicación.`);
+    const teorico = await this.bins().lineas(bin);
+    const motivo = String(input.motivo || '').trim() || 'conteo de Bin';
+    const key = (s: string, k: string, l: string | null) => `${s}|${k}|${l ?? ''}`;
+    const contado = new Map<string, { sellerId: string; sku: string; lot: string | null; qty: number }>();
+    for (const l of input.lineas || []) {
+      const q = Math.round(Number(l.qty));
+      if (!(q >= 0)) throw new ValidationError(`Cantidad contada inválida para ${l.sku}.`);
+      contado.set(key(l.sellerId, l.sku, l.lot ?? null), { sellerId: l.sellerId, sku: l.sku, lot: l.lot ?? null, qty: q });
+    }
+    const keys = new Set<string>([...teorico.map((t) => key(t.sellerId, t.sku, t.lot)), ...contado.keys()]);
+    const diferencias: Array<{ sellerId: string; sku: string; lot: string | null; teorico: number; contado: number; delta: number; aviso?: string }> = [];
+    let unidadesTeoricas = 0, absVar = 0;
+    for (const k of keys) {
+      const t = teorico.find((x) => key(x.sellerId, x.sku, x.lot) === k);
+      const c = contado.get(k);
+      const exp = t ? t.cantidad : 0;
+      const cnt = c ? c.qty : 0; // lo que no se contó, se cuenta como 0 (faltante)
+      unidadesTeoricas += exp;
+      const delta = cnt - exp;
+      if (!delta) continue;
+      const sellerId = (t || c)!.sellerId, sku = (t || c)!.sku, lot = (t || c)!.lot ?? null;
+      let aplicado = delta, aviso: string | undefined;
+      if (delta < 0 && t && -delta > t.disponible) { aplicado = -t.disponible; aviso = `faltan ${-delta} pero ${t.reservada} están reservadas: se ajustó solo lo disponible; revisa las órdenes afectadas`; }
+      if (aplicado) await this.inventory.adjust(sellerId, { sku, locationId: bin.locationId, lot, qtyDelta: aplicado, reference: `CONTEO BIN ${bin.numero} · ${motivo}`, actor, binId: bin.id });
+      absVar += Math.abs(delta);
+      diferencias.push({ sellerId, sku, lot, teorico: exp, contado: cnt, delta, ...(aviso ? { aviso } : {}) });
+    }
+    await this.bins().noteCount(bin.id, actor, diferencias.length ? `${diferencias.length} diferencia(s): ${diferencias.map((d) => `${d.sku} ${d.delta > 0 ? '+' : ''}${d.delta}`).join(', ')} · motivo: ${motivo}` : 'sin diferencias');
+    if (this.countAudits) {
+      const lineas = keys.size || 1;
+      try {
+        await this.countAudits.save({ id: this.ids.next(), operationId, sellerId: teorico[0]?.sellerId || (input.lineas[0]?.sellerId ?? ''), locationId: bin.locationId, at: this.clockNow(), linesCounted: lineas, linesAccurate: lineas - diferencias.length, unitsExpected: unidadesTeoricas, absVarianceUnits: absVar, accuracyPct: (lineas - diferencias.length) / lineas, variances: diferencias.map((d) => ({ sku: d.sku, lot: d.lot, locationId: bin.locationId!, expected: d.teorico, counted: d.contado, delta: d.delta })) } as any);
+      } catch { /* auditoría best-effort */ }
+    }
+    await this.bins().refreshEmpty(bin.id, actor, 'quedó sin contenido tras el conteo');
+    if (diferencias.length) await this.anotarCambio(operationId, `Conteo del Bin ${bin.numero}: ${diferencias.length} diferencia(s) ajustada(s) · motivo: ${motivo}`, actor);
+    return { bin: bin.numero, diferencias, exacto: !diferencias.length };
+  }
+  async validateBinPresence(operationId: string, ref: string, ubicacion: string, actor: string) {
+    await this.assertBins(operationId);
+    const loc = await this.locByIdOrCode(operationId, ubicacion);
+    const r = await this.bins().validatePresence(operationId, ref, loc.id, actor);
+    return { bin: r.bin.numero, ok: r.ok, esperado: r.esperado, encontrado: r.encontrado };
+  }
+
+  /** Ubicaciones sugeridas para un Bin: el motor de guardado con el SKU dominante, excluyendo recepción. */
+  async suggestBinLocation(operationId: string, ref: string): Promise<Array<{ code: string; locationId: string; motivo: string }>> {
+    const bin = await this.bins().get(operationId, ref);
+    const v = await this.bins().view(bin);
+    const locs = await this.locations.listByOperation(operationId);
+    const ocupacionBins = new Map<string, number>();
+    for (const b of await this.bins().list(operationId, { estado: 'UBICADO' })) if (b.locationId) ocupacionBins.set(b.locationId, (ocupacionBins.get(b.locationId) || 0) + 1);
+    const out: Array<{ code: string; locationId: string; motivo: string }> = [];
+    const top = v.lineas.slice().sort((a, b) => b.cantidad - a.cantidad)[0];
+    if (top) {
+      const sugs = await this.suggestPutaway(top.sellerId, { sku: top.sku, qty: v.unidades }).catch(() => [] as PutawaySuggestion[]);
+      for (const s of sugs) {
+        if (s.locationId === bin.locationId || out.some((o) => o.locationId === s.locationId)) continue;
+        out.push({ code: s.locationCode, locationId: s.locationId, motivo: (s.reasons || []).slice(0, 2).join(' · ') || 'sugerida por el motor de guardado' });
+        if (out.length >= 3) break;
+      }
+    }
+    if (out.length < 3) {
+      // Respaldo: ubicaciones de almacenaje con menos Bins.
+      const libres = locs.filter((l) => l.active !== false && l.zoneType === ZoneType.STORAGE && l.id !== bin.locationId && !out.some((o) => o.locationId === l.id))
+        .sort((a, b) => (ocupacionBins.get(a.id) || 0) - (ocupacionBins.get(b.id) || 0) || a.pickRank - b.pickRank);
+      for (const l of libres) { out.push({ code: l.code, locationId: l.id, motivo: `${ocupacionBins.get(l.id) || 0} Bin(s) ubicados ahí` }); if (out.length >= 3) break; }
+    }
+    return out;
+  }
+
+  /** Recepción hacia un Bin: resuelve el Bin (por número), lo deja en la ubicación de recepción y recibe. */
+  private async prepararBinesDeRecepcion(sellerId: string, receipt: ReceiptOrder, counts: ReceiptCountInput[], actor: string): Promise<Map<string, Bin>> {
+    const usados = new Map<string, Bin>();
+    if (!counts.some((c) => c.binId)) return usados;
+    const opId = await this.operationOfSeller(sellerId);
+    await this.assertBins(opId);
+    for (const c of counts) {
+      if (!c.binId) continue;
+      const ref = String(c.binId);
+      let bin = usados.get(ref);
+      if (!bin) { bin = await this.bins().prepareReceive(opId, ref, receipt.locationId, receipt.id, actor); usados.set(ref, bin); }
+      c.binId = bin.id;
+    }
+    return usados;
+  }
+
+  /** Números de Bin por id (para el kardex, el stock y la picklist). */
+  async binNumeros(ids: Array<string | null | undefined>): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (!this.binsSvc) return out;
+    for (const id of new Set(ids.filter(Boolean) as string[])) {
+      const b = await this.binsSvc.findQuietById(id);
+      if (b) out.set(id, b.numero);
+    }
+    return out;
+  }
+
+  /** Kardex con Bin: cada movimiento lleva su Bin y, en un traslado, el Bin de origen → destino. */
+  async enrichMovementsWithBins<T extends StockMovement>(movs: T[]): Promise<Array<T & { binNumero: string | null; binOrigen: string | null; binDestino: string | null }>> {
+    const nums = await this.binNumeros(movs.map((m) => m.binId));
+    const porGrupo = new Map<string, T[]>();
+    for (const m of movs) if (m.groupId) { const a = porGrupo.get(m.groupId) || []; a.push(m); porGrupo.set(m.groupId, a); }
+    return movs.map((m) => {
+      let binOrigen: string | null = null, binDestino: string | null = null;
+      const g = m.groupId ? porGrupo.get(m.groupId) || [] : [];
+      if (g.length >= 2) {
+        const out = g.find((x) => x.qtyDelta < 0 && x.sku === m.sku && (x.lot ?? null) === (m.lot ?? null));
+        const inn = g.find((x) => x.qtyDelta > 0 && x.sku === m.sku && (x.lot ?? null) === (m.lot ?? null));
+        binOrigen = out?.binId ? nums.get(out.binId) || null : null;
+        binDestino = inn?.binId ? nums.get(inn.binId) || null : null;
+      } else if (m.binId) { if (m.qtyDelta < 0) binOrigen = nums.get(m.binId) || null; else binDestino = nums.get(m.binId) || null; }
+      return { ...m, binNumero: m.binId ? nums.get(m.binId) || null : null, binOrigen, binDestino };
+    });
+  }
+
+  /** Stock con el número de Bin de cada bucket (desglose por ubicación y Bin). */
+  async getStockConBins(query: StockQuery): Promise<Array<StockBalance & { binNumero: string | null }>> {
+    const bal = await this.inventory.getStock(query);
+    const nums = await this.binNumeros(bal.map((b) => b.binId));
+    return bal.map((b) => ({ ...b, binNumero: b.binId ? nums.get(b.binId) || null : null }));
+  }
+
+  /** Tras un picking: notas en el historial del Bin y vaciado automático. */
+  private async binsTrasPick(antes: SalesOrder | null, despues: SalesOrder, actor: string): Promise<void> {
+    if (!this.binsSvc) return;
+    const prev = new Map<string, number>();
+    if (antes) for (const l of antes.lines || []) (l.allocations || []).forEach((a, i) => { if (a.binId) prev.set(`${l.lineNo}:${i}`, a.pickedQty ?? 0); });
+    const ref = despues.externalOrderId || despues.id;
+    for (const l of despues.lines || []) {
+      for (let i = 0; i < (l.allocations || []).length; i++) {
+        const a = l.allocations[i];
+        if (!a.binId) continue;
+        const d = (a.pickedQty ?? 0) - (prev.get(`${l.lineNo}:${i}`) ?? 0);
+        if (d > 0) await this.binsSvc.notePick(a.binId, actor, `${d} un de ${a.sku ?? l.sku} para la orden ${ref}`).catch(() => undefined);
+      }
+    }
+  }
+
+  private async locByIdOrCode(operationId: string, ref: string) {
+    const k = String(ref || '').trim();
+    let l = await this.locations.findById(k).catch(() => null);
+    if (!l || l.operationId !== operationId) l = await this.locations.findByCode(operationId, k).catch(() => null);
+    if (!l || l.operationId !== operationId) throw new NotFoundError(`Ubicación no encontrada: ${k}`);
+    return l;
+  }
+
+  /** Resumen de Bins para el contexto del agente/copiloto. */
+  async binsContextText(operationId: string): Promise<string> {
+    if (!(await this.binsHabilitado(operationId))) return '';
+    const list = await this.bins().list(operationId, {});
+    if (!list.length) return '== BINS == Sin Bins creados todavía.';
+    const por: Record<string, number> = {};
+    for (const b of list) por[b.estado] = (por[b.estado] || 0) + 1;
+    const at = await this.bins().atascados(operationId);
+    const baja = await this.bins().bajaOcupacion(operationId);
+    const L = [`== BINS (contenedores; un Bin NO es una ubicación) == ${list.length} activos: ` + Object.entries(por).map(([k, v]) => `${BIN_ESTADO_ES[k] || k}=${v}`).join(', ') + '.'];
+    if (at.porUbicar.length) L.push(`Por ubicar hace más del umbral: ${at.porUbicar.slice(0, 8).map((b) => `${b.numero} (${b.horas} h${b.ubicacion ? ', en ' + b.ubicacion : ''})`).join(', ')}.`);
+    if (at.armadoAbandonado.length) L.push(`En armado sin movimiento: ${at.armadoAbandonado.slice(0, 8).map((b) => `${b.numero} (${b.horas} h)`).join(', ')}.`);
+    if (baja.length) L.push(`Baja ocupación (candidatos a consolidar): ${baja.slice(0, 8).map((b) => `${b.numero} ${b.unidades} un en ${b.ubicacion || '?'}`).join(', ')}.`);
+    return L.join('\n');
   }
 }

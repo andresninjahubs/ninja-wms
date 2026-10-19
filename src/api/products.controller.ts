@@ -46,6 +46,10 @@ export class ProductsController {
         isKit: dto.isKit,
         kitMode: dto.kitMode ?? null,
         components: dto.components?.map((c) => ({ sku: c.sku, qty: c.qty })),
+        largoCm: dto.largoCm,
+        anchoCm: dto.anchoCm,
+        altoCm: dto.altoCm,
+        pesoKg: dto.pesoKg,
       },
       actorOf(user),
     );
@@ -73,6 +77,10 @@ export class ProductsController {
         isKit: dto.isKit,
         kitMode: dto.kitMode !== undefined ? dto.kitMode : undefined,
         components: dto.components?.map((c) => ({ sku: c.sku, qty: c.qty })),
+        largoCm: dto.largoCm,
+        anchoCm: dto.anchoCm,
+        altoCm: dto.altoCm,
+        pesoKg: dto.pesoKg,
       },
       actorOf(user),
     );

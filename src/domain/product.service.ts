@@ -34,6 +34,12 @@ import {
   StockState,
 } from './types';
 
+/** Medida opcional: positiva o null (0, vacío o negativo = sin dato). */
+function medida(v: unknown): number | null {
+  const n = Number(v);
+  return v == null || v === '' || !isFinite(n) || n <= 0 ? null : Math.round(n * 1000) / 1000;
+}
+
 export interface ProductInput {
   sku: string;
   description: string;
@@ -46,6 +52,11 @@ export interface ProductInput {
   isKit?: boolean;
   kitMode?: KitMode | null;
   components?: KitComponent[];
+  /** Medidas opcionales (cm / kg): permiten prorratear el cobro de Bins por volumen o peso. */
+  largoCm?: number | null;
+  anchoCm?: number | null;
+  altoCm?: number | null;
+  pesoKg?: number | null;
 }
 
 export interface ProductPatch {
@@ -59,6 +70,11 @@ export interface ProductPatch {
   isKit?: boolean;
   kitMode?: KitMode | null;
   components?: KitComponent[];
+  /** Medidas opcionales (cm / kg): permiten prorratear el cobro de Bins por volumen o peso. */
+  largoCm?: number | null;
+  anchoCm?: number | null;
+  altoCm?: number | null;
+  pesoKg?: number | null;
 }
 
 export class ProductService {
@@ -140,6 +156,10 @@ export class ProductService {
       expiryControlled: input.expiryControlled ?? false,
       rotationClass: input.rotationClass ?? RotationClass.B,
       active: input.active ?? true,
+      largoCm: medida(input.largoCm),
+      anchoCm: medida(input.anchoCm),
+      altoCm: medida(input.altoCm),
+      pesoKg: medida(input.pesoKg),
       ...kit,
     };
     await this.skus.save(sku);
@@ -167,6 +187,10 @@ export class ProductService {
       expiryControlled: patch.expiryControlled != null ? patch.expiryControlled : cur.expiryControlled,
       rotationClass: patch.rotationClass ?? cur.rotationClass,
       active: patch.active != null ? patch.active : cur.active,
+      largoCm: patch.largoCm !== undefined ? medida(patch.largoCm) : cur.largoCm ?? null,
+      anchoCm: patch.anchoCm !== undefined ? medida(patch.anchoCm) : cur.anchoCm ?? null,
+      altoCm: patch.altoCm !== undefined ? medida(patch.altoCm) : cur.altoCm ?? null,
+      pesoKg: patch.pesoKg !== undefined ? medida(patch.pesoKg) : cur.pesoKg ?? null,
       ...kit,
     };
     await this.skus.save(next);
@@ -208,7 +232,8 @@ export class ProductService {
     const sources: { sku: string; locationId: string; lot: string | null; qty: number }[] = [];
     for (const c of kit.components) {
       let remaining = c.qty * qty;
-      const buckets = (await this.inventory.getStock({ sellerId, sku: c.sku }))
+      // Solo stock SUELTO: el armado consume por ubicación (el contenido de los Bins se mueve con sus operaciones).
+      const buckets = (await this.inventory.getStock({ sellerId, sku: c.sku, binId: null }))
         .filter((b) => b.state === StockState.AVAILABLE && b.qty > 0);
       for (const b of buckets) {
         if (remaining <= 0) break;

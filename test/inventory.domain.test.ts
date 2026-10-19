@@ -18,6 +18,7 @@ import { ReceiptOrderService } from '../src/domain/receipt.service';
 import { ReturnService } from '../src/domain/return.service';
 import { ProductService } from '../src/domain/product.service';
 import { BillingService } from '../src/domain/billing.service';
+import { BinService } from '../src/domain/bin.service';
 import { PackagingService } from '../src/domain/packaging.service';
 import { OpsChannelService, classifyHeuristic, insightsHeuristic } from '../src/domain/ops-channel.service';
 import { parseCopilotIntent, buildInsights } from '../src/domain/copilot';
@@ -25,7 +26,7 @@ import { COPILOT_TOOLS, COPILOT_ACTION_TOOLS } from '../src/domain/copilot-tools
 import { deadlineBoost, deadlineState, nextCutoff, resolveDueAt } from '../src/domain/deadline';
 import { PLANTILLAS, aplicarPatch, opsDePlantilla, primerHueco, transformar, validarWidget } from '../src/domain/ai-dashboard';
 import { SCHEDULE_DEFAULT, estadoVentana, localEn, normalizarSchedule, resumenSchedule } from '../src/domain/agent-schedule';
-import { InMemoryOpsChannelRepository } from '../src/infra/memory/in-memory.repositories';
+import { InMemoryOpsChannelRepository, InMemoryBinRepository } from '../src/infra/memory/in-memory.repositories';
 import { MetricsService } from '../src/domain/metrics.service';
 import { RollupService } from '../src/domain/rollup.service';
 import { LaborService } from '../src/domain/labor.service';
@@ -669,7 +670,7 @@ async function run() {
     await f.facade.setAutoBalanceContinuous('op1', true, 'sup');
     let c = await ctx();
     assert.match(c, /auto-balanceo continuo ON/, 'se ve al instante');
-    assert.match(c, /CAMBIOS RECIENTES[\s\S]*Auto-balanceo continuo ACTIVADO.*\(por Sofía Sup\)/);
+    assert.match(c, /CAMBIOS RECIENTES[\s\S]*Auto-balanceo continuo ACTIVADO.*HECHO POR: Sofía Sup \(administrador\)/);
     await f.facade.setAutoBalanceContinuous('op1', false, 'sup');
     assert.match(await ctx(), /auto-balanceo continuo OFF/);
 
@@ -683,6 +684,83 @@ async function run() {
     assert.match(c, /Recepciones abiertas 0/);
     assert.match(c, /ELIMINADA/);
     assert.ok(!(await f.facade.getOperatorTasks('op1', 'opa')).some((t: any) => t.type === 'RECEIVE'), 'la tarea de la recepción eliminada salió de la bandeja');
+  });
+
+  await test('copiloto: cada cambio dice QUIÉN lo hizo (persona con rol, sistema o sin registro)', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    const stg = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 1 });
+    await f.facade.createUser({ id: 'ninja', name: 'Andrés Rojas', email: 'andres@ninjahubs.cl', role: UserRole.PLATFORM_ADMIN, operationId: null } as any);
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.receive('acme', { sku: 'CAM', qty: 10, locationId: stg.id });
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'DEMO-4-015', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'CAM', qty: 1 }] }, 'ninja');
+    await f.facade.cancelOrder('acme', o.id, 'ninja');
+    const ctx = (await f.facade.copilotContextPreview('op1', null)).context;
+    assert.match(ctx, /Orden DEMO-4-015 CANCELADA.*HECHO POR: Andrés Rojas \(administrador de plataforma Ninja\)/);
+    const lista: any = await f.facade.runCopilotTool('listar_ordenes', { estado: 'CANCELLED' }, 'op1', null);
+    assert.equal(lista.ordenes[0].ultimoCambio.hechoPor, 'Andrés Rojas (administrador de plataforma Ninja)');
+    const lt: any = await f.facade.runCopilotTool('linea_tiempo_orden', { orden: 'DEMO-4-015' }, 'op1', null);
+    assert.ok(lt.lineaTiempo.every((e: any) => /Andrés Rojas/.test(e.hechoPor)), JSON.stringify(lt.lineaTiempo));
+    // Vocabulario del autor: sistema, agente, desconocido, email
+    assert.equal(await f.facade.describirActor('system'), 'el sistema (automático)');
+    assert.equal(await f.facade.describirActor(null), 'autor no registrado');
+    assert.equal(await f.facade.describirActor('andres@ninjahubs.cl'), 'Andrés Rojas (administrador de plataforma Ninja)');
+    assert.match(await f.facade.describirActor('u-fantasma'), /usuario no encontrado/);
+  });
+
+  await test('copiloto: recepción de punta a punta (leer, crear, editar, llegada, recibir, cerrar, guardar, eliminar)', async () => {
+    const f = buildFacade();
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    await f.facade.createSeller({ id: 'acme', operationId: 'op1', name: 'ACME' });
+    await f.facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 1 });
+    await f.facade.createUser({ id: 'sup', name: 'Sofía', email: 'sup@x.cl', role: UserRole.ADMIN, operationId: 'op1' });
+    await f.facade.createSku('acme', { sku: 'CAM', description: 'Camisa' });
+    await f.facade.createSku('acme', { sku: 'PAN', description: 'Pantalón' });
+    await f.facade.createSku('acme', { sku: 'GOR', description: 'Gorro' });
+    // Nivel 3 + directo: ejecuta sin quedar propuesto (el flujo de propuestas ya tiene sus tests).
+    await f.facade.updateAgentSettings('op1', { autonomyLevel: 3, actionMode: 'direct' } as any, 'sup');
+    const actor = { id: 'sup', role: 'ADMIN' };
+    const act = (tool: string, args: any) => f.facade.copilotConfirmTool('op1', null, actor, { tool, args });
+    const leer = (tool: string, args: any) => f.facade.runCopilotTool(tool, args, 'op1', null) as Promise<any>;
+
+    // Crear
+    const c: any = await (f.facade as any).copilotExecAction('crear_recepcion', { sellerId: 'acme', referencia: 'OC-55', proveedor: 'Textil SA', lineas: [{ sku: 'CAM', qty: 10 }, { sku: 'PAN', qty: 5 }] }, { operationId: 'op1', sellerId: null, mode: 'direct', canWrite: true, question: 't', actor, pendingActions: [], confirmed: true });
+    assert.equal(c.ok, true);
+    // Leer: lista filtrada y detalle por referencia
+    const lista = await leer('recepciones', { estado: 'abiertas' });
+    assert.equal(lista.total, 1); assert.equal(lista.recepciones[0].referencia, 'OC-55'); assert.equal(lista.recepciones[0].estadoTexto, 'Creada');
+    let d = await leer('detalle_recepcion', { recepcion: 'OC-55' });
+    assert.equal(d.lineas.length, 2); assert.equal(d.lineas[0].descripcion, 'Camisa'); assert.match(d.siguientePaso, /recibir/i);
+    // Editar: cambia cantidad, agrega y quita líneas, cambia proveedor
+    const e: any = await act('editar_recepcion', { recepcion: 'OC-55', proveedor: 'Textil Norte', cambiarCantidades: [{ sku: 'CAM', qty: 12 }], agregarLineas: [{ sku: 'GOR', qty: 4 }], quitarSkus: ['PAN'] });
+    assert.equal(e.ok, true, JSON.stringify(e));
+    d = await leer('detalle_recepcion', { recepcion: 'OC-55' });
+    assert.deepEqual(d.lineas.map((l: any) => `${l.sku}:${l.esperado}`), ['CAM:12', 'GOR:4']); assert.equal(d.proveedor, 'Textil Norte');
+    // Llegada
+    assert.equal((await act('marcar_llegada_recepcion', { recepcion: 'OC-55', nota: 'patente AB12' }) as any).estado, 'ARRIVED');
+    // Recibir por SKU (parcial) y luego todo lo pendiente
+    let r: any = await act('recibir_recepcion', { recepcion: 'OC-55', conteos: [{ sku: 'CAM', cantidad: 7 }] });
+    assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.estado, 'PARTIAL'); assert.equal(r.pendientes, 9);
+    // Ya no se puede editar una recepción con algo recibido
+    assert.match((await act('editar_recepcion', { recepcion: 'OC-55', notas: 'x' }) as any).error, /solo se edita/);
+    r = await act('recibir_recepcion', { recepcion: 'OC-55', todo: true });
+    assert.equal(r.estado, 'RECEIVED'); assert.equal(r.unidadesRecibidas, 16);
+    // Guardar: parte de un SKU en destino indicado, el resto en la sugerida
+    let g: any = await act('guardar_recepcion', { recepcion: 'OC-55', sku: 'CAM', cantidad: 5, destino: 'A-01' });
+    assert.equal(g.ok, true, JSON.stringify(g)); assert.deepEqual(g.guardado, [{ sku: 'CAM', cantidad: 5, destino: 'A-01', sugerida: false }]);
+    g = await act('guardar_recepcion', { recepcion: 'OC-55' });
+    assert.equal(g.ok, true, JSON.stringify(g));
+    assert.deepEqual(g.guardado.map((x: any) => `${x.sku}:${x.cantidad}`), ['CAM:7', 'GOR:4']);
+    d = await leer('detalle_recepcion', { recepcion: 'OC-55' });
+    assert.ok(d.porGuardar.every((x: any) => x.quedaEnUbicacionDeRecepcion === 0)); assert.match(d.siguientePaso, /no queda nada/);
+    // Eliminar: una recepción guardada no se puede revertir; una nueva sí se elimina
+    assert.ok((await act('eliminar_recepcion', { recepcion: 'OC-55' }) as any).error, 'lo guardado ya no se revierte');
+    await act('crear_recepcion', { sellerId: 'acme', referencia: 'OC-99', lineas: [{ sku: 'CAM', qty: 1 }] });
+    const del: any = await act('eliminar_recepcion', { recepcion: 'OC-99' });
+    assert.equal(del.ok, true, JSON.stringify(del));
+    assert.match((await leer('detalle_recepcion', { recepcion: 'OC-99' })).error, /No encontré/);
   });
 
   await test('una orden DESPACHADA no se cancela: corresponde una devolución', async () => {
@@ -1004,7 +1082,9 @@ async function run() {
     const assemblyLogs = new InMemoryAssemblyLogRepository();
     const productService = new ProductService(skus, productLogs, sellers, inventory, bc, ids, clock, assemblyLogs);
     const billingRepo = new InMemoryBillingRepository();
-    const billingService = new BillingService(billingRepo, movements, locations, orders, assemblyLogs, sellers, ids, clock, packagingService);
+    const binsRepo = new InMemoryBinRepository();
+    const binService = new BinService(binsRepo, inventory, locations, sellers, skus, lots, ids, clock);
+    const billingService = new BillingService(billingRepo, movements, locations, orders, assemblyLogs, sellers, ids, clock, packagingService, binService);
     const rollups = new InMemoryRollupRepository();
     const laborTasks = new InMemoryLaborTaskRepository();
     const metricsService = new MetricsService(movements, orders, receipts, clock, events, rollups);
@@ -1041,7 +1121,8 @@ async function run() {
     const taskTimeModels = new InMemoryTaskTimeModelRepository();
     const facade = new WmsFacade(inventory, orderService, receiptService, productService, billingService, sellers, skus, locations, ids, advisor, cyc, userSvc, bc, opSvc, metricsService, chatService, platformUsageService, announcementService, webhookService, shippingLabels, returnService, serials, packagingService,
       undefined, undefined, clock, undefined, aiConfig, copilotSettings, authTokens, emailSender, planConfig, countAudits, events, rollupService, laborService, aiAudit, abcService, assignments, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, undefined, consignees, apiKeys, taskEvents, taskTimeModels);
-    return { facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig, consignees, apiKeys, taskEvents, taskTimeModels };
+    facade.attachBins(binService);
+    return { binService, facade, inventory, clock, webhookService, webhookRepo, serials, packagingService, billingService, authTokens, orders, countAudits, events, rollups, laborTasks, rollupService, laborService, metricsService, movements, aiAudit, abcService, skus, assignments, users, costingService, taskLedger, agentRuleConfig, agentAlertRepo, agentJournal, copilotSettings, aiConfig, consignees, apiKeys, taskEvents, taskTimeModels };
   }
 
   async function seedScan(facade: WmsFacade) {
@@ -1263,6 +1344,16 @@ async function run() {
     assert.ok(log.length >= 3);
     const actions = log.map((e) => e.action);
     assert.ok(actions.includes('CREADO') && actions.includes('EDITADO') && actions.includes('DESACTIVADO'));
+  });
+
+  await test('productos: medidas opcionales (cm/kg) para prorratear Bins por volumen o peso', async () => {
+    const { facade } = await seedProducts();
+    const p = await facade.createProduct('acme', { sku: 'DIM-1', description: 'Con medidas', largoCm: 30, anchoCm: 20, altoCm: 10, pesoKg: 1.5 }, 'carla');
+    assert.equal(p.largoCm, 30); assert.equal(p.pesoKg, 1.5);
+    const p2 = await facade.updateProduct('acme', 'DIM-1', { altoCm: null, pesoKg: 0 }, 'carla');
+    assert.equal(p2.altoCm, null, 'null borra la medida');
+    assert.equal(p2.pesoKg, null, '0 = sin dato');
+    assert.equal(p2.largoCm, 30, 'lo no enviado se conserva');
   });
 
   await test('productos: no se puede crear un SKU duplicado', async () => {
@@ -2564,7 +2655,7 @@ async function run() {
     await facade.createOperation({ id: 'op1', name: 'Op 1' });
     const rules = await facade.agentRules('op1');
     assert.equal(rules.length, AGENT_RULES.length, 'el panel expone TODO el catálogo');
-    assert.equal(rules.length, 13, 'trece reglas en el catálogo');
+    assert.equal(rules.length, 15, 'quince reglas en el catálogo');
     assert.ok(rules.every((r) => typeof r.enabled === 'boolean' && r.threshold >= 0), 'cada regla trae config efectiva');
     const upd = await facade.updateAgentRule('op1', 'orden_estancada', { threshold: 6, enabled: false }, 'ana');
     assert.equal(upd.threshold, 6); assert.equal(upd.enabled, false);
@@ -2806,10 +2897,13 @@ async function run() {
     await f.facade.createUser({ id: 'op-ctx', name: 'Opa', email: 'opa@ctx.cl', role: UserRole.OPERATOR, operationId: 'op1' });
     // Algunas herramientas piden un argumento concreto (una orden, un operario, un
     // código): pasárselo es parte del contrato, y sin él responden un error legible.
+    const rcCtx = await f.facade.createReceipt('acme', { supplier: 'Prov', reference: 'OC-CTX', lines: [{ sku: 'CAM', qty: 3 }] } as any, 'ana');
+    const binCtx = (await f.facade.createBins('op1', { cantidad: 1 }, 'ana')).bins[0].numero;
     const ARGS: Record<string, any> = {
-      picklist_orden: { orden: 'CTX-1' }, detalle_orden: { orden: 'CTX-1' },
+      picklist_orden: { orden: 'CTX-1' }, detalle_orden: { orden: 'CTX-1' }, detalle_recepcion: { recepcion: rcCtx.id },
       tareas_operario: { operario: 'Opa' }, identificar_codigo: { codigo: 'EAN-CTX' },
       sugerir_ubicacion: { sku: 'CAM', cantidad: 5 },
+      buscar_bin: { numero: binCtx }, historial_bin: { numero: binCtx }, sugerir_ubicacion_bin: { numero: binCtx }, bins_en_ubicacion: { ubicacion: 'RECV-01' },
     };
     // Cada herramienta de LECTURA del copiloto debe responder (sin lanzar ni devolver {error}).
     for (const tool of COPILOT_TOOLS) {
@@ -7213,6 +7307,278 @@ async function run() {
     assert.equal(resolveDueAt({ nowIso: '2026-10-05T13:00:00Z', carrier: 'Starken', config: full, sellerId: 'acme' }).dueSource, 'regla');
     assert.equal(resolveDueAt({ nowIso: '2026-10-05T13:00:00Z', carrier: 'Starken', config: full, sellerId: 'otro' }).dueSource, 'corte');
     assert.equal(resolveDueAt({ nowIso: '2026-10-05T13:00:00Z', carrier: 'Starken', config: full, sellerId: 'acme', explicito: '2026-10-09T12:00:00Z' }).dueSource, 'manual');
+  });
+
+  // ---- Bins (contenedores / LPN) -----------------------------------------------------
+  console.log('\nBins — contenedores lógicos (un Bin NO es una ubicación)\n');
+
+  async function seedBins() {
+    const f = buildFacade();
+    f.clock.set('2026-10-01T12:00:00.000Z');
+    await f.facade.createOperation({ id: 'op1', name: 'Op 1' });
+    for (const [id, name] of [['acme', 'ACME'], ['globex', 'Globex'], ['initech', 'Initech']]) await f.facade.createSeller({ id, operationId: 'op1', name });
+    const recv = await f.facade.createLocation({ operationId: 'op1', code: 'RECV-01', zoneType: ZoneType.RECEIVING });
+    const a1 = await f.facade.createLocation({ operationId: 'op1', code: 'A-01', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 1 });
+    const a2 = await f.facade.createLocation({ operationId: 'op1', code: 'A-02', zoneType: ZoneType.STORAGE, capacity: 5000, pickRank: 2 });
+    await f.facade.createUser({ id: 'sup', name: 'Sofía', email: 'sup@x.cl', role: UserRole.ADMIN, operationId: 'op1' });
+    await f.facade.createUser({ id: 'opa', name: 'Op A', email: 'opa@x.cl', role: UserRole.OPERATOR, operationId: 'op1' });
+    for (const sid of ['acme', 'globex', 'initech']) {
+      await f.facade.createSku(sid, { sku: 'CAM', description: 'Camisa', lotControlled: true } as any);
+      await f.facade.createSku(sid, { sku: 'PAN', description: 'Pantalón' });
+      await f.facade.createSku(sid, { sku: 'GOR', description: 'Gorro' });
+    }
+    const total = async (sid: string, q: any = {}) => (await f.facade.getStock({ sellerId: sid, ...q })).reduce((t: number, b: any) => t + b.qty, 0);
+    return { f, recv, a1, a2, total };
+  }
+
+  await test('bins 1: recibir 3 SKUs/lotes en un Bin, cerrarlo y ubicarlo con UN escaneo; el stock cuadra', async () => {
+    const { f, recv, a1, total } = await seedBins();
+    const { bins } = await f.facade.createBins('op1', { cantidad: 1, tipo: 'pallet' }, 'sup');
+    const num = bins[0].numero;
+    assert.equal(num, 'BIN-000001', 'numeración correlativa con prefijo');
+    const rc = await f.facade.createReceipt('acme', { lines: [{ sku: 'CAM', qty: 10, lot: 'L1' }, { sku: 'CAM', qty: 5, lot: 'L2' }, { sku: 'PAN', qty: 8 }] } as any, 'sup');
+    await f.facade.receiveReceipt('acme', rc.id, [{ lineNo: 1, qty: 10, lot: 'L1', binId: num }, { lineNo: 2, qty: 5, lot: 'L2', binId: num }, { lineNo: 3, qty: 8, binId: num }] as any, 'opa');
+    let d: any = await f.facade.getBinDetail('op1', num);
+    assert.equal(d.estado, 'EN_ARMADO'); assert.equal(d.ubicacion, 'RECV-01'); assert.equal(d.unidades, 23); assert.equal(d.lineas.length, 3);
+    // El stock dentro del Bin NO genera guardado SKU por SKU: se guarda el Bin completo.
+    assert.equal((await f.facade.getTaskPool('op1', 'PUTAWAY')).length, 0);
+    await f.facade.closeBin('op1', num, 'opa');
+    assert.equal((await f.facade.getTaskPool('op1', 'BIN_PUTAWAY')).length, 1, 'cerrar genera la tarea de putaway del Bin');
+    const r: any = await f.facade.putawayBin('op1', num, 'A-01', 'opa');
+    assert.equal(r.bin.estado, 'UBICADO'); assert.equal(r.bin.ubicacion, 'A-01');
+    assert.equal((await f.facade.getTaskPool('op1', 'BIN_PUTAWAY')).length, 0, 'la tarea se cerró');
+    // Cuadratura: por ubicación (suelto + Bins) y por SKU.
+    assert.equal(await total('acme', { locationId: a1.id }), 23);
+    assert.equal(await total('acme', { locationId: recv.id }), 0);
+    assert.equal(await total('acme', { sku: 'CAM' }), 15);
+    assert.equal(await total('acme', { locationId: a1.id, binId: null }), 0, 'nada quedó suelto');
+    // Un solo movimiento lógico: todas las patas comparten groupId.
+    const movs = (await f.facade.listMovements('acme', 100)).filter((m) => m.type === 'PUTAWAY');
+    assert.equal(new Set(movs.map((m) => m.groupId)).size, 1);
+  });
+
+  await test('bins 2 y 3: pickear parcial desde un Bin mixto (saldo y kardex con Bin) y vaciarlo → VACÍO / ELIMINADO', async () => {
+    const { f, total } = await seedBins();
+    const mk = async () => {
+      const { bins } = await f.facade.createBins('op1', { cantidad: 1 }, 'sup');
+      const rc = await f.facade.createReceipt('acme', { lines: [{ sku: 'PAN', qty: 6 }, { sku: 'GOR', qty: 2 }] } as any, 'sup');
+      await f.facade.receiveReceipt('acme', rc.id, [{ lineNo: 1, qty: 6, binId: bins[0].numero }, { lineNo: 2, qty: 2, binId: bins[0].numero }] as any, 'opa');
+      await f.facade.closeBin('op1', bins[0].numero, 'opa');
+      await f.facade.putawayBin('op1', bins[0].numero, 'A-01', 'opa');
+      return bins[0].numero;
+    };
+    const num = await mk();
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'P-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'PAN', qty: 4 }] }, 'sup');
+    await f.facade.allocateOrder('acme', o.id);
+    const pl: any[] = await f.facade.getPickList('acme', o.id);
+    assert.equal(pl[0].binNumero, num, 'la picklist muestra Ubicación → Bin → SKU');
+    await f.facade.pickTask('acme', o.id, { sku: 'PAN', locationId: pl[0].locationId, qty: 3, binId: num }, 'opa');
+    let d: any = await f.facade.getBinDetail('op1', num);
+    assert.equal(d.lineas.find((l: any) => l.sku === 'PAN').cantidad, 3, 'saldo correcto (1 reservada + 2 libres)');
+    assert.equal(d.lineas.find((l: any) => l.sku === 'PAN').reservada, 1);
+    const k = await f.facade.enrichMovementsWithBins((await f.facade.listMovements('acme', 100)).filter((m) => m.type === 'PICK'));
+    assert.equal(k[0].binOrigen, num, 'el kardex registra el Bin de origen');
+    // Vaciar: el resto de PAN y GOR.
+    const o2 = await f.facade.createOrder('acme', { externalOrderId: 'P-2', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'PAN', qty: 2 }, { sku: 'GOR', qty: 2 }] }, 'sup');
+    await f.facade.allocateOrder('acme', o2.id);
+    await f.facade.confirmPick('acme', o.id, 'opa');
+    await f.facade.confirmPick('acme', o2.id, 'opa');
+    d = await f.facade.getBinDetail('op1', num);
+    assert.equal(d.estado, 'VACIO'); assert.equal(d.unidades, 0);
+    // Con la configuración "eliminar al vaciarse" pasa directo a ELIMINADO.
+    await f.facade.updateBinSettings('op1', { deleteOnEmpty: true }, 'sup');
+    const num2 = await mk();
+    const o3 = await f.facade.createOrder('acme', { externalOrderId: 'P-3', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'PAN', qty: 6 }, { sku: 'GOR', qty: 2 }] }, 'sup');
+    await f.facade.allocateOrder('acme', o3.id);
+    await f.facade.confirmPick('acme', o3.id, 'opa');
+    assert.equal((await f.facade.getBinDetail('op1', num2)).estado, 'ELIMINADO');
+    assert.equal(await total('acme'), 0);
+  });
+
+  await test('bins 4: consolidar 3 Bins (dos con el mismo SKU y lote) agrupa líneas; los origen quedan CONSOLIDADOS; el stock no cambia', async () => {
+    const { f, total } = await seedBins();
+    const { bins } = await f.facade.createBins('op1', { cantidad: 3 }, 'sup');
+    const lines = [[{ sku: 'CAM', qty: 4, lot: 'L1' }], [{ sku: 'CAM', qty: 6, lot: 'L1' }], [{ sku: 'PAN', qty: 5 }]];
+    for (let i = 0; i < 3; i++) {
+      const rc = await f.facade.createReceipt('acme', { lines: lines[i] } as any, 'sup');
+      await f.facade.receiveReceipt('acme', rc.id, [{ lineNo: 1, qty: lines[i][0].qty, lot: (lines[i][0] as any).lot, binId: bins[i].numero }] as any, 'opa');
+      await f.facade.closeBin('op1', bins[i].numero, 'opa');
+      await f.facade.putawayBin('op1', bins[i].numero, 'A-01', 'opa');
+    }
+    const antes = await total('acme');
+    const r: any = await f.facade.consolidateBins('op1', { origenes: [bins[1].numero, bins[2].numero], destino: bins[0].numero }, 'sup');
+    assert.equal(r.ejecutada, true, 'misma ubicación → al instante');
+    const d: any = await f.facade.getBinDetail('op1', bins[0].numero);
+    assert.deepEqual(d.lineas.map((l: any) => `${l.sku}:${l.lot ?? '-'}:${l.cantidad}`).sort(), ['CAM:L1:10', 'PAN:-:5']);
+    for (const b of [bins[1], bins[2]]) {
+      const x: any = await f.facade.getBinDetail('op1', b.numero);
+      assert.equal(x.estado, 'CONSOLIDADO'); assert.equal(x.consolidadoEn, bins[0].numero);
+    }
+    assert.equal(await total('acme'), antes);
+    // En ubicaciones distintas → tarea para juntarlos.
+    const otros = await f.facade.createBins('op1', { cantidad: 2 }, 'sup');
+    for (const [i, loc] of [[0, 'A-01'], [1, 'A-02']] as Array<[number, string]>) {
+      const rc = await f.facade.createReceipt('acme', { lines: [{ sku: 'GOR', qty: 3 }] } as any, 'sup');
+      await f.facade.receiveReceipt('acme', rc.id, [{ lineNo: 1, qty: 3, binId: otros.bins[i].numero }] as any, 'opa');
+      await f.facade.closeBin('op1', otros.bins[i].numero, 'opa');
+      await f.facade.putawayBin('op1', otros.bins[i].numero, loc, 'opa');
+    }
+    const t: any = await f.facade.consolidateBins('op1', { origenes: [otros.bins[1].numero], destino: otros.bins[0].numero }, 'sup');
+    assert.equal(t.ejecutada, false); assert.equal(t.tarea, true);
+    assert.equal((await f.facade.getTaskPool('op1', 'BIN_CONSOLIDATE')).length, 1);
+    await expectThrows(() => f.facade.moveBin('op1', otros.bins[1].numero, { destino: 'A-01' }, 'sup'), ValidationError, 'en curso');
+    await f.facade.executeBinConsolidation('op1', otros.bins[0].numero, 'opa');
+    assert.equal((await f.facade.getBinDetail('op1', otros.bins[0].numero)).unidades, 6);
+    assert.equal((await f.facade.getTaskPool('op1', 'BIN_CONSOLIDATE')).length, 0);
+  });
+
+  await test('bins 5: Bin multi-cliente — reserva por cliente, portal sin contenido ajeno, prorrateo de almacenaje y consolidación sin fusionar clientes', async () => {
+    const { f } = await seedBins();
+    const { bins } = await f.facade.createBins('op1', { cantidad: 2 }, 'sup');
+    const B = bins[0].numero;
+    const rcA = await f.facade.createReceipt('acme', { lines: [{ sku: 'PAN', qty: 30 }] } as any, 'sup');
+    await f.facade.receiveReceipt('acme', rcA.id, [{ lineNo: 1, qty: 30, binId: B }] as any, 'opa');
+    const rcB = await f.facade.createReceipt('globex', { lines: [{ sku: 'PAN', qty: 10 }] } as any, 'sup');
+    await f.facade.receiveReceipt('globex', rcB.id, [{ lineNo: 1, qty: 10, binId: B }] as any, 'opa');
+    await f.facade.closeBin('op1', B, 'opa');
+    await f.facade.putawayBin('op1', B, 'A-01', 'opa');
+    const d: any = await f.facade.getBinDetail('op1', B);
+    assert.equal(d.multiCliente, true); assert.equal(d.lineas.length, 2, 'una línea por cliente, nunca fusionadas');
+    // Una orden de A solo reserva líneas de A.
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'A-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'PAN', qty: 30 }] }, 'sup');
+    await f.facade.allocateOrder('acme', o.id);
+    await expectThrows(async () => { const o2 = await f.facade.createOrder('acme', { externalOrderId: 'A-2', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'PAN', qty: 1 }] }, 'sup'); await f.facade.allocateOrder('acme', o2.id); }, InsufficientStockError);
+    await f.facade.cancelOrder('acme', o.id, 'sup');
+    // Portal de B: ve el Bin y su ubicación, pero solo sus líneas.
+    const vb: any = await f.facade.getBinDetail('op1', B, 'globex');
+    assert.equal(vb.ubicacion, 'A-01'); assert.deepEqual(vb.lineas.map((l: any) => l.sellerId), ['globex']);
+    assert.ok(!vb.historial.some((h: any) => h.sellerId === 'acme'), 'tampoco ve movimientos ajenos');
+    assert.equal((await f.facade.listBins('op1', {}, 'initech')).total, 0, 'C no ve Bins sin mercadería suya');
+    // Almacenaje por Bin-día prorrateado por unidades (30/10): cada uno paga su parte × su tarifa.
+    await f.facade.setBillingRate('acme', { storagePerBinDay: 1000 } as any);
+    await f.facade.setBillingRate('globex', { storagePerBinDay: 2000 } as any);
+    f.clock.set('2026-10-05T12:00:00.000Z');
+    const invA: any = await f.billingService.computeInvoice('acme', '2026-10-01T03:00:00.000Z', '2026-10-04T03:00:00.000Z');
+    const invB: any = await f.billingService.computeInvoice('globex', '2026-10-01T03:00:00.000Z', '2026-10-04T03:00:00.000Z');
+    const la = invA.lines.find((l: any) => l.concept === 'Almacenaje por Bin'), lb = invB.lines.find((l: any) => l.concept === 'Almacenaje por Bin');
+    assert.equal(la.amount, 2250, '3 días × 75% × 1000'); assert.equal(lb.amount, 1500, '3 días × 25% × 2000');
+    assert.equal(la.detalle[0].participacion, 75); assert.equal(la.detalle[0].bin, B);
+    assert.ok(la.detalle[0].monto <= 3 * 1000, 'nunca supera la tarifa del cliente por ese Bin');
+    // Sin doble cobro: las unidades en Bins no pagan unidad-mes (configurable por cliente).
+    await f.facade.setBillingRate('acme', { storagePerUnitMonth: 30 } as any);
+    const sinDoble: any = await f.billingService.computeInvoice('acme', '2026-10-01T03:00:00.000Z', '2026-10-04T03:00:00.000Z');
+    assert.ok(!sinDoble.lines.some((l: any) => l.concept === 'Almacenamiento' && l.amount > 0), 'unidades del Bin excluidas');
+    await f.facade.setBillingRate('acme', { binUnitsInUnitStorage: true } as any);
+    const conDoble: any = await f.billingService.computeInvoice('acme', '2026-10-01T03:00:00.000Z', '2026-10-04T03:00:00.000Z');
+    assert.ok(conDoble.lines.some((l: any) => l.concept === 'Almacenamiento' && l.amount > 0), 'el cliente puede elegir cobrar ambos');
+    // Consolidar con un Bin de C deja el destino multi-cliente con 3 líneas.
+    const C = bins[1].numero;
+    const rcC = await f.facade.createReceipt('initech', { lines: [{ sku: 'PAN', qty: 4 }] } as any, 'sup');
+    await f.facade.receiveReceipt('initech', rcC.id, [{ lineNo: 1, qty: 4, binId: C }] as any, 'opa');
+    await f.facade.closeBin('op1', C, 'opa');
+    await f.facade.putawayBin('op1', C, 'A-01', 'opa');
+    await f.facade.consolidateBins('op1', { origenes: [C], destino: B }, 'sup');
+    const dd: any = await f.facade.getBinDetail('op1', B);
+    assert.deepEqual(dd.lineas.map((l: any) => `${l.sellerId}:${l.cantidad}`).sort(), ['acme:30', 'globex:10', 'initech:4']);
+  });
+
+  await test('bins 6: eliminar un Bin con contenido obliga a desarmarlo; el stock pasa a suelto sin pérdida', async () => {
+    const { f, a1, total } = await seedBins();
+    const { bins } = await f.facade.createBins('op1', { cantidad: 1 }, 'sup');
+    const rc = await f.facade.createReceipt('acme', { lines: [{ sku: 'PAN', qty: 7 }] } as any, 'sup');
+    await f.facade.receiveReceipt('acme', rc.id, [{ lineNo: 1, qty: 7, binId: bins[0].numero }] as any, 'opa');
+    await f.facade.closeBin('op1', bins[0].numero, 'opa');
+    await f.facade.putawayBin('op1', bins[0].numero, 'A-01', 'opa');
+    await expectThrows(() => f.facade.deleteBin('op1', bins[0].numero, 'sup'), ValidationError, 'desármalo');
+    const r: any = await f.facade.unpackBin('op1', bins[0].numero, {}, 'sup');
+    assert.equal(r.unidades, 7); assert.equal(r.bin.estado, 'ELIMINADO');
+    assert.equal(await total('acme', { locationId: a1.id, binId: null }), 7, 'quedó suelto en A-01');
+    assert.equal(await total('acme'), 7);
+    // Un Bin con reservas no se desarma.
+    const { bins: b2 } = await f.facade.createBins('op1', { cantidad: 1 }, 'sup');
+    await f.facade.addLooseToBin('op1', b2[0].numero, { ubicacion: 'A-01', items: [{ sellerId: 'acme', sku: 'PAN', qty: 7 }] }, 'sup');
+    await f.facade.closeBin('op1', b2[0].numero, 'sup');
+    await f.facade.putawayBin('op1', b2[0].numero, 'A-02', 'sup');
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'R-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'PAN', qty: 2 }] }, 'sup');
+    await f.facade.allocateOrder('acme', o.id);
+    await expectThrows(() => f.facade.unpackBin('op1', b2[0].numero, {}, 'sup'), ValidationError, 'reservadas');
+  });
+
+  await test('bins 7: mover un Bin con reservas activas — las reservas lo siguen y la picklist se actualiza', async () => {
+    const { f, a2 } = await seedBins();
+    const { bins } = await f.facade.createBins('op1', { cantidad: 1 }, 'sup');
+    const rc = await f.facade.createReceipt('acme', { lines: [{ sku: 'PAN', qty: 5 }] } as any, 'sup');
+    await f.facade.receiveReceipt('acme', rc.id, [{ lineNo: 1, qty: 5, binId: bins[0].numero }] as any, 'opa');
+    await f.facade.closeBin('op1', bins[0].numero, 'opa');
+    await f.facade.putawayBin('op1', bins[0].numero, 'A-01', 'opa');
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'M-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'PAN', qty: 3 }] }, 'sup');
+    await f.facade.allocateOrder('acme', o.id);
+    // Como tarea: el Bin queda EN_MOVIMIENTO y aparece en la cola.
+    await f.facade.moveBin('op1', bins[0].numero, { destino: 'A-02', comoTarea: true }, 'sup');
+    assert.equal((await f.facade.getBinDetail('op1', bins[0].numero)).estado, 'EN_MOVIMIENTO');
+    assert.equal((await f.facade.getTaskPool('op1', 'BIN_MOVE')).length, 1);
+    const r: any = await f.facade.putawayBin('op1', bins[0].numero, 'A-02', 'opa');
+    assert.equal(r.ordenesReubicadas, 1);
+    const pl: any[] = await f.facade.getPickList('acme', o.id);
+    assert.equal(pl[0].locationId, a2.id, 'la picklist apunta a la nueva ubicación');
+    const done = await f.facade.confirmPick('acme', o.id, 'opa');
+    assert.equal(done.status, 'PICKED');
+    assert.equal((await f.facade.getBinDetail('op1', bins[0].numero)).unidades, 2);
+  });
+
+  await test('bins 8: con la feature apagada (plan o toggle) los flujos actuales funcionan igual', async () => {
+    const { f, a1, total } = await seedBins();
+    await f.facade.updateBinSettings('op1', { habilitado: false }, 'sup');
+    await expectThrows(() => f.facade.createBins('op1', { cantidad: 1 }, 'sup'), ValidationError, 'desactivados');
+    // Flujo clásico: recepción suelta, guardado, reserva y picking.
+    const rc = await f.facade.createReceipt('acme', { lines: [{ sku: 'PAN', qty: 5 }] } as any, 'sup');
+    await f.facade.receiveReceipt('acme', rc.id, [{ lineNo: 1, qty: 5 }] as any, 'opa');
+    const recv = (await f.facade.listLocations('op1')).find((l: any) => l.code === 'RECV-01')!;
+    await f.facade.putaway('acme', { sku: 'PAN', qty: 5, fromLocationId: recv.id, toLocationId: a1.id, actor: 'opa' });
+    const o = await f.facade.createOrder('acme', { externalOrderId: 'F-1', salesChannel: 'web', shipTo: { name: 'x' }, lines: [{ sku: 'PAN', qty: 2 }] }, 'sup');
+    await f.facade.allocateOrder('acme', o.id);
+    await f.facade.confirmPick('acme', o.id, 'opa');
+    assert.equal(await total('acme'), 3);
+    assert.ok((await f.facade.getStock({ sellerId: 'acme' })).every((b: any) => !b.binId), 'ningún movimiento lleva Bin');
+    // Plan sin la feature → 402 (PlanLimitError).
+    await f.facade.createOperation({ id: 'op2', name: 'Op 2' });
+    await f.facade.setOperationPlan('op2', 'growth' as any).catch(async () => { const op: any = await (f.facade as any).operationsService.get('op2'); op.planId = 'growth'; await (f.facade as any).operationsService.save?.(op); });
+    const op2: any = await (f.facade as any).operationsService.get('op2');
+    if (op2 && op2.planId === 'growth') await expectThrows(() => f.facade.createBins('op2', { cantidad: 1 }, 'sup'), PlanLimitError);
+  });
+
+  await test('bins 9: conteo de Bin con diferencia genera ajuste con motivo y queda en el historial', async () => {
+    const { f, total } = await seedBins();
+    const { bins } = await f.facade.createBins('op1', { cantidad: 1 }, 'sup');
+    const rc = await f.facade.createReceipt('acme', { lines: [{ sku: 'PAN', qty: 10 }, { sku: 'GOR', qty: 4 }] } as any, 'sup');
+    await f.facade.receiveReceipt('acme', rc.id, [{ lineNo: 1, qty: 10, binId: bins[0].numero }, { lineNo: 2, qty: 4, binId: bins[0].numero }] as any, 'opa');
+    await f.facade.closeBin('op1', bins[0].numero, 'opa');
+    await f.facade.putawayBin('op1', bins[0].numero, 'A-01', 'opa');
+    const r: any = await f.facade.countBin('op1', bins[0].numero, { lineas: [{ sellerId: 'acme', sku: 'PAN', qty: 9 }, { sellerId: 'acme', sku: 'GOR', qty: 4 }], motivo: 'merma por daño' }, 'opa');
+    assert.equal(r.exacto, false); assert.deepEqual(r.diferencias.map((x: any) => `${x.sku}:${x.delta}`), ['PAN:-1']);
+    assert.equal(await total('acme'), 13);
+    const adj = (await f.facade.listMovements('acme', 100)).find((m) => m.type === 'ADJUSTMENT')!;
+    assert.match(String(adj.reference), /merma por daño/); assert.ok(adj.binId, 'el ajuste se imputa al Bin y al cliente de la línea');
+    const d: any = await f.facade.getBinDetail('op1', bins[0].numero);
+    assert.ok(d.historial.some((h: any) => h.tipo === 'CONTEO' && /merma por daño/.test(h.detalle || '')));
+    // Conteo rápido de presencia.
+    assert.equal((await f.facade.validateBinPresence('op1', bins[0].numero, 'A-02', 'opa')).ok, false);
+    assert.equal((await f.facade.validateBinPresence('op1', bins[0].numero, 'A-01', 'opa')).ok, true);
+  });
+
+  await test('bins: anular una recepción recibida en Bin revierte desde el Bin; el número jamás se reutiliza', async () => {
+    const { f, total } = await seedBins();
+    const { bins } = await f.facade.createBins('op1', { cantidad: 2 }, 'sup');
+    const rc = await f.facade.createReceipt('acme', { lines: [{ sku: 'PAN', qty: 4 }] } as any, 'sup');
+    await f.facade.receiveReceipt('acme', rc.id, [{ lineNo: 1, qty: 4, binId: bins[0].numero }] as any, 'opa');
+    await f.facade.deleteReceipt('acme', rc.id, 'sup');
+    assert.equal(await total('acme'), 0);
+    await f.facade.deleteBin('op1', bins[1].numero, 'sup');
+    const n = await f.facade.createBins('op1', { cantidad: 1 }, 'sup');
+    assert.equal(n.bins[0].numero, 'BIN-000003', 'el número del eliminado no se reutiliza');
+    // Prefijo configurable.
+    await f.facade.updateBinSettings('op1', { prefix: 'PAL-' }, 'sup');
+    assert.equal((await f.facade.createBins('op1', { cantidad: 1 }, 'sup')).bins[0].numero, 'PAL-000004');
   });
 
   // ---- Resumen --------------------------------------------------------------

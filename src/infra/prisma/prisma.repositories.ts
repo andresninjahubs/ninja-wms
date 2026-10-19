@@ -57,6 +57,7 @@ import {
   AgentJournalEntry,
   PlanConfigRepository,
   WebhookRepository,
+  BinRepository,
 } from '../../domain/ports';
 import { PlanConfig } from '../../domain/plans';
 import { toDomainEvents } from '../../domain/domain-events';
@@ -139,6 +140,9 @@ import {
   WebhookEventType,
   WebhookScope,
   ZoneType,
+  Bin,
+  BinEstado,
+  BinSettings,
 } from '../../domain/types';
 
 export class PrismaMovementRepository implements MovementRepository {
@@ -159,18 +163,37 @@ export class PrismaMovementRepository implements MovementRepository {
         reference: m.reference,
         groupId: m.groupId,
         actor: m.actor,
+        binId: m.binId ?? null,
         occurredAt: new Date(m.occurredAt),
       })),
     });
   }
 
+  async binBalances(binIds: string[]): Promise<StockBalance[]> {
+    if (!binIds.length) return [];
+    const rows = (await this.db.stockMovement.groupBy({
+      by: ['sellerId', 'sku', 'locationId', 'lot', 'state', 'binId'],
+      where: { binId: { in: binIds } },
+      _sum: { qtyDelta: true },
+    })) as Array<any>;
+    return rows
+      .map((r) => ({ sellerId: r.sellerId, sku: r.sku, locationId: r.locationId, lot: r.lot, state: r.state as StockState, binId: r.binId, qty: r._sum.qtyDelta ?? 0 }))
+      .filter((b) => b.qty !== 0);
+  }
+
+  async findByBin(binId: string): Promise<StockMovement[]> {
+    const rows = await this.db.stockMovement.findMany({ where: { binId }, orderBy: { occurredAt: 'asc' } });
+    return rows.map((r: any) => this.toMovement(r));
+  }
+
   async balances(query: StockQuery): Promise<StockBalance[]> {
     const rows = (await this.db.stockMovement.groupBy({
-      by: ['sku', 'locationId', 'lot', 'state'],
+      by: ['sku', 'locationId', 'lot', 'state', 'binId'],
       where: {
         sellerId: query.sellerId, // aislamiento por seller SIEMPRE presente
         ...(query.sku ? { sku: query.sku } : {}),
         ...(query.locationId ? { locationId: query.locationId } : {}),
+        ...(query.binId !== undefined ? { binId: query.binId } : {}),
       },
       _sum: { qtyDelta: true },
     })) as Array<{
@@ -178,6 +201,7 @@ export class PrismaMovementRepository implements MovementRepository {
       locationId: string;
       lot: string | null;
       state: string;
+      binId: string | null;
       _sum: { qtyDelta: number | null };
     }>;
 
@@ -187,6 +211,7 @@ export class PrismaMovementRepository implements MovementRepository {
       locationId: r.locationId,
       lot: r.lot,
       state: r.state as StockState,
+      binId: r.binId ?? null,
       qty: r._sum.qtyDelta ?? 0,
     }));
 
@@ -199,9 +224,14 @@ export class PrismaMovementRepository implements MovementRepository {
         sellerId: query.sellerId,
         ...(query.sku ? { sku: query.sku } : {}),
         ...(query.locationId ? { locationId: query.locationId } : {}),
+        ...(query.binId !== undefined ? { binId: query.binId } : {}),
       },
     });
-    return rows.map((m: any) => ({
+    return rows.map((m: any) => this.toMovement(m));
+  }
+
+  private toMovement(m: any): StockMovement {
+    return {
       id: m.id,
       sellerId: m.sellerId,
       sku: m.sku,
@@ -214,8 +244,9 @@ export class PrismaMovementRepository implements MovementRepository {
       reference: m.reference,
       groupId: m.groupId,
       actor: m.actor,
+      binId: m.binId ?? null,
       occurredAt: (m.occurredAt as Date).toISOString(),
-    }));
+    };
   }
 
   async occupancyByLocation(): Promise<Record<string, number>> {
@@ -419,6 +450,10 @@ export class PrismaSkuRepository implements SkuRepository {
       isKit: sku.isKit,
       kitMode: sku.kitMode,
       components: sku.components as unknown as object,
+      largoCm: sku.largoCm ?? null,
+      anchoCm: sku.anchoCm ?? null,
+      altoCm: sku.altoCm ?? null,
+      pesoKg: sku.pesoKg ?? null,
     };
     await this.db.sku.upsert({
       where: { sellerId_sku: { sellerId: sku.sellerId, sku: sku.sku } },
@@ -446,6 +481,10 @@ function skuToDomain(s: any): Sku {
     isKit: s.isKit ?? false,
     kitMode: (s.kitMode as KitMode) ?? null,
     components: (s.components as KitComponent[]) ?? [],
+    largoCm: s.largoCm ?? null,
+    anchoCm: s.anchoCm ?? null,
+    altoCm: s.altoCm ?? null,
+    pesoKg: s.pesoKg ?? null,
   };
 }
 
@@ -1879,6 +1918,8 @@ export class PrismaBillingRepository implements BillingRepository {
       storagePerUnitMonth: r.storagePerUnitMonth, receiptPerUnit: r.receiptPerUnit,
       shipmentPerOrder: r.shipmentPerOrder, pickPerUnit: r.pickPerUnit, assemblyPerKit: r.assemblyPerKit,
       requiresApproval: r.requiresApproval ?? false,
+      storagePerBinDay: r.storagePerBinDay ?? 0,
+      binUnitsInUnitStorage: !!r.binUnitsInUnitStorage,
     } : null;
   }
   async saveRate(rate: BillingRate): Promise<void> {
@@ -1886,6 +1927,8 @@ export class PrismaBillingRepository implements BillingRepository {
       currency: rate.currency, fixedMonthly: rate.fixedMonthly, storagePerUnitMonth: rate.storagePerUnitMonth,
       receiptPerUnit: rate.receiptPerUnit, shipmentPerOrder: rate.shipmentPerOrder, pickPerUnit: rate.pickPerUnit, assemblyPerKit: rate.assemblyPerKit,
       requiresApproval: rate.requiresApproval,
+      storagePerBinDay: rate.storagePerBinDay ?? 0,
+      binUnitsInUnitStorage: !!rate.binUnitsInUnitStorage,
     };
     await this.db.billingRate.upsert({ where: { sellerId: rate.sellerId }, create: { sellerId: rate.sellerId, ...data }, update: data });
   }
@@ -2126,5 +2169,63 @@ export class PrismaAiDashboardRepository implements AiDashboardRepository {
   }
   async delete(id: string): Promise<void> {
     await this.db.aiDashboard.delete({ where: { id } }).catch(() => undefined);
+  }
+}
+
+
+// ---- Bins ----------------------------------------------------------------------
+export class PrismaBinRepository implements BinRepository {
+  constructor(private readonly db: PrismaClient) {}
+  private toDomain(b: any): Bin {
+    const iso = (d: any) => (d ? (d as Date).toISOString() : null);
+    return {
+      id: b.id, operationId: b.operationId, numero: b.numero, estado: b.estado as BinEstado,
+      locationId: b.locationId ?? null, tipo: b.tipo, receiptId: b.receiptId ?? null,
+      consolidatedIntoId: b.consolidatedIntoId ?? null, pending: (b.pending as any) ?? null,
+      estadoPrevio: (b.estadoPrevio as BinEstado) ?? null, events: (b.events as any) ?? [],
+      createdBy: b.createdBy, createdAt: iso(b.createdAt)!, updatedAt: iso(b.updatedAt)!,
+      closedAt: iso(b.closedAt), deletedAt: iso(b.deletedAt),
+    };
+  }
+  async save(bin: Bin): Promise<void> {
+    const data = {
+      operationId: bin.operationId, numero: bin.numero, estado: bin.estado, locationId: bin.locationId,
+      tipo: bin.tipo, receiptId: bin.receiptId, consolidatedIntoId: bin.consolidatedIntoId,
+      pending: (bin.pending ?? null) as any, estadoPrevio: bin.estadoPrevio, events: bin.events as any,
+      createdBy: bin.createdBy, createdAt: new Date(bin.createdAt), updatedAt: new Date(bin.updatedAt),
+      closedAt: bin.closedAt ? new Date(bin.closedAt) : null, deletedAt: bin.deletedAt ? new Date(bin.deletedAt) : null,
+    };
+    await this.db.bin.upsert({ where: { id: bin.id }, create: { id: bin.id, ...data }, update: data });
+  }
+  async get(id: string): Promise<Bin | null> { const b = await this.db.bin.findUnique({ where: { id } }); return b ? this.toDomain(b) : null; }
+  async findByNumero(operationId: string, numero: string): Promise<Bin | null> {
+    const b = await this.db.bin.findFirst({ where: { operationId, numero: { equals: String(numero || '').trim(), mode: 'insensitive' } } });
+    return b ? this.toDomain(b) : null;
+  }
+  async list(operationId: string, opts?: { estados?: string[]; locationId?: string | null; includeDeleted?: boolean }): Promise<Bin[]> {
+    const where: any = { operationId };
+    if (opts?.estados && opts.estados.length) where.estado = { in: opts.estados };
+    else if (!opts?.includeDeleted) where.estado = { not: 'ELIMINADO' };
+    if (opts?.locationId !== undefined) where.locationId = opts.locationId;
+    const rows = await this.db.bin.findMany({ where, orderBy: { numero: 'asc' } });
+    return rows.map((r: any) => this.toDomain(r));
+  }
+  async nextNumbers(operationId: string, n: number): Promise<number[]> {
+    // Atómico: un upsert con increment. Dos usuarios creando Bins a la vez nunca
+    // reciben el mismo número, y un número jamás se reutiliza.
+    const row = await this.db.binConfig.upsert({
+      where: { operationId },
+      create: { operationId, lastNumber: n, settings: {} },
+      update: { lastNumber: { increment: n } },
+    });
+    const last = row.lastNumber as number;
+    return Array.from({ length: n }, (_, i) => last - n + i + 1);
+  }
+  async getSettings(operationId: string): Promise<Partial<BinSettings> | null> {
+    const row = await this.db.binConfig.findUnique({ where: { operationId } });
+    return row ? ((row.settings as any) ?? {}) : null;
+  }
+  async saveSettings(operationId: string, settings: Partial<BinSettings>): Promise<void> {
+    await this.db.binConfig.upsert({ where: { operationId }, create: { operationId, lastNumber: 0, settings: settings as any }, update: { settings: settings as any } });
   }
 }

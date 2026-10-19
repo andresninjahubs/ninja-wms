@@ -37,7 +37,10 @@ export interface UpdateUserInput {
 export const OPERATOR_TASK_TYPES = ['PICK', 'PACK', 'SHIP', 'PUTAWAY', 'RECEIVE', 'RESTOCK', 'COUNT', 'RESLOT'] as const;
 export const OPERATOR_TASK_LABEL: Record<string, string> = {
   PICK: 'Picking', PACK: 'Empaque', SHIP: 'Despacho', PUTAWAY: 'Guardado', RECEIVE: 'Recepción', RESTOCK: 'Reposición', COUNT: 'Conteo', RESLOT: 'Re-slotting',
+  BIN_PUTAWAY: 'Putaway de Bin', BIN_MOVE: 'Traslado de Bin', BIN_CONSOLIDATE: 'Consolidación de Bins',
 };
+/** Las tareas de Bins se rigen por la habilidad de Guardado (mueven mercadería entre ubicaciones). */
+const HABILIDAD_DE: Record<string, string> = { BIN_PUTAWAY: 'PUTAWAY', BIN_MOVE: 'PUTAWAY', BIN_CONSOLIDATE: 'PUTAWAY' };
 /** Normaliza una lista de habilidades: solo tipos válidos, sin repetir. null = todas. */
 export function normalizarHabilidades(v: unknown): string[] | null {
   if (v == null) return null;
@@ -53,7 +56,8 @@ export function normalizarHabilidades(v: unknown): string[] | null {
 /** ¿El usuario puede hacer este tipo de tarea? (null/undefined = todas). */
 export function puedeHacer(u: { allowedTasks?: string[] | null } | null | undefined, tipo: string): boolean {
   if (!u || !Array.isArray(u.allowedTasks)) return true;
-  return u.allowedTasks.includes(String(tipo).toUpperCase());
+  const t = String(tipo).toUpperCase();
+  return u.allowedTasks.includes(HABILIDAD_DE[t] || t);
 }
 
 export class UserService {

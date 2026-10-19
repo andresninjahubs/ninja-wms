@@ -17,6 +17,7 @@ import { PackagingService } from '../domain/packaging.service';
 import { OpsChannelService } from '../domain/ops-channel.service';
 import { selectOpsAiAnalyst } from './ops-ai-analyst';
 import { BillingService } from '../domain/billing.service';
+import { BinService } from '../domain/bin.service';
 import { MetricsService } from '../domain/metrics.service';
 import { RollupService } from '../domain/rollup.service';
 import { LaborService } from '../domain/labor.service';
@@ -76,6 +77,7 @@ import {
   SellerRepository,
   SkuRepository,
   UserRepository,
+  BinRepository,
   WebhookRepository,
 } from '../domain/ports';
 import { WmsFacade } from '../app/wms.facade';
@@ -122,6 +124,7 @@ import {
   InMemorySkuRepository,
   InMemoryUserRepository,
   InMemoryWebhookRepository,
+  InMemoryBinRepository,
 } from './memory/in-memory.repositories';
 import { MutableClock, UuidGenerator } from './system';
 import { selectEmailSender } from './email';
@@ -181,6 +184,7 @@ export async function createWmsContext(): Promise<WmsContext> {
   let logins: LoginEventRepository;
   let announcements: AnnouncementRepository;
   let webhooks: WebhookRepository;
+  let binsRepo: BinRepository;
   let dispose = async () => {};
 
   if (persistence === 'prisma') {
@@ -228,6 +232,7 @@ export async function createWmsContext(): Promise<WmsContext> {
       PrismaLoginEventRepository,
       PrismaAnnouncementRepository,
       PrismaWebhookRepository,
+      PrismaBinRepository,
     } = await import('./prisma/prisma.repositories');
     const db = new PrismaClient();
     await db.$connect();
@@ -273,6 +278,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     logins = new PrismaLoginEventRepository(db);
     announcements = new PrismaAnnouncementRepository(db);
     webhooks = new PrismaWebhookRepository(db);
+    binsRepo = new PrismaBinRepository(db);
     dispose = async () => {
       await db.$disconnect();
     };
@@ -319,6 +325,7 @@ export async function createWmsContext(): Promise<WmsContext> {
     logins = new InMemoryLoginEventRepository();
     announcements = new InMemoryAnnouncementRepository();
     webhooks = new InMemoryWebhookRepository();
+    binsRepo = new InMemoryBinRepository();
   }
 
   const inventory = new InventoryService(sellers, skus, locations, movements, ids, clock, lots);
@@ -332,7 +339,8 @@ export async function createWmsContext(): Promise<WmsContext> {
   const productService = new ProductService(skus, productLogs, sellers, inventory, barcodeService, ids, clock, assemblies);
   const packagingService = new PackagingService(packaging, ids, clock);
   const opsChannelService = new OpsChannelService(opsChannel, ids, clock, selectOpsAiAnalyst());
-  const billingService = new BillingService(billing, movements, locations, orders, assemblies, sellers, ids, clock, packagingService);
+  const binService = new BinService(binsRepo, inventory, locations, sellers, skus, lots, ids, clock);
+  const billingService = new BillingService(billing, movements, locations, orders, assemblies, sellers, ids, clock, packagingService, binService);
   const metricsService = new MetricsService(movements, orders, receipts, clock, events, rollups);
   const rollupService = new RollupService(movements, sellers, rollups, clock, events, orders);
   const laborService = new LaborService(movements, sellers, laborTasks, ids, clock);
@@ -408,6 +416,8 @@ export async function createWmsContext(): Promise<WmsContext> {
     taskEvents,
     taskTimeModels,
   );
+
+  facade.attachBins(binService);
 
   // Bootstrap del super-admin de plataforma (Ninja Hubs).
   // Configurable por entorno (ROOT_EMAIL / ROOT_PASSWORD) e IDEMPOTENTE:

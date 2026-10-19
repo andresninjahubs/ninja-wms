@@ -58,9 +58,12 @@ import {
   StockQuery,
   UserRepository,
   WebhookRepository,
+  BinRepository,
 } from '../../domain/ports';
 import type { TaskEvent, TaskEventType } from '../../domain/task-event';
 import {
+  Bin,
+  BinSettings,
   Announcement,
   StoredTaskTimeModel,
   StoredOperatorFactor,
@@ -123,11 +126,13 @@ export class InMemoryMovementRepository implements MovementRepository {
   private readonly bySellerSku = new Map<string, StockMovement[]>();
   // Ocupación física por ubicación (suma de deltas, cross-seller), incremental.
   private readonly occ = new Map<string, number>();
+  private readonly byBin = new Map<string, StockMovement[]>();
 
   async append(movements: StockMovement[]): Promise<void> {
     // Append-only: solo agregamos, nunca mutamos lo existente.
     for (const m of movements) {
-      const copy = { ...m };
+      const copy = { ...m, binId: m.binId ?? null };
+      if (copy.binId) { let c = this.byBin.get(copy.binId); if (!c) { c = []; this.byBin.set(copy.binId, c); } c.push(copy); }
       this.log.push(copy);
       let a = this.bySeller.get(m.sellerId);
       if (!a) { a = []; this.bySeller.set(m.sellerId, a); }
@@ -150,7 +155,8 @@ export class InMemoryMovementRepository implements MovementRepository {
     const buckets = new Map<string, StockBalance>();
     for (const m of this.scope(query)) {
       if (query.locationId && m.locationId !== query.locationId) continue;
-      const key = `${m.sku}|${m.locationId}|${m.lot ?? ''}|${m.state}`;
+      if (query.binId !== undefined && (m.binId ?? null) !== query.binId) continue;
+      const key = `${m.sku}|${m.locationId}|${m.lot ?? ''}|${m.state}|${m.binId ?? ''}`;
       const existing = buckets.get(key);
       if (existing) {
         existing.qty += m.qtyDelta;
@@ -161,6 +167,7 @@ export class InMemoryMovementRepository implements MovementRepository {
           locationId: m.locationId,
           lot: m.lot,
           state: m.state,
+          binId: m.binId ?? null,
           qty: m.qtyDelta,
         });
       }
@@ -173,7 +180,25 @@ export class InMemoryMovementRepository implements MovementRepository {
   async find(query: StockQuery): Promise<StockMovement[]> {
     return this.scope(query)
       .filter((m) => !query.locationId || m.locationId === query.locationId)
+      .filter((m) => query.binId === undefined || (m.binId ?? null) === query.binId)
       .map((m) => ({ ...m }));
+  }
+
+  async binBalances(binIds: string[]): Promise<StockBalance[]> {
+    const buckets = new Map<string, StockBalance>();
+    for (const id of binIds) {
+      for (const m of this.byBin.get(id) || []) {
+        const key = `${m.sellerId}|${m.sku}|${m.locationId}|${m.lot ?? ''}|${m.state}|${m.binId}`;
+        const e = buckets.get(key);
+        if (e) e.qty += m.qtyDelta;
+        else buckets.set(key, { sellerId: m.sellerId, sku: m.sku, locationId: m.locationId, lot: m.lot, state: m.state, binId: m.binId ?? null, qty: m.qtyDelta });
+      }
+    }
+    return [...buckets.values()].filter((b) => b.qty !== 0);
+  }
+
+  async findByBin(binId: string): Promise<StockMovement[]> {
+    return (this.byBin.get(binId) || []).map((m) => ({ ...m }));
   }
 
   async occupancyByLocation(): Promise<Record<string, number>> {
@@ -1127,4 +1152,37 @@ export class FixedClock implements Clock {
   set(iso: string): void {
     this.iso = iso;
   }
+}
+
+
+// ---- Bins ----------------------------------------------------------------------
+export class InMemoryBinRepository implements BinRepository {
+  private readonly bins = new Map<string, Bin>();
+  private readonly seq = new Map<string, number>();
+  private readonly settings = new Map<string, Partial<BinSettings>>();
+  async save(bin: Bin): Promise<void> { this.bins.set(bin.id, JSON.parse(JSON.stringify(bin))); }
+  async get(id: string): Promise<Bin | null> { const b = this.bins.get(id); return b ? JSON.parse(JSON.stringify(b)) : null; }
+  async findByNumero(operationId: string, numero: string): Promise<Bin | null> {
+    const k = String(numero || '').trim().toUpperCase();
+    for (const b of this.bins.values()) if (b.operationId === operationId && b.numero.toUpperCase() === k) return JSON.parse(JSON.stringify(b));
+    return null;
+  }
+  async list(operationId: string, opts?: { estados?: string[]; locationId?: string | null; includeDeleted?: boolean }): Promise<Bin[]> {
+    const out: Bin[] = [];
+    for (const b of this.bins.values()) {
+      if (b.operationId !== operationId) continue;
+      if (!opts?.includeDeleted && b.estado === 'ELIMINADO' && !(opts?.estados || []).includes('ELIMINADO')) continue;
+      if (opts?.estados && opts.estados.length && !opts.estados.includes(b.estado)) continue;
+      if (opts?.locationId !== undefined && b.locationId !== opts.locationId) continue;
+      out.push(JSON.parse(JSON.stringify(b)));
+    }
+    return out.sort((a, b) => (a.numero < b.numero ? -1 : 1));
+  }
+  async nextNumbers(operationId: string, n: number): Promise<number[]> {
+    const cur = this.seq.get(operationId) || 0;
+    this.seq.set(operationId, cur + n);
+    return Array.from({ length: n }, (_, i) => cur + i + 1);
+  }
+  async getSettings(operationId: string): Promise<Partial<BinSettings> | null> { const s = this.settings.get(operationId); return s ? { ...s } : null; }
+  async saveSettings(operationId: string, settings: Partial<BinSettings>): Promise<void> { this.settings.set(operationId, { ...settings }); }
 }

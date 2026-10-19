@@ -77,8 +77,13 @@ export const COPILOT_TOOLS: ToolSpec[] = [
   },
   {
     name: 'recepciones',
-    description: 'Recepciones (inbound) registradas de un cliente, con estado y fecha.',
-    parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional)'), limite: int('máx. recepciones (opcional, def 30)') } },
+    description: 'Lista las recepciones (inbound) con referencia, proveedor, cliente, estado, unidades esperadas/recibidas y llegada. Filtra por estado: "abiertas" (Creada, En bodega o Parcial), PENDING, ARRIVED, PARTIAL, RECEIVED o CANCELLED. Para ver UNA recepción completa (líneas, lo pendiente, lo por guardar, quién la tiene asignada) usa detalle_recepcion.',
+    parameters: { type: 'object', properties: { sellerId: str('id del cliente (opcional)'), estado: str('filtro: "abiertas" o un estado (opcional)'), buscar: str('texto a buscar en id, referencia o proveedor (opcional)'), limite: int('máx. recepciones (opcional, def 30)') } },
+  },
+  {
+    name: 'detalle_recepcion',
+    description: 'Detalle COMPLETO de una recepción: cliente, proveedor, referencia, estado, ubicación de recepción, llegada, líneas (n° de línea, SKU, descripción, esperado, recibido, pendiente, lote/vencimiento y si el SKU los exige), lo que queda por GUARDAR en la ubicación de recepción, quién tiene asignada la tarea, historial y el siguiente paso. Úsala SIEMPRE antes de editar, recibir, cerrar, guardar o eliminar una recepción.',
+    parameters: { type: 'object', properties: { recepcion: str('id (OR-…) o referencia de la recepción'), sellerId: str('id del cliente (opcional)') }, required: ['recepcion'] },
   },
   {
     name: 'tiempos_preparacion',
@@ -276,6 +281,53 @@ export const COPILOT_TOOLS: ToolSpec[] = [
     description: 'Traduce un código de barras a qué producto es y cuántas unidades base trae ese empaque. Úsala cuando alguien te dicte o escriba un código y haya que saber qué es antes de recibir, guardar o pickear.',
     parameters: { type: 'object', properties: { codigo: str('código de barras leído o dictado'), sellerId: str('id del cliente (opcional)') }, required: ['codigo'] },
   },
+  // ---- Bins (contenedores lógicos). OJO: un Bin NO es una ubicación: es un pallet/caja/tote
+  // identificado con un número (BIN-000123) que se ubica DENTRO de una ubicación.
+  {
+    name: 'buscar_bin',
+    description: 'Un Bin por su número (BIN-000123): estado, ubicación donde está, tipo, contenido por cliente/SKU/lote (cantidad, reservada, disponible), si es multi-cliente, trabajo pendiente y el historial reciente. Un Bin es un contenedor (pallet, caja, tote), NO una ubicación.',
+    parameters: { type: 'object', properties: { numero: str('número del Bin (ej. BIN-000123, o solo 123)') }, required: ['numero'] },
+  },
+  {
+    name: 'bins_en_ubicacion',
+    description: 'Bins que están en una ubicación (por código, ej. A-01-2), con su contenido resumido. Úsala para "¿qué pallets hay en A-01?".',
+    parameters: { type: 'object', properties: { ubicacion: str('código de la ubicación') }, required: ['ubicacion'] },
+  },
+  {
+    name: 'bins_con_sku',
+    description: 'Bins que contienen un SKU (opcionalmente de un cliente), con dónde están y cuánto tiene cada uno. Úsala para "¿en qué pallets está el CAM-01?".',
+    parameters: { type: 'object', properties: { sku: str('SKU'), sellerId: str('id del cliente (opcional)') }, required: ['sku'] },
+  },
+  {
+    name: 'bins_por_ubicar',
+    description: 'Bins cerrados que esperan putaway (POR UBICAR), con hace cuánto y dónde están. Su contenido sigue en el andén.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'bins_vacios',
+    description: 'Bins VACÍOS (sin contenido) que se pueden reutilizar o eliminar.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'bins_baja_ocupacion',
+    description: 'Bins ubicados con poco contenido: candidatos a consolidar para liberar posiciones. Incluye con qué otros Bins comparten ubicación.',
+    parameters: { type: 'object', properties: { umbral: int('máximo de unidades para considerarlo de baja ocupación (opcional; por defecto el de la operación)') } },
+  },
+  {
+    name: 'historial_bin',
+    description: 'Línea de tiempo completa de un Bin: creación, recepciones, cierre, putaway, traslados, picks, consolidaciones, conteos y ajustes, con quién y cuándo.',
+    parameters: { type: 'object', properties: { numero: str('número del Bin') }, required: ['numero'] },
+  },
+  {
+    name: 'sugerir_ubicacion_bin',
+    description: 'Dónde ubicar un Bin completo (putaway o traslado), según el motor de guardado y la ocupación de Bins por ubicación.',
+    parameters: { type: 'object', properties: { numero: str('número del Bin') }, required: ['numero'] },
+  },
+  {
+    name: 'proponer_consolidacion',
+    description: 'Propone consolidaciones de Bins de baja ocupación: primero los que comparten ubicación (sin traslado) y luego los del mismo cliente en ubicaciones distintas. No ejecuta nada: para hacerlo usa crear_tarea_consolidacion.',
+    parameters: { type: 'object', properties: { umbral: int('máximo de unidades por Bin (opcional)') } },
+  },
   {
     name: 'reglas_agente',
     description: 'Cómo está configurado el agente autónomo: sus reglas (encendidas, umbral, enfriamiento, si avisan o ejecutan), su nivel de autonomía, el modo sombra, la ventana horaria y el último ciclo. Úsala para explicar POR QUÉ saltó una alerta, por qué una acción quedó propuesta en vez de ejecutarse, o por qué el agente no hizo nada.',
@@ -446,20 +498,56 @@ export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
   },
   {
     name: 'recibir_recepcion',
-    description: 'RECIBE mercadería contra una recepción existente: registra lo que llegó de verdad por línea y lo ingresa al stock. Úsala cuando digan "llegó el camión de X", "recibe 80 de la línea 1". Si no sabes las líneas, usa recepciones primero. Deja movimientos en el kardex.',
+    description: 'RECIBE (cotejo) mercadería contra una recepción existente: registra lo que llegó de verdad y lo ingresa al stock en la ubicación de recepción. Cada conteo indica la línea (n° de línea) o el SKU, y la cantidad recibida AHORA (se suma a lo ya recibido). Con todo=true recibe exactamente lo pendiente de todas las líneas. Si una línea queda completa la recepción avanza a Parcial o Recibida. Usa detalle_recepcion antes para ver líneas, pendientes y si exigen lote/vencimiento. Deja movimientos en el kardex.',
     parameters: {
       type: 'object',
       properties: {
         recepcion: str('referencia o id de la recepción'),
         sellerId: str('id del cliente (opcional)'),
+        todo: { type: 'boolean', description: 'true para recibir TODO lo pendiente de todas las líneas' },
         conteos: {
           type: 'array',
-          description: 'lo recibido por línea',
-          items: { type: 'object', properties: { linea: { type: 'number', description: 'n° de línea' }, cantidad: { type: 'number', description: 'unidades recibidas ahora' }, lote: str('lote: obligatorio si el SKU tiene control de lote; prohibido si no'), vencimiento: str('vencimiento ISO: obligatorio si el SKU tiene control de vencimiento; prohibido si no') }, required: ['linea', 'cantidad'] },
+          description: 'lo recibido por línea o por SKU',
+          items: { type: 'object', properties: { linea: { type: 'number', description: 'n° de línea (o usa sku)' }, sku: str('SKU de la línea (alternativa a linea)'), cantidad: { type: 'number', description: 'unidades recibidas ahora' }, lote: str('lote: obligatorio si el SKU tiene control de lote; prohibido si no'), vencimiento: str('vencimiento ISO: obligatorio si el SKU tiene control de vencimiento; prohibido si no') }, required: ['cantidad'] },
         },
       },
-      required: ['recepcion', 'conteos'],
+      required: ['recepcion'],
     },
+  },
+  {
+    name: 'editar_recepcion',
+    description: 'MODIFICA una recepción que aún no se empieza a recibir (Creada o En bodega): proveedor, referencia, notas, ubicación de recepción y líneas. Para las líneas puedes reemplazarlas todas (lineas), agregar (agregarLineas), quitar SKUs (quitarSkus) o cambiar cantidades esperadas (cambiarCantidades). Lo que no indiques se mantiene. Una recepción ya recibida (parcial o total) no se edita.',
+    parameters: {
+      type: 'object',
+      properties: {
+        recepcion: str('id (OR-…) o referencia'),
+        sellerId: str('id del cliente (opcional)'),
+        proveedor: str('nuevo proveedor (opcional)'),
+        referencia: str('nueva referencia / documento (opcional)'),
+        notas: str('nuevas notas (opcional)'),
+        ubicacion: str('código de la ubicación de recepción (opcional)'),
+        lineas: { type: 'array', description: 'REEMPLAZA todas las líneas (opcional)', items: { type: 'object', properties: { sku: str('SKU'), qty: int('cantidad esperada'), lot: str('lote (solo si el SKU lo exige)'), expiry: str('vencimiento ISO (solo si el SKU lo exige)') }, required: ['sku', 'qty'] } },
+        agregarLineas: { type: 'array', description: 'líneas a AGREGAR (opcional)', items: { type: 'object', properties: { sku: str('SKU'), qty: int('cantidad esperada'), lot: str('lote'), expiry: str('vencimiento ISO') }, required: ['sku', 'qty'] } },
+        quitarSkus: { type: 'array', items: { type: 'string' }, description: 'SKUs a QUITAR (opcional)' },
+        cambiarCantidades: { type: 'array', description: 'nuevas cantidades esperadas por SKU (opcional)', items: { type: 'object', properties: { sku: str('SKU'), qty: int('nueva cantidad esperada') }, required: ['sku', 'qty'] } },
+      },
+      required: ['recepcion'],
+    },
+  },
+  {
+    name: 'marcar_llegada_recepcion',
+    description: 'Marca que la carga de una recepción LLEGÓ a la bodega (Creada → En bodega), con una nota opcional (patente, pallets, daños). Con deshacer=true vuelve a Creada. Úsala para "llegó el camión de la OC-55".',
+    parameters: { type: 'object', properties: { recepcion: str('id o referencia'), sellerId: str('id del cliente (opcional)'), nota: str('nota de llegada (opcional)'), deshacer: { type: 'boolean', description: 'true para deshacer la marca de llegada' } }, required: ['recepcion'] },
+  },
+  {
+    name: 'guardar_recepcion',
+    description: 'GUARDA (putaway) la mercadería YA RECIBIDA de una recepción: la mueve desde la ubicación de recepción a almacenaje/picking para que quede disponible para vender. Sin sku guarda todos los productos de la recepción; sin cantidad guarda todo lo que queda; sin destino usa la ubicación que SUGIERE el sistema (capacidad, rotación, consolidación). Úsala para "guarda lo de la OC-55", "guarda 20 CAM de esa recepción en A-01".',
+    parameters: { type: 'object', properties: { recepcion: str('id o referencia'), sellerId: str('id del cliente (opcional)'), sku: str('SKU a guardar (opcional: todos)'), cantidad: int('unidades a guardar (opcional: todo lo pendiente)'), destino: str('código de la ubicación destino (opcional: la sugerida)') }, required: ['recepcion'] },
+  },
+  {
+    name: 'eliminar_recepcion',
+    description: 'ELIMINA una recepción. Si ya tenía mercadería recibida, revierte ese stock (solo si sigue íntegro en la ubicación de recepción; si ya se guardó o se vendió, no se puede). Su tarea de cotejo sale de la bandeja del operario. No se puede deshacer: confirma con el usuario antes.',
+    parameters: { type: 'object', properties: { recepcion: str('id o referencia'), sellerId: str('id del cliente (opcional)') }, required: ['recepcion'] },
   },
   {
     name: 'cerrar_recepcion',
@@ -541,6 +629,26 @@ export const COPILOT_ACTION_TOOLS: ToolSpec[] = [
     name: 'recibir_insumos_embalaje',
     description: 'Ingresa stock de un INSUMO DE EMBALAJE (cajas, cinta, bolsas) que llegó a la bodega. Úsala para "llegaron 500 cajas medianas". Para consultar cuánto queda usa insumos_embalaje.',
     parameters: { type: 'object', properties: { sku: str('SKU del insumo'), cantidad: { type: 'number', description: 'unidades recibidas' }, referencia: str('n° de factura o guía del proveedor (opcional)'), costoUnitario: { type: 'number', description: 'costo por unidad (opcional)' } }, required: ['sku', 'cantidad'] },
+  },
+  {
+    name: 'crear_bins',
+    description: 'CREA N Bins vacíos (EN ARMADO) con numeración correlativa de la operación, opcionalmente de un tipo (pallet, caja, tote…) y en una ubicación. Úsala para "crea 20 pallets para la recepción de mañana".',
+    parameters: { type: 'object', properties: { cantidad: int('cuántos Bins (1-500)'), tipo: str('tipo de Bin (opcional)'), ubicacion: str('código de ubicación inicial (opcional)') }, required: ['cantidad'] },
+  },
+  {
+    name: 'crear_tarea_putaway_bin',
+    description: 'Deja lista la TAREA de putaway de un Bin: si está EN ARMADO lo cierra (queda POR UBICAR) y la tarea entra a la cola; opcionalmente la asigna a un operario. El operario la ejecuta escaneando el Bin y la ubicación destino.',
+    parameters: { type: 'object', properties: { numero: str('número del Bin'), operario: str('nombre o id del operario (opcional)') }, required: ['numero'] },
+  },
+  {
+    name: 'crear_tarea_mover_bin',
+    description: 'Crea una TAREA para trasladar un Bin completo a otra ubicación (el Bin queda EN MOVIMIENTO hasta que se ejecute). Destino opcional (si no, lo elige el operario). Opcionalmente la asigna.',
+    parameters: { type: 'object', properties: { numero: str('número del Bin'), destino: str('código de la ubicación destino (opcional)'), operario: str('nombre o id del operario (opcional)') }, required: ['numero'] },
+  },
+  {
+    name: 'crear_tarea_consolidacion',
+    description: 'Consolida Bins: todo el contenido de los Bins origen pasa a un destino (existente o uno nuevo). Si están en la misma ubicación se ejecuta al instante; si no, queda una TAREA para juntarlos. Nunca mezcla líneas de clientes distintos. Úsala después de proponer_consolidacion.',
+    parameters: { type: 'object', properties: { origenes: { type: 'array', items: { type: 'string' }, description: 'números de los Bins a absorber' }, destino: str('número del Bin destino (opcional: se crea uno nuevo)'), operario: str('nombre o id del operario para la tarea (opcional)') }, required: ['origenes'] },
   },
   {
     name: 'reasignar_ociosidad',

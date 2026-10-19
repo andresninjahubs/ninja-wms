@@ -104,6 +104,7 @@ export class InventoryController {
       lot: dto.lot ?? null,
       expiry: dto.expiry ?? null,
       actor: actorOf(user),
+      bin: dto.bin ?? null,
     });
   }
 
@@ -138,7 +139,7 @@ export class InventoryController {
   @Get('movements')
   @RequirePermission('stock:read')
   async movements(@Param('sellerId') sellerId: string, @Query('limit') limit?: string) {
-    const movs = await this.wms.listMovements(sellerId, limit ? Number(limit) : undefined);
+    const movs = await this.wms.enrichMovementsWithBins(await this.wms.listMovements(sellerId, limit ? Number(limit) : undefined));
     // El actor es un id de usuario. Un cliente (rol CLIENT) no puede listar los usuarios
     // de la operación, así que el nombre legible viaja resuelto desde acá.
     const nombres = await this.nombresDeActores(movs.map((m) => m.actor));
@@ -175,7 +176,7 @@ export class InventoryController {
   @Get('movements/export')
   @RequirePermission('stock:read')
   async exportMovements(@Param('sellerId') sellerId: string, @Res() res: Response) {
-    const movs = await this.wms.listMovements(sellerId, 1_000_000);
+    const movs = await this.wms.enrichMovementsWithBins(await this.wms.listMovements(sellerId, 1_000_000));
     const nombres = await this.nombresDeActores(movs.map((m) => m.actor));
     // Resuelve el código legible de cada ubicación (evita mostrar UUIDs).
     const locCode = new Map<string, string>();
@@ -183,7 +184,7 @@ export class InventoryController {
       const loc = await this.wms.getLocation(id);
       if (loc) locCode.set(id, loc.code);
     }
-    const HEADERS = ['Fecha', 'Tipo', 'SKU', 'Ubicación', 'Lote', 'Estado', 'Cantidad (Δ)', 'UdM', 'Referencia', 'Usuario', 'ID movimiento'];
+    const HEADERS = ['Fecha', 'Tipo', 'SKU', 'Ubicación', 'Lote', 'Estado', 'Cantidad (Δ)', 'UdM', 'Referencia', 'Bin', 'Bin origen → destino', 'Usuario', 'ID movimiento'];
     const rows = [
       HEADERS,
       ...movs.map((m) => [
@@ -196,6 +197,8 @@ export class InventoryController {
         m.qtyDelta,
         m.uom,
         m.reference || '',
+        m.binNumero || '',
+        m.binOrigen || m.binDestino ? `${m.binOrigen || 'suelto'} → ${m.binDestino || 'suelto'}` : '',
         nombres.get(m.actor) || m.actor || '',
         m.id,
       ]),
@@ -226,7 +229,7 @@ export class InventoryController {
     @Query('sku') sku?: string,
     @Query('locationId') locationId?: string,
   ) {
-    return this.wms.getStock({ sellerId, sku, locationId });
+    return this.wms.getStockConBins({ sellerId, sku, locationId });
   }
 
   /** Lotes y vencimiento: productos con lote, sus lotes, vencimientos y estado. */

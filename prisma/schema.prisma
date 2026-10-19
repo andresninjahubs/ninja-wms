@@ -624,6 +624,11 @@ model Sku {
   isKit         Boolean @default(false) // true si es un kit/bundle
   kitMode       String? // VIRTUAL | ASSEMBLED
   components    Json    @default("[]") // [{ sku, qty }] — lista de materiales (BOM)
+  /// Medidas opcionales (prorrateo del almacenaje de Bins compartidos por volumen/peso).
+  largoCm       Float?
+  anchoCm       Float?
+  altoCm        Float?
+  pesoKg        Float?
 
   seller Seller @relation(fields: [sellerId], references: [id])
 
@@ -643,6 +648,10 @@ model BillingRate {
   pickPerUnit         Int    @default(0)
   assemblyPerKit      Int    @default(0)
   requiresApproval    Boolean @default(false)
+  /// Almacenaje por Bin por día (posición pallet); en un Bin compartido paga su parte.
+  storagePerBinDay    Int    @default(0)
+  /// ¿Las unidades dentro de Bins pagan además unidad-mes? false = no se cobra doble.
+  binUnitsInUnitStorage Boolean @default(false)
 
   seller Seller @relation(fields: [sellerId], references: [id])
 }
@@ -870,10 +879,13 @@ model StockMovement {
   /// Tarea que originó el movimiento. El vínculo existía como texto dentro de
   /// `reference` ("PICK:<orderId>") y había que parsearlo a mano para usarlo.
   taskId     String?
+  /// Bin (contenedor lógico) que contiene el stock; null = suelto en la ubicación.
+  binId      String?
   occurredAt DateTime
 
   seller Seller @relation(fields: [sellerId], references: [id])
 
+  @@index([binId])
   @@index([sellerId, sku, locationId])
   @@index([sellerId, sku, state])
   @@index([groupId])
@@ -1088,4 +1100,37 @@ model AiDashboard {
   updatedAt   DateTime
 
   @@index([operationId, ownerId])
+}
+
+
+/// Bin: contenedor lógico (pallet, caja, tote, jaula) que agrupa stock y se ubica DENTRO
+/// de una ubicación. NO es una ubicación. El contenido vive en el ledger (StockMovement.binId).
+model Bin {
+  id                 String    @id
+  operationId        String
+  numero             String // BIN-000001: correlativo por operación, nunca se reutiliza
+  estado             String // EN_ARMADO | POR_UBICAR | UBICADO | EN_MOVIMIENTO | VACIO | CONSOLIDADO | ELIMINADO
+  locationId         String?
+  tipo               String    @default("pallet")
+  receiptId          String?
+  consolidatedIntoId String?
+  pending            Json? // trabajo pendiente: { kind: MOVE|CONSOLIDATE, toLocationId, sourceBinIds, requestedBy, requestedAt }
+  estadoPrevio       String?
+  events             Json      @default("[]") // historial [{ type, at, actor, detail }]
+  createdBy          String
+  createdAt          DateTime
+  updatedAt          DateTime
+  closedAt           DateTime?
+  deletedAt          DateTime?
+
+  @@unique([operationId, numero])
+  @@index([operationId, estado])
+  @@index([operationId, locationId])
+}
+
+/// Numeración correlativa y ajustes de Bins por operación.
+model BinConfig {
+  operationId String @id
+  lastNumber  Int    @default(0)
+  settings    Json   @default("{}")
 }

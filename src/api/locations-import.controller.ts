@@ -49,7 +49,10 @@ function norm(s: unknown): string {
 function headerToField(h: unknown): string | null {
   const n = norm(h);
   if (!n) return null;
-  if (n.includes('codigo') || n === 'code' || n.includes('ubicacion') || n === 'bin') return 'code';
+  // «Bin» ya NO se acepta como columna de código: en Ninja WMS un Bin es un contenedor
+  // (pallet, caja, tote) con número propio, no una ubicación.
+  if (n === 'bin' || n === 'bins') return 'BIN_LEGACY';
+  if (n.includes('codigo') || n === 'code' || n.includes('ubicacion')) return 'code';
   if (n.includes('zona') || n.includes('zone') || n.includes('tipo')) return 'zoneType';
   if (n.includes('bodega') || n.includes('warehouse') || n.includes('almacen')) return 'warehouseId';
   if (n.includes('capacidad') || n.includes('capacity')) return 'capacity';
@@ -111,7 +114,10 @@ export class LocationsImportController {
 
     const colOf: Record<string, number> = {};
     (rows[0] as unknown[]).forEach((h, i) => { const f = headerToField(h); if (f && colOf[f] === undefined) colOf[f] = i; });
-    if (colOf['code'] === undefined) return { error: 'No se reconoce la columna Código. Usa la plantilla oficial.' };
+    if (colOf['code'] === undefined) {
+      if (colOf['BIN_LEGACY'] !== undefined) return { error: 'La columna «Bin» ya no se usa para el código de la ubicación: en Ninja WMS un Bin es un contenedor (pallet, caja, tote), no una ubicación. Renombra la columna a «Código» o usa la plantilla oficial.' };
+      return { error: 'No se reconoce la columna Código. Usa la plantilla oficial.' };
+    }
     const cell = (row: unknown[], f: string): string => (colOf[f] === undefined ? '' : String(row[colOf[f]] ?? '').trim());
 
     const existing = await this.wms.listLocations(operationId);

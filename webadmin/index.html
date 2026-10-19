@@ -1540,6 +1540,7 @@
         <button class="nav sub" data-pg="consignees"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg></span> Destinatarios</button>
         <button class="nav sub" data-pg="packaging"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v13H3V8 M1 3h22v5H1z M10 12h4"/></svg></span> Embalajes</button>
         <button class="nav sub" data-pg="locations"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18 M3 15h18 M9 3v18 M15 3v18"/></svg></span> Ubicaciones</button>
+        <button class="nav sub" data-pg="bins"><span class="ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l9-4 9 4v10l-9 4-9-4z M3 7l9 4 9-4 M12 11v10 M7.5 5l9 4"/></svg></span> Bins</button>
       </div>
     </div>
 
@@ -1903,6 +1904,30 @@
       </section>
 
       <!-- Ubicaciones -->
+      <!-- Bins: contenedores (pallet, caja, tote) con número correlativo. NO son ubicaciones. -->
+      <section class="page" data-pg="bins">
+        <div id="bn-banner"></div>
+        <div class="toolbar" style="flex-wrap:wrap">
+          <div class="search"><span class="i">⌕</span><input id="bn-q" placeholder="Escanea o escribe un Bin (Enter abre)…"></div>
+          <span><select id="bn-cli"></select></span>
+          <select id="bn-est"></select>
+          <input id="bn-loc" placeholder="Ubicación" style="width:130px">
+          <input id="bn-sku" placeholder="SKU" style="width:130px">
+          <div class="sp" style="flex:1"></div>
+          <button class="btn" id="bn-print" title="Imprime las etiquetas de los Bins seleccionados">🏷 Etiquetas</button>
+          <button class="btn hidden" id="bn-cons" title="Junta varios Bins en uno">⇢ Consolidar</button>
+          <button class="btn hidden" id="bn-settings">⚙ Ajustes</button>
+          <button class="btn pri hidden" id="bn-new">＋ Crear Bins</button>
+        </div>
+        <div class="fchips" id="bn-sum" style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px"></div>
+        <div class="card">
+          <div class="h"><h3>Bins</h3><div class="sp" style="flex:1"></div><span class="muted" id="bn-seln" style="margin-right:12px"></span><span class="muted" id="bn-count"></span></div>
+          <div class="tablewrap"><table>
+            <thead><tr><th class="selcol" style="width:36px"><input type="checkbox" id="bn-selall" title="Seleccionar todos"></th><th>Bin</th><th>Estado</th><th>Ubicación</th><th>Tipo</th><th>Cliente(s)</th><th class="num">SKUs</th><th class="num">Unidades</th><th>Último cambio</th></tr></thead>
+            <tbody id="bn-body"></tbody>
+          </table></div>
+        </div>
+      </section>
       <section class="page" data-pg="locations">
         <div class="toolbar">
           <div class="search"><span class="i">⌕</span><input id="loc-q" placeholder="Buscar código de ubicación…"></div>
@@ -1989,7 +2014,7 @@
           <div class="field"><label>Ubicación</label><select id="mv-loc"></select></div>
           <div class="field"><label>Usuario</label><select id="mv-user"></select></div>
           <div class="field" id="mv-cli-field"><label>Cliente</label><select id="mv-cli"></select></div>
-          <div class="field"><label>Referencia</label><input id="mv-ref" placeholder="Todas"></div>
+          <div class="field"><label>Referencia o Bin</label><input id="mv-ref" placeholder="Todas"></div>
           <div class="field"><label>Desde</label><input id="mv-from" type="date"></div>
           <div class="field"><label>Hasta</label><input id="mv-to" type="date"></div>
         </div>
@@ -2000,7 +2025,7 @@
           <button class="btn" id="mv-export">Exportar</button>
         </div>
         <div class="card"><div class="tablewrap"><table id="mv-table">
-          <thead><tr><th>Fecha</th><th>Movimiento</th><th>SKU</th><th>Ubicación</th><th>Lote</th><th>Estado</th><th>Usuario</th><th class="mv-col-cli">Cliente</th><th>Referencia</th><th style="text-align:right">Cantidad</th></tr></thead>
+          <thead><tr><th>Fecha</th><th>Movimiento</th><th>SKU</th><th>Ubicación</th><th>Bin</th><th>Lote</th><th>Estado</th><th>Usuario</th><th class="mv-col-cli">Cliente</th><th>Referencia</th><th style="text-align:right">Cantidad</th></tr></thead>
           <tbody id="mv-body"></tbody>
         </table></div></div>
       </section>
@@ -2060,7 +2085,9 @@
                 <div class="field"><label>Despacho (por pedido)</label><input id="rt-ship" type="number" min="0" value="0"></div>
                 <div class="field"><label>Picking (por unidad)</label><input id="rt-pick" type="number" min="0" value="0"></div>
                 <div class="field"><label>Armado (por kit)</label><input id="rt-asm" type="number" min="0" value="0"></div>
+                <div class="field"><label>Almacenamiento por Bin (por Bin-día)</label><input id="rt-bin" type="number" min="0" value="0" title="Se cobra por cada día que un Bin está UBICADO. Si el Bin es multi-cliente, se reparte según el criterio de prorrateo de los Ajustes de Bins."></div>
               </div>
+              <label class="apprv-row" style="display:flex;align-items:flex-start;gap:9px;margin-top:12px;cursor:pointer"><input type="checkbox" id="rt-binunits" style="margin-top:2px"><span><b>Cobrar también por unidad lo que está dentro de un Bin</b><div class="hint">Apagado (recomendado): las unidades dentro de Bins se cobran solo con la tarifa por Bin, sin doble cobro. Encendido: se cobran ambas.</div></span></label>
               <label class="apprv-row" style="display:flex;align-items:flex-start;gap:9px;margin-top:12px;cursor:pointer"><input type="checkbox" id="rt-approval" style="margin-top:2px"><span><b>Requiere aprobación del cliente</b><div class="hint">Si se activa, cada factura de este cliente queda <b>pendiente</b> hasta que el cliente la apruebe desde su portal (queda registrado quién y cuándo). Si se desactiva, las facturas quedan emitidas directamente.</div></span></label>
               <div class="ferr" id="rt-err" style="margin-top:8px"></div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px"><span class="hint">Montos en <b id="rt-cur">CLP</b> (sin decimales).</span><button class="btn pri" id="rt-save">Guardar tarifas</button></div>
@@ -2781,6 +2808,7 @@
 <script src="./mobile.js"></script>
 <script src="./tutorial-guides.js"></script>
 <script src="./tutorial.js"></script>
+<script src="./bins.js"></script>
 <script src="./app.js"></script>
 <script src="./theme-shell.js"></script>
 <script>

@@ -52,6 +52,7 @@ export interface ReceiptCountInput {
   lot?: string | null; // lote capturado/confirmado en la recepción (opcional; si viene, pisa el declarado)
   expiry?: string | null; // vencimiento capturado en la recepción (ISO; opcional)
   serials?: string[]; // números de serie de las unidades recibidas (obligatorio si el SKU es serializado)
+  binId?: string | null; // recibir DENTRO de un Bin (null = suelto en la ubicación de recepción)
 }
 
 export class ReceiptOrderService {
@@ -91,8 +92,11 @@ export class ReceiptOrderService {
       if (!l) throw new NotFoundError(`Ubicación no encontrada: ${wanted}`);
       return l.id;
     }
+    // La ubicación de REPOSICIÓN también es zona de recepción, pero es para lo que vuelve
+    // de una cancelación: una recepción nueva nunca debe aterrizar ahí.
     const recv =
-      locs.find((x) => x.zoneType === ZoneType.RECEIVING && x.active !== false) ||
+      locs.find((x) => x.zoneType === ZoneType.RECEIVING && x.active !== false && x.code !== 'DEV-REPOSICION') ||
+      locs.find((x) => x.active !== false && x.code !== 'DEV-REPOSICION') ||
       locs.find((x) => x.active !== false);
     if (!recv) throw new ValidationError('No hay ubicación de recepción disponible en la operación');
     return recv.id;
@@ -278,6 +282,7 @@ export class ReceiptOrderService {
         uom: line.uom,
         reference: order.id,
         actor,
+        binId: c.binId ?? null,
       });
       // Refleja en la línea el lote/vencimiento realmente recibido (si se capturaron).
       if (lot) line.lot = lot;
@@ -328,39 +333,64 @@ export class ReceiptOrderService {
     return order;
   }
 
-  /** El stock ya recibido debe seguir íntegro en su ubicación de recepción para poder revertir. */
-  private async assertReversible(order: ReceiptOrder): Promise<void> {
-    const need: Record<string, number> = {};
-    for (const l of order.lines) {
-      if (l.receivedQty <= 0) continue;
-      const k = l.sku + '::' + (l.lot ?? '');
-      need[k] = (need[k] || 0) + l.receivedQty;
+  /**
+   * Qué entró con esta recepción, por bucket (SKU + lote + Bin). Sale del kardex
+   * (movimientos RECEIPT con la referencia de la orden); si no hay (datos antiguos),
+   * de las líneas, como stock suelto en la ubicación de recepción.
+   */
+  private async receivedBuckets(order: ReceiptOrder): Promise<Array<{ sku: string; lot: string | null; binId: string | null; qty: number; uom: Uom }>> {
+    const movs = (await this.inventory.listMovements(order.sellerId, Number.MAX_SAFE_INTEGER))
+      .filter((m) => m.type === 'RECEIPT' && m.reference === order.id && m.qtyDelta > 0);
+    const acc = new Map<string, { sku: string; lot: string | null; binId: string | null; qty: number; uom: Uom }>();
+    if (movs.length) {
+      for (const m of movs) {
+        const k = `${m.sku}|${m.lot ?? ''}|${m.binId ?? ''}`;
+        const e = acc.get(k); if (e) e.qty += m.qtyDelta; else acc.set(k, { sku: m.sku, lot: m.lot ?? null, binId: m.binId ?? null, qty: m.qtyDelta, uom: m.uom });
+      }
+    } else {
+      for (const l of order.lines) {
+        if (l.receivedQty <= 0) continue;
+        const k = `${l.sku}|${l.lot ?? ''}|`;
+        const e = acc.get(k); if (e) e.qty += l.receivedQty; else acc.set(k, { sku: l.sku, lot: l.lot ?? null, binId: null, qty: l.receivedQty, uom: l.uom });
+      }
     }
-    for (const k of Object.keys(need)) {
-      const sep = k.indexOf('::');
-      const sku = k.slice(0, sep);
-      const lot = k.slice(sep + 2) || null;
-      const avail = await this.inventory.availableAt(order.sellerId, sku, order.locationId, lot);
-      if (avail < need[k]) {
+    return [...acc.values()];
+  }
+
+  /** Dónde está hoy (y cuánto hay disponible) un bucket recibido: suelto en recepción o dentro de su Bin. */
+  private async whereNow(order: ReceiptOrder, b: { sku: string; lot: string | null; binId: string | null }): Promise<{ locationId: string; avail: number }> {
+    if (!b.binId) return { locationId: order.locationId, avail: await this.inventory.availableAt(order.sellerId, b.sku, order.locationId, b.lot, null) };
+    const bal = (await this.inventory.getStock({ sellerId: order.sellerId, sku: b.sku, binId: b.binId }))
+      .filter((x) => x.state === 'AVAILABLE' && (x.lot ?? null) === b.lot && x.qty > 0);
+    if (!bal.length) return { locationId: order.locationId, avail: 0 };
+    return { locationId: bal[0].locationId, avail: bal.reduce((t, x) => t + x.qty, 0) };
+  }
+
+  /** El stock ya recibido debe seguir íntegro (suelto en recepción o en su Bin) para poder revertir. */
+  private async assertReversible(order: ReceiptOrder): Promise<void> {
+    for (const b of await this.receivedBuckets(order)) {
+      const { avail } = await this.whereNow(order, b);
+      if (avail < b.qty) {
         throw new ForbiddenError(
-          `No se puede eliminar la recepción ${order.id}: parte del stock de ${sku} ya fue guardado o reservado ` +
-            `(disponible en recepción ${avail}, la orden recibió ${need[k]}). Reversa primero el guardado/reserva.`,
+          `No se puede eliminar la recepción ${order.id}: parte del stock de ${b.sku} ya fue guardado, reservado o pickeado ` +
+            `(disponible ${avail}${b.binId ? ' en su Bin' : ' en recepción'}, la orden recibió ${b.qty}). Reversa primero el guardado/reserva.`,
         );
       }
     }
   }
 
   private async reverseReceived(order: ReceiptOrder, actor?: string): Promise<void> {
-    for (const l of order.lines) {
-      if (l.receivedQty <= 0) continue;
+    for (const b of await this.receivedBuckets(order)) {
+      const { locationId } = await this.whereNow(order, b);
       await this.inventory.adjust(order.sellerId, {
-        sku: l.sku,
-        locationId: order.locationId,
-        lot: l.lot,
-        qtyDelta: -l.receivedQty,
-        uom: l.uom,
+        sku: b.sku,
+        locationId,
+        lot: b.lot,
+        qtyDelta: -b.qty,
+        uom: b.uom,
         reference: `ANULA ${order.id}`,
         actor,
+        binId: b.binId,
       });
     }
   }

@@ -21,6 +21,7 @@ import {
 } from './ports';
 import { BillingInvoice, BillingLine, BillingRate, InvoiceStatus, InvoiceTaxDocument, MovementType, SalesOrder, ZoneType } from './types';
 import { PackagingService } from './packaging.service';
+import type { BinService } from './bin.service';
 
 /** Datos de un documento tributario que llega para adjuntar a una factura. */
 export interface AttachTaxDocInput {
@@ -42,6 +43,8 @@ export interface RatePatch {
   pickPerUnit?: number;
   assemblyPerKit?: number;
   requiresApproval?: boolean;
+  storagePerBinDay?: number;
+  binUnitsInUnitStorage?: boolean;
 }
 
 export class BillingService {
@@ -55,6 +58,7 @@ export class BillingService {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly packaging?: PackagingService,
+    private readonly bins?: BinService,
   ) {}
 
   private defaults(sellerId: string): BillingRate {
@@ -68,6 +72,8 @@ export class BillingService {
       pickPerUnit: 0,
       assemblyPerKit: 0,
       requiresApproval: false,
+      storagePerBinDay: 0,
+      binUnitsInUnitStorage: false,
     };
   }
 
@@ -94,17 +100,21 @@ export class BillingService {
       pickPerUnit: num(patch.pickPerUnit, cur.pickPerUnit),
       assemblyPerKit: num(patch.assemblyPerKit, cur.assemblyPerKit),
       requiresApproval: patch.requiresApproval == null ? cur.requiresApproval : !!patch.requiresApproval,
+      storagePerBinDay: num(patch.storagePerBinDay, cur.storagePerBinDay ?? 0),
+      binUnitsInUnitStorage: patch.binUnitsInUnitStorage == null ? !!cur.binUnitsInUnitStorage : !!patch.binUnitsInUnitStorage,
     };
     await this.billing.saveRate(next);
     return next;
   }
 
   /** Unidad-días de stock físico en zonas de almacenaje/picking durante [from, to). */
-  private async storageUnitDays(sellerId: string, operationId: string, from: number, to: number): Promise<number> {
+  private async storageUnitDays(sellerId: string, operationId: string, from: number, to: number, excluirBins = false): Promise<number> {
     const locs = await this.locations.listByOperation(operationId);
     const stored = new Set(locs.filter((l) => l.zoneType === ZoneType.STORAGE || l.zoneType === ZoneType.PICKING).map((l) => l.id));
     const movs = (await this.movements.find({ sellerId }))
       .filter((m) => stored.has(m.locationId))
+      // Si el cliente paga los Bins por día y no quiere doble cobro, las unidades dentro de Bins no suman unidad-mes.
+      .filter((m) => !excluirBins || !m.binId)
       .map((m) => ({ t: Date.parse(m.occurredAt), d: m.qtyDelta }))
       .sort((a, b) => a.t - b.t);
     let level = 0;
@@ -136,7 +146,8 @@ export class BillingService {
       return t >= from && t < to;
     };
     const unidadesRecibidas = movs.filter((m) => m.type === MovementType.RECEIPT && inPeriod(m.occurredAt)).reduce((a, m) => a + m.qtyDelta, 0);
-    const unitDays = await this.storageUnitDays(sellerId, seller.operationId, from, to);
+    const cobraBins = !!this.bins && (rate.storagePerBinDay ?? 0) > 0;
+    const unitDays = await this.storageUnitDays(sellerId, seller.operationId, from, to, cobraBins && !rate.binUnitsInUnitStorage);
     const unitMonths = unitDays / DAYS_PER_MONTH;
 
     // REGLA DE CORTE: despacho, picking y embalaje se cobran por las órdenes cuyo evento
@@ -176,6 +187,12 @@ export class BillingService {
     };
     if (rate.fixedMonthly > 0) lines.push({ concept: 'Cuota fija', unit: 'mes', qty: 1, rate: rate.fixedMonthly, amount: round(rate.fixedMonthly) });
     add('Almacenamiento', 'unidad-mes', unitMonths, rate.storagePerUnitMonth);
+    // Almacenaje por Bin-día (posición pallet). En Bins compartidos se prorratea el día
+    // entre los clientes presentes; el detalle muestra el prorrateo aplicado.
+    if (cobraBins && this.bins) {
+      const bd = await this.bins.dayCharges(sellerId, seller.operationId, fromISO, toISO, rate.storagePerBinDay ?? 0);
+      if (bd.monto > 0) lines.push({ concept: 'Almacenaje por Bin', unit: 'bin-día', qty: Math.round(bd.binDias * 100) / 100, rate: rate.storagePerBinDay ?? 0, amount: bd.monto, detalle: bd.detalle });
+    }
     add('Recepción', 'unidad', unidadesRecibidas, rate.receiptPerUnit);
     add('Despacho', 'pedido', pedidosDespachados, rate.shipmentPerOrder);
     add('Picking', 'unidad', unidadesPickeadas, rate.pickPerUnit);

@@ -6,6 +6,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -177,6 +178,11 @@ export class ScanInboundDto {
   @IsOptional()
   @IsString()
   expiry?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  bin?: string; // recibir dentro de un Bin (número o id)
 }
 
 export class ScanPutawayDto {
@@ -1077,6 +1083,11 @@ export class ReceiptCountDto {
   @IsString({ each: true })
   @MaxLength(120, { each: true })
   serials?: string[]; // números de serie de las unidades recibidas
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  binId?: string; // recibir DENTRO de un Bin (id o número, ej. BIN-000123)
 }
 
 export class ReceiveCountsDto {
@@ -1125,6 +1136,11 @@ export class CreateProductDto {
   @IsBoolean()
   expiryControlled?: boolean;
 
+  @IsOptional() @IsNumber() @Min(0) largoCm?: number | null;
+  @IsOptional() @IsNumber() @Min(0) anchoCm?: number | null;
+  @IsOptional() @IsNumber() @Min(0) altoCm?: number | null;
+  @IsOptional() @IsNumber() @Min(0) pesoKg?: number | null;
+
   @IsOptional()
   @IsEnum(RotationClass)
   rotationClass?: RotationClass;
@@ -1170,6 +1186,11 @@ export class UpdateProductDto {
   @IsOptional()
   @IsBoolean()
   expiryControlled?: boolean;
+
+  @IsOptional() @IsNumber() @Min(0) largoCm?: number | null;
+  @IsOptional() @IsNumber() @Min(0) anchoCm?: number | null;
+  @IsOptional() @IsNumber() @Min(0) altoCm?: number | null;
+  @IsOptional() @IsNumber() @Min(0) pesoKg?: number | null;
 
   @IsOptional()
   @IsEnum(RotationClass)
@@ -1239,6 +1260,8 @@ export class SetRateDto {
   @IsOptional() @IsInt() pickPerUnit?: number;
   @IsOptional() @IsInt() assemblyPerKit?: number;
   @IsOptional() @IsBoolean() requiresApproval?: boolean;
+  @IsOptional() @IsInt() storagePerBinDay?: number;
+  @IsOptional() @IsBoolean() binUnitsInUnitStorage?: boolean;
 }
 
 export class GenerateInvoiceDto {

@@ -114,7 +114,7 @@ export class CycleCountService {
     locationId: string,
     counted: CountLine[],
     actor = 'cyclecount',
-    opts?: { onlySkus?: string[] | null },
+    opts?: { onlySkus?: string[] | null; binId?: string | null; motivo?: string | null },
   ): Promise<CountResult> {
     const seller = await this.sellers.findById(sellerId);
     if (!seller) throw new NotFoundError(`Seller no encontrado: ${sellerId}`);
@@ -124,7 +124,10 @@ export class CycleCountService {
       if (c.countedQty < 0) throw new ValidationError(`Cantidad contada inválida para ${c.sku}: ${c.countedQty}`);
     }
 
-    const balances = await this.movements.balances({ sellerId, locationId });
+    // Un conteo de ubicación concilia el stock SUELTO; el contenido de cada Bin se cuenta
+    // con el conteo de Bin (opts.binId), que concilia solo ese Bin.
+    const binId = opts?.binId ?? null;
+    const balances = await this.movements.balances({ sellerId, locationId, binId });
     const expected = new Map<string, { sku: string; lot: string | null; qty: number }>();
     for (const b of balances) {
       if (b.state !== StockState.AVAILABLE) continue;
@@ -168,10 +171,11 @@ export class CycleCountService {
         type: MovementType.ADJUSTMENT,
         qtyDelta: delta, // reconcilia el sistema con lo contado
         uom: Uom.EACH,
-        reference: `CYCLECOUNT:${groupId}`,
+        reference: `CYCLECOUNT:${groupId}${opts?.motivo ? ' · ' + opts.motivo : ''}`,
         groupId,
         actor,
         occurredAt,
+        binId,
       });
     }
 

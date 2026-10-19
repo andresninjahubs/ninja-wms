@@ -23,9 +23,10 @@ export class PickingController {
   /** Toma N unidades de un producto en una ubicación y las reparte entre los pedidos. */
   @Post('pick')
   @RequirePermission('order:fulfill')
-  pick(@CurrentUser() user: User | null, @Body() body: { operationId?: string; sellerId: string; sku: string; locationId: string; lot?: string | null; qty: number; orderIds: string[] }) {
+  pick(@CurrentUser() user: User | null, @Body() body: { operationId?: string; sellerId: string; sku: string; locationId: string; lot?: string | null; qty: number; orderIds: string[]; binId?: string | null }) {
     return this.wms.pickConsolidated(actorOperation(user, body?.operationId), {
       sellerId: body.sellerId, sku: body.sku, locationId: body.locationId, lot: body.lot ?? null, qty: body.qty, orderIds: Array.isArray(body.orderIds) ? body.orderIds : [],
+      ...(body.binId !== undefined ? { binId: body.binId } : {}),
     }, actorOf(user));
   }
 

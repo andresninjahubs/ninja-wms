@@ -52,7 +52,8 @@ export type PlanFeature =
   | 'multi_courier'
   | 'client_chat'
   | 'voice_channel'
-  | 'announcements';
+  | 'announcements'
+  | 'bins';
 
 /** Tarifa mensual por moneda (null = a medida / no aplica; 0 = gratis). */
 export interface PlanPrices {
@@ -76,7 +77,7 @@ const ALL_FEATURES: PlanFeature[] = [
   'returns', 'kitting', 'cycle_count', 'packaging_materials', 'lot_serial', 'task_assignment', 'reslotting',
   'billing_3pl', 'cost_profitability', 'advanced_analytics',
   'ai_copilot', 'ai_voice',
-  'webhooks', 'api', 'white_label', 'multi_courier', 'client_chat', 'voice_channel', 'announcements',
+  'webhooks', 'api', 'white_label', 'multi_courier', 'client_chat', 'voice_channel', 'announcements', 'bins',
 ];
 
 /** El módulo núcleo va SIEMPRE incluido en todos los planes (no se puede desasociar). */
@@ -95,6 +96,7 @@ export const MODULE_CATALOG: Array<{ key: PlanFeature; label: string; descriptio
   { key: 'lot_serial', label: 'Lote / serie / vencimiento', description: 'Control por lote, número de serie y fecha de vencimiento.', group: 'Operaciones' },
   { key: 'task_assignment', label: 'Asignación de tareas', description: 'Balanceo de carga y asignación de trabajo a operarios (auto y manual).', group: 'Operaciones' },
   { key: 'reslotting', label: 'Re-slotting dinámico', description: 'Reubicación sugerida de SKUs de alta rotación (ABC/geometría).', group: 'Operaciones' },
+  { key: 'bins', label: 'Bins (contenedores / LPN)', description: 'Pallets, cajas y totes identificados: recibir en Bin, ubicar el Bin completo con un escaneo, consolidar y pickear desde el Bin.', group: 'Operaciones' },
   // Negocio / analítica
   { key: 'billing_3pl', label: 'Facturación 3PL', description: 'Tarifarios y facturas del operador a sus clientes.', group: 'Negocio' },
   { key: 'cost_profitability', label: 'Costos y rentabilidad', description: 'Costeo por actividad, margen por cliente y eficiencia estándar vs. real.', group: 'Negocio' },
@@ -171,7 +173,7 @@ export const PLAN_CATALOG: Record<PlanId, PlanDef> = {
   scale: {
     id: 'scale', name: 'Scale', prices: { usd: 199, clp: 179990 }, blurb: 'Operadores 3PL y marcas de alto volumen.',
     limits: { ordersPerMonth: 10000, sellers: null, users: null, warehouses: null },
-    features: ['wms_core', 'returns', 'kitting', 'cycle_count', 'packaging_materials', 'lot_serial', 'task_assignment', 'reslotting', 'billing_3pl', 'cost_profitability', 'advanced_analytics', 'ai_copilot', 'ai_voice', 'webhooks', 'api', 'white_label', 'multi_courier', 'client_chat', 'voice_channel', 'announcements'],
+    features: ['wms_core', 'returns', 'kitting', 'cycle_count', 'packaging_materials', 'lot_serial', 'task_assignment', 'reslotting', 'bins', 'billing_3pl', 'cost_profitability', 'advanced_analytics', 'ai_copilot', 'ai_voice', 'webhooks', 'api', 'white_label', 'multi_courier', 'client_chat', 'voice_channel', 'announcements'],
   },
   enterprise: {
     id: 'enterprise', name: 'Enterprise', prices: { usd: null, clp: null }, blurb: 'Volumen a medida, SSO, SLA y soporte dedicado.',

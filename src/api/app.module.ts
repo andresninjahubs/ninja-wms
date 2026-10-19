@@ -1,3 +1,4 @@
+import { BinsController } from './bins.controller';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { createWmsContext } from '../infra/context';
@@ -82,6 +83,7 @@ import type { WmsContext } from '../infra/context';
     AnalyticsController,
     AssignmentsController,
     PickingController,
+    BinsController,
     AgentController,
     CostsController,
   ],

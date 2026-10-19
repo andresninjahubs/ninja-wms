@@ -60,6 +60,8 @@ import {
   Sku,
   StockBalance,
   StockMovement,
+  Bin,
+  BinSettings,
   User,
   Webhook,
   WebhookDelivery,
@@ -71,6 +73,8 @@ export interface StockQuery {
   sku?: string;
   locationId?: string;
   includeZeros?: boolean;
+  /** undefined = todo (suelto + Bins) · null = solo SUELTO · id = solo ese Bin. */
+  binId?: string | null;
 }
 
 /**
@@ -89,6 +93,22 @@ export interface MovementRepository {
    * Devuelve { locationId: unidades ocupadas }.
    */
   occupancyByLocation(): Promise<Record<string, number>>;
+  /** Saldos de uno o varios Bins, de TODOS los clientes (un Bin puede ser multi-cliente). */
+  binBalances(binIds: string[]): Promise<StockBalance[]>;
+  /** Movimientos de un Bin (todos los clientes), para su historial y la facturación por Bin-día. */
+  findByBin(binId: string): Promise<StockMovement[]>;
+}
+
+/** Repositorio de Bins (cabecera; el contenido vive en el ledger con binId). */
+export interface BinRepository {
+  save(bin: Bin): Promise<void>;
+  get(id: string): Promise<Bin | null>;
+  findByNumero(operationId: string, numero: string): Promise<Bin | null>;
+  list(operationId: string, opts?: { estados?: string[]; locationId?: string | null; includeDeleted?: boolean }): Promise<Bin[]>;
+  /** Reserva N números correlativos (atómico; nunca se reutilizan). Devuelve los números. */
+  nextNumbers(operationId: string, n: number): Promise<number[]>;
+  getSettings(operationId: string): Promise<Partial<BinSettings> | null>;
+  saveSettings(operationId: string, settings: Partial<BinSettings>): Promise<void>;
 }
 
 /** Registro de conteos (tabla CountVariance): esperado vs. contado, por conteo (G8). */
@@ -506,7 +526,7 @@ export interface PackRepository {
 
 export interface LocationRepository {
   findById(locationId: string): Promise<Location | null>;
-  // resolver el código pistoleado del bin DENTRO de una operación (los códigos pueden repetirse entre operaciones)
+  // resolver el código pistoleado de la ubicación DENTRO de una operación (los códigos pueden repetirse entre operaciones)
   findByCode(operationId: string, code: string): Promise<Location | null>;
   save(location: Location): Promise<void>;
   listByOperation(operationId: string): Promise<Location[]>;

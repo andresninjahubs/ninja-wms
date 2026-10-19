@@ -45,6 +45,7 @@ export interface ReceiveCommand {
   uom?: Uom;
   reference?: string | null; // p.ej. número de recepción / ASN
   actor?: string;
+  binId?: string | null; // recibir DENTRO de un Bin (null = suelto)
 }
 
 export interface PutawayCommand {
@@ -56,7 +57,25 @@ export interface PutawayCommand {
   uom?: Uom;
   reference?: string | null;
   actor?: string;
+  /** Bin de origen (null/omitido = stock suelto). */
+  binId?: string | null;
 }
+
+/** Una pata de un traslado genérico entre buckets (ubicación/Bin), usado por los Bins. */
+export interface BucketMove {
+  sellerId: string;
+  sku: string;
+  lot: string | null;
+  state: StockState;
+  qty: number;
+  fromLocationId: string;
+  fromBinId: string | null;
+  toLocationId: string;
+  toBinId: string | null;
+}
+
+/** Cómo el inventario consulta un Bin (estado) sin depender del servicio de Bins. */
+export type BinLookup = (binId: string) => Promise<{ id: string; estado: string; locationId: string | null } | null>;
 
 export interface AdjustCommand {
   sku: string;
@@ -67,9 +86,17 @@ export interface AdjustCommand {
   uom?: Uom;
   reference?: string | null;
   actor?: string;
+  binId?: string | null; // ajuste sobre el contenido de un Bin (null = suelto)
 }
 
+/** Estados de Bin cuyo contenido NO se puede reservar (el Bin aún se está armando o no existe). */
+const BIN_NO_RESERVABLE = new Set(['EN_ARMADO', 'VACIO', 'CONSOLIDADO', 'ELIMINADO']);
+
 export class InventoryService {
+  private binLookup: BinLookup | null = null;
+  /** Conecta la consulta de Bins (la hace el servicio de Bins al construirse). */
+  setBinLookup(fn: BinLookup): void { this.binLookup = fn; }
+
   constructor(
     private readonly sellers: SellerRepository,
     private readonly skus: SkuRepository,
@@ -104,6 +131,7 @@ export class InventoryService {
       groupId: null,
       actor: cmd.actor ?? 'system',
       occurredAt: this.clock.now(),
+      binId: cmd.binId ?? null,
     };
 
     // Registrar/actualizar metadata del lote (para FIFO por recepción y FEFO por vencimiento).
@@ -138,7 +166,8 @@ export class InventoryService {
     await this.assertLocation(cmd.toLocationId, seller.operationId);
 
     const lot = cmd.lot ?? null;
-    const available = await this.availableQty(sellerId, cmd.sku, cmd.fromLocationId, lot);
+    const binId = cmd.binId ?? null;
+    const available = await this.availableQty(sellerId, cmd.sku, cmd.fromLocationId, lot, binId);
     if (available < cmd.qty) {
       throw new InsufficientStockError(
         `Stock insuficiente en ${cmd.fromLocationId} para ${cmd.sku}: disponible ${available}, requerido ${cmd.qty}`,
@@ -164,6 +193,7 @@ export class InventoryService {
       groupId,
       actor,
       occurredAt,
+      binId,
     };
     const into: StockMovement = {
       ...out,
@@ -306,8 +336,19 @@ export class InventoryService {
     const zones = await Promise.all(
       rawCandidates.map(async (b) => ({ b, loc: await this.locations.findById(b.locationId) })),
     );
+    // Stock SUELTO: solo en almacenaje/picking. Stock en un BIN: en cualquier ubicación
+    // (decisión del cliente), siempre que el Bin no se esté armando todavía.
+    const binOk = new Map<string, boolean>();
+    for (const x of zones) {
+      const id = x.b.binId ?? null;
+      if (!id || binOk.has(id)) continue;
+      const bin = this.binLookup ? await this.binLookup(id).catch(() => null) : null;
+      binOk.set(id, !!bin && !BIN_NO_RESERVABLE.has(String(bin.estado)));
+    }
     const candidates = zones
-      .filter((x) => x.loc && (x.loc.zoneType === ZoneType.STORAGE || x.loc.zoneType === ZoneType.PICKING))
+      .filter((x) => x.loc && (x.b.binId
+        ? binOk.get(x.b.binId) === true
+        : (x.loc.zoneType === ZoneType.STORAGE || x.loc.zoneType === ZoneType.PICKING)))
       .map((x) => x.b);
     // El ORDEN en que se consume depende de la estrategia del seller (FIFO / FEFO / dirigido).
     const available = await this.orderByStrategy(sellerId, cmd.sku, candidates, seller.pickingStrategy);
@@ -360,12 +401,13 @@ export class InventoryService {
         groupId,
         actor,
         occurredAt,
+        binId: bucket.binId ?? null,
       };
       toAppend.push(
         { ...base, id: this.ids.next(), state: StockState.AVAILABLE, qtyDelta: -take },
         { ...base, id: this.ids.next(), state: StockState.RESERVED, qtyDelta: take },
       );
-      allocations.push({ locationId: bucket.locationId, lot: bucket.lot, qty: take });
+      allocations.push({ locationId: bucket.locationId, lot: bucket.lot, qty: take, ...(bucket.binId ? { binId: bucket.binId } : {}) });
       remaining -= take;
     }
 
@@ -401,6 +443,7 @@ export class InventoryService {
         groupId,
         actor,
         occurredAt,
+        binId: a.binId ?? null,
       };
       toAppend.push(
         { ...base, id: this.ids.next(), state: StockState.RESERVED, qtyDelta: -a.qty },
@@ -424,13 +467,15 @@ export class InventoryService {
       lot?: string | null;
       reference?: string | null;
       actor?: string;
+      binId?: string | null; // pickear desde un Bin (null = suelto)
     },
   ): Promise<StockMovement> {
     this.assertPositive(cmd.qty);
     await this.assertSellerActive(sellerId);
     const lot = cmd.lot ?? null;
+    const binId = cmd.binId ?? null;
 
-    const balances = await this.movements.balances({ sellerId, sku: cmd.sku, locationId: cmd.locationId });
+    const balances = await this.movements.balances({ sellerId, sku: cmd.sku, locationId: cmd.locationId, binId });
     const reserved = balances
       .filter((b) => b.state === StockState.RESERVED && (b.lot ?? null) === lot)
       .reduce((s, b) => s + b.qty, 0);
@@ -454,6 +499,7 @@ export class InventoryService {
       groupId: null,
       actor: cmd.actor ?? 'system',
       occurredAt: this.clock.now(),
+      binId,
     };
     await this.movements.append([movement]);
     return movement;
@@ -480,9 +526,55 @@ export class InventoryService {
   }
 
   /** Igual que availableQty pero público — usado por servicios de nivel superior (recepción). */
-  async availableAt(sellerId: string, sku: string, locationId: string, lot: string | null): Promise<number> {
-    return this.availableQty(sellerId, sku, locationId, lot);
+  async availableAt(sellerId: string, sku: string, locationId: string, lot: string | null, binId: string | null = null): Promise<number> {
+    return this.availableQty(sellerId, sku, locationId, lot, binId);
   }
+
+  /**
+   * Traslado genérico entre buckets (ubicación y/o Bin), ATÓMICO: valida todos los
+   * orígenes y escribe todas las patas en un solo append (un solo groupId). Lo usan los
+   * Bins: putaway/mover un Bin completo, pasar stock suelto ↔ Bin, transferir entre Bins,
+   * consolidar y desarmar. Puede incluir líneas de varios clientes (Bin multi-cliente):
+   * cada pata conserva su `sellerId`, así que la propiedad nunca cambia.
+   */
+  async moveBuckets(moves: BucketMove[], meta: { type: MovementType; reference?: string | null; actor?: string }): Promise<StockMovement[]> {
+    const real = moves.filter((m) => m.qty > 0);
+    if (!real.length) return [];
+    // Validación: saldo suficiente por bucket de origen (sumando lo pedido al mismo bucket).
+    const need = new Map<string, { m: BucketMove; qty: number }>();
+    for (const m of real) {
+      if (!Number.isFinite(m.qty) || m.qty <= 0) throw new ValidationError(`Cantidad inválida: ${m.qty}`);
+      if (m.fromLocationId === m.toLocationId && (m.fromBinId ?? null) === (m.toBinId ?? null)) {
+        throw new ValidationError('El origen y el destino son el mismo bucket');
+      }
+      const k = [m.sellerId, m.sku, m.lot ?? '', m.state, m.fromLocationId, m.fromBinId ?? ''].join('|');
+      const e = need.get(k); if (e) e.qty += m.qty; else need.set(k, { m, qty: m.qty });
+    }
+    for (const { m, qty } of need.values()) {
+      const bal = await this.movements.balances({ sellerId: m.sellerId, sku: m.sku, locationId: m.fromLocationId, binId: m.fromBinId ?? null });
+      const have = bal.filter((b) => b.state === m.state && (b.lot ?? null) === (m.lot ?? null)).reduce((t, b) => t + b.qty, 0);
+      if (have < qty) {
+        throw new InsufficientStockError(`Saldo insuficiente de ${m.sku}${m.lot ? ' lote ' + m.lot : ''} (${m.state}) en el origen: hay ${have}, se pidió ${qty}`);
+      }
+    }
+    const groupId = this.ids.next();
+    const occurredAt = this.clock.now();
+    const actor = meta.actor ?? 'system';
+    const out: StockMovement[] = [];
+    for (const m of real) {
+      const base = { sellerId: m.sellerId, sku: m.sku, lot: m.lot ?? null, state: m.state, type: meta.type, uom: Uom.EACH, reference: meta.reference ?? null, groupId, actor, occurredAt };
+      out.push(
+        { ...base, id: this.ids.next(), locationId: m.fromLocationId, binId: m.fromBinId ?? null, qtyDelta: -m.qty },
+        { ...base, id: this.ids.next(), locationId: m.toLocationId, binId: m.toBinId ?? null, qtyDelta: m.qty },
+      );
+    }
+    await this.movements.append(out);
+    return out;
+  }
+
+  /** Saldos (todos los clientes) de uno o varios Bins. */
+  binBalances(binIds: string[]): Promise<StockBalance[]> { return this.movements.binBalances(binIds); }
+  findBinMovements(binId: string): Promise<StockMovement[]> { return this.movements.findByBin(binId); }
 
   /**
    * Ajuste de inventario: postea UN movimiento ADJUSTMENT con `qtyDelta` (puede ser
@@ -498,8 +590,9 @@ export class InventoryService {
     await this.assertLocation(cmd.locationId, seller.operationId);
     const state = cmd.state ?? StockState.AVAILABLE;
     const lot = cmd.lot ?? null;
+    const binId = cmd.binId ?? null;
     if (cmd.qtyDelta < 0) {
-      const balances = await this.movements.balances({ sellerId, sku: cmd.sku, locationId: cmd.locationId });
+      const balances = await this.movements.balances({ sellerId, sku: cmd.sku, locationId: cmd.locationId, binId });
       const current = balances
         .filter((b) => b.state === state && (b.lot ?? null) === lot)
         .reduce((s, b) => s + b.qty, 0);
@@ -523,6 +616,7 @@ export class InventoryService {
       groupId: null,
       actor: cmd.actor ?? 'system',
       occurredAt: this.clock.now(),
+      binId,
     };
     await this.movements.append([movement]);
     return movement;
@@ -604,8 +698,10 @@ export class InventoryService {
     sku: string,
     locationId: string,
     lot: string | null,
+    binId: string | null = null,
   ): Promise<number> {
-    const balances = await this.movements.balances({ sellerId, sku, locationId });
+    // Por defecto SOLO lo suelto: el contenido de un Bin se mueve con las operaciones de Bin.
+    const balances = await this.movements.balances({ sellerId, sku, locationId, binId });
     return balances
       .filter((b) => b.state === StockState.AVAILABLE && (b.lot ?? null) === lot)
       .reduce((sum, b) => sum + b.qty, 0);
@@ -641,7 +737,7 @@ export class InventoryService {
     const earliestIn: Record<string, string> = {};
     for (const m of raw) {
       if (m.qtyDelta > 0) {
-        const k = `${m.locationId}|${m.lot ?? ''}`;
+        const k = `${m.locationId}|${m.lot ?? ''}|${m.binId ?? ''}`;
         if (!earliestIn[k] || m.occurredAt < earliestIn[k]) earliestIn[k] = m.occurredAt;
       }
     }
@@ -649,7 +745,7 @@ export class InventoryService {
     const FAR = '9999-12-31T00:00:00.000Z';
     const enriched = [];
     for (const b of buckets) {
-      let receivedAt = earliestIn[`${b.locationId}|${b.lot ?? ''}`] ?? FAR;
+      let receivedAt = earliestIn[`${b.locationId}|${b.lot ?? ''}|${b.binId ?? ''}`] ?? FAR;
       let expiry: string | null = null;
       if (b.lot) {
         const meta = await this.lots.get(sellerId, sku, b.lot);

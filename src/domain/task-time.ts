@@ -64,6 +64,9 @@ const TAREA_TIPICA: Record<string, { lines: number; units: number }> = {
   COUNT: { lines: 1, units: 10 },
   RESLOT: { lines: 1, units: 10 },
   RESTOCK: { lines: 1, units: 10 },
+  BIN_PUTAWAY: { lines: 1, units: 40 },
+  BIN_MOVE: { lines: 1, units: 40 },
+  BIN_CONSOLIDATE: { lines: 3, units: 40 },
   OTHER: { lines: 1, units: 10 },
 };
 
@@ -85,6 +88,10 @@ const COEF_DEFECTO: Record<string, TaskTimeCoefficients> = {
   COUNT:    { setupMin: 1.5, perLineMin: 1.5,  perUnitMin: 0.2 },  // 1 línea,  10 un → 5 min   (120 u/h)
   RESLOT:   { setupMin: 2.0, perLineMin: 2.0,  perUnitMin: 0.6 },
   RESTOCK:  { setupMin: 2.0, perLineMin: 2.0,  perUnitMin: 0.6 },
+  // Un Bin se mueve ENTERO (grúa / transpaleta): el tiempo casi no depende de las unidades.
+  BIN_PUTAWAY:     { setupMin: 3.0, perLineMin: 2.0, perUnitMin: 0.0 },
+  BIN_MOVE:        { setupMin: 3.0, perLineMin: 2.0, perUnitMin: 0.0 },
+  BIN_CONSOLIDATE: { setupMin: 3.0, perLineMin: 3.0, perUnitMin: 0.05 }, // por Bin a juntar + traspaso
   OTHER:    { setupMin: 2.0, perLineMin: 2.0,  perUnitMin: 0.6 },  // 1 línea,  10 un → 10 min  (60 u/h)
 };
 

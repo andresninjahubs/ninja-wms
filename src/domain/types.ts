@@ -61,6 +61,12 @@ export interface StockBucketKey {
   locationId: string;
   lot: string | null;
   state: StockState;
+  /**
+   * Bin (contenedor lógico: pallet, caja, tote) en el que está el stock, o null si está
+   * SUELTO en la ubicación. Un Bin NO es una ubicación: vive DENTRO de una. El saldo de
+   * una ubicación es lo suelto + el contenido de sus Bins (todos son buckets del ledger).
+   */
+  binId?: string | null;
 }
 
 /**
@@ -586,6 +592,11 @@ export interface Sku {
   isKit: boolean; // true si este SKU es un kit/bundle
   kitMode: KitMode | null; // VIRTUAL (explota en órdenes) o ASSEMBLED (stock propio)
   components: KitComponent[]; // lista de materiales (BOM); vacío si no es kit
+  // ---- Medidas (opcionales): prorratean el almacenaje de Bins compartidos ----
+  largoCm?: number | null;
+  anchoCm?: number | null;
+  altoCm?: number | null;
+  pesoKg?: number | null;
 }
 
 // ---- Facturación 3PL --------------------------------------------------------
@@ -601,6 +612,10 @@ export interface BillingRate {
   pickPerUnit: number; // por unidad pickeada
   assemblyPerKit: number; // por kit armado
   requiresApproval: boolean; // si true, las facturas de este cliente requieren su aprobación
+  /** Almacenaje por Bin por día (posición pallet). En un Bin compartido paga su parte. */
+  storagePerBinDay?: number;
+  /** ¿Las unidades dentro de Bins pagan además almacenaje unidad-mes? (false = no se cobra doble) */
+  binUnitsInUnitStorage?: boolean;
 }
 
 /** Una línea de la factura. */
@@ -610,6 +625,8 @@ export interface BillingLine {
   qty: number;
   rate: number;
   amount: number;
+  /** Detalle opcional (ej. prorrateo del almacenaje por Bin). */
+  detalle?: Array<Record<string, unknown>>;
 }
 
 /** Un envío por correo de una factura (auditoría). */
@@ -787,6 +804,7 @@ export interface PickTask {
   qty: number; // cantidad reservada en esa ubicación
   pickedQty: number; // cuánto de esa tarea ya se pickeó (0..qty)
   uom: Uom;
+  binId?: string | null; // Bin desde el que se pickea (null = suelto)
 }
 
 /** Registro de despacho de una orden. */
@@ -994,6 +1012,7 @@ export interface Allocation {
   lot: string | null;
   qty: number; // reservado en esta ubicación
   pickedQty?: number; // recolectado desde esta ubicación (picking parcial/dirigido)
+  binId?: string | null; // Bin del que se reservó (null = stock suelto)
   sku?: string; // SKU realmente reservado; para un kit VIRTUAL es el componente (default: el SKU de la línea)
 }
 
@@ -1128,7 +1147,7 @@ export interface AgentAction {
 
 // ---- Asignación de tareas / balanceo de carga (Camino B) ----------------------
 
-export type WorkTaskType = 'PICK' | 'PUTAWAY' | 'COUNT' | 'RECEIVE' | 'RESLOT' | 'PACK' | 'SHIP' | 'RESTOCK';
+export type WorkTaskType = 'PICK' | 'PUTAWAY' | 'COUNT' | 'RECEIVE' | 'RESLOT' | 'PACK' | 'SHIP' | 'RESTOCK' | 'BIN_PUTAWAY' | 'BIN_MOVE' | 'BIN_CONSOLIDATE';
 export type WorkAssignmentStatus = 'assigned' | 'in_progress' | 'done' | 'released';
 
 /**
@@ -1177,7 +1196,7 @@ export interface WorkAssignment {
  * las tareas ASIGNABLES a un operario), la etapa incluye RESERVE: la reserva de stock
  * es una tarea del ledger (instantánea) aunque no se asigne a nadie.
  */
-export type WorkTaskStage = 'RESERVE' | 'PICK' | 'PACK' | 'SHIP' | 'PUTAWAY' | 'RECEIVE' | 'COUNT' | 'RESLOT' | 'RESTOCK';
+export type WorkTaskStage = 'RESERVE' | 'PICK' | 'PACK' | 'SHIP' | 'PUTAWAY' | 'RECEIVE' | 'COUNT' | 'RESLOT' | 'RESTOCK' | 'BIN_PUTAWAY' | 'BIN_MOVE' | 'BIN_CONSOLIDATE';
 export type WorkTaskState = 'pending' | 'assigned' | 'in_progress' | 'done' | 'cancelled';
 
 /**
@@ -1284,7 +1303,7 @@ export interface AgentAlert {
   action: string | null; // sugerencia de qué hacer
   link: string | null; // pantalla a abrir
   entityRef: string | null;
-  entityType?: 'ORDER' | 'SKU' | 'LOT' | 'OPERATOR' | 'RECEIPT' | null; // alertas por entidad
+  entityType?: 'ORDER' | 'SKU' | 'LOT' | 'OPERATOR' | 'RECEIPT' | 'BIN' | null; // alertas por entidad
   dedupeKey: string; // para no repetir la misma alerta
   status: AgentAlertStatus;
   // Fase 3: acción asociada a la alerta (si la regla ejecuta).
@@ -1525,4 +1544,73 @@ export interface ReceiptOrder {
   arrivedAt?: string | null;
   arrivedBy?: string | null;
   events: OrderEvent[]; // auditoría append-only (CREADA | RECEPCIÓN | CERRADA | ANULADA)
+}
+
+
+// ---- Bins (contenedores lógicos: LPN / license plate / handling unit) ---------------
+
+/**
+ * Estado de un Bin. OJO con la nomenclatura: en Ninja WMS un Bin NO es una ubicación,
+ * es un contenedor identificado (pallet, caja, tote, jaula) que se ubica DENTRO de una.
+ */
+export enum BinEstado {
+  EN_ARMADO = 'EN_ARMADO', // abierto, se le agrega contenido
+  POR_UBICAR = 'POR_UBICAR', // cerrado, esperando putaway
+  UBICADO = 'UBICADO', // en una ubicación
+  EN_MOVIMIENTO = 'EN_MOVIMIENTO', // con traslado/putaway/consolidación en curso (bloqueado para otros movimientos)
+  VACIO = 'VACIO',
+  CONSOLIDADO = 'CONSOLIDADO', // su contenido pasó a otro Bin
+  ELIMINADO = 'ELIMINADO', // borrado lógico (se conserva para auditoría)
+}
+
+export interface BinEvent {
+  type: string; // CREADO | CONTENIDO | CERRADO | UBICADO | MOVIDO | PICK | CONSOLIDADO | AJUSTE | CONTEO | ELIMINADO | ...
+  at: string;
+  actor: string;
+  detail?: string | null;
+}
+
+/** Trabajo pendiente sobre un Bin (se materializa como tarea en la cola). */
+export interface BinPending {
+  kind: 'MOVE' | 'CONSOLIDATE';
+  toLocationId?: string | null; // MOVE: destino pedido (null = el operario elige)
+  sourceBinIds?: string[]; // CONSOLIDATE (en el Bin DESTINO): Bins a absorber
+  intoBinId?: string | null; // CONSOLIDATE (en cada Bin ORIGEN): el destino que lo absorberá
+  requestedBy: string;
+  requestedAt: string;
+  note?: string | null;
+}
+
+export interface Bin {
+  id: string;
+  operationId: string; // el tenant (3PL): la numeración es por operación
+  numero: string; // BIN-000001 (correlativo, nunca se reutiliza)
+  estado: BinEstado;
+  locationId: string | null; // ubicación donde está (null = sin ubicación aún)
+  tipo: string; // pallet | caja | tote | jaula | otro (configurable)
+  receiptId: string | null; // recepción de origen (si nació en una)
+  consolidatedIntoId: string | null; // CONSOLIDADO → Bin destino
+  pending: BinPending | null;
+  estadoPrevio: BinEstado | null; // para volver al terminar/cancelar un EN_MOVIMIENTO
+  events: BinEvent[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  deletedAt: string | null;
+}
+
+/** Ajustes de Bins por operación. */
+export interface BinSettings {
+  prefix: string; // 'BIN-'
+  digits: number; // 6 → BIN-000001
+  deleteOnEmpty: boolean; // al vaciarse por picking: true → ELIMINADO, false → VACIO
+  tipos: string[]; // tipos configurables
+  alertPorUbicarHoras: number; // alerta: POR_UBICAR por más de X horas
+  alertArmadoHoras: number; // alerta: EN_ARMADO abandonado
+  bajaOcupacionUnidades: number; // candidatos a consolidar: Bins con menos de N unidades
+  prorrateo: 'unidades' | 'volumen' | 'peso' | 'iguales'; // almacenaje de Bins compartidos
+  etiquetaMostrarContenido: boolean; // resumen del contenido en la etiqueta
+  etiquetaOcultarContenidoMulti: boolean; // ...salvo en Bins multi-cliente
+  habilitado: boolean; // toggle por operación (además del plan): apagado = el WMS funciona como siempre
 }

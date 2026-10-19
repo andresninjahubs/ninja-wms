@@ -512,7 +512,7 @@
   var GROUPS=[
     ['Inicio',['dashboard','copilot','aidash','voz','torre','multicliente']],
     ['Workflows de bodega',['orders','pickqueue','deadlines','inbound','returns','putaway','assembly','movements','counts']],
-    ['Inventario y ubicaciones',['inventory','products','lotes','consignees','packaging','locations']],
+    ['Inventario y ubicaciones',['inventory','products','lotes','consignees','packaging','locations','bins']],
     ['Equipo',['cargas','activity','asignaciones']],
     ['Finanzas',['billing','costos']],
     ['Ninja IA',['agente','agdiario','agalertas','aiaudit']],

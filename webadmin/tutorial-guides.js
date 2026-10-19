@@ -149,7 +149,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#cop-ai-status', place:'bottom', title:'Conectar la IA', text:'Con <b>Conectar IA</b> eliges proveedor y modelo, pegas tu API key y la pruebas. <b>Ver contexto</b> muestra exactamente qué información de tu operación recibe el modelo; <b>Desconectar</b> la retira.'},
       {el:'#cop-settings', place:'bottom', title:'Confirmar o ejecutar directo', text:'Cuando el copiloto propone una acción (reservar, asignar, mover), puedes pedir que <b>confirme contigo</b> antes o que la <b>ejecute directo</b>. Empieza con confirmación.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
     ],
-    tips:['Puedes preguntar por cliente, por SKU o por operario.','El copiloto lee los datos al momento de cada pregunta y conoce los cambios que se hicieron a mano en el portal (activar el auto-balanceo, eliminar una recepción, etc.): si algo cambió desde su respuesta anterior, te lo dice.',{t:'Cada recomendación y acción del copiloto queda registrada en «Auditoría IA».',mod:'aiaudit'}]
+    tips:['Puedes preguntar por cliente, por SKU o por operario.','Cuando el copiloto te cuenta un cambio, te dice quién lo hizo y con qué rol (ej. «lo canceló Andrés Rojas, administrador de plataforma Ninja»). Solo dice «automático» si de verdad lo hizo el sistema o el agente, y no inventa motivos que no quedaron registrados.','Puedes gestionar una recepción de punta a punta conversando: «crea una recepción de 100 CAM para ACME con la OC-55», «muéstrame la OC-55», «cambia la cantidad de CAM a 120», «llegó el camión de la OC-55», «recibe todo lo pendiente», «cierra la OC-55 con faltante», «guarda lo recibido» o «elimina la OC-99». Según la autonomía configurada, ejecuta al tiro o te deja la acción para confirmar.','El copiloto lee los datos al momento de cada pregunta y conoce los cambios que se hicieron a mano en el portal (activar el auto-balanceo, eliminar una recepción, etc.): si algo cambió desde su respuesta anterior, te lo dice.',{t:'Cada recomendación y acción del copiloto queda registrada en «Auditoría IA».',mod:'aiaudit'}]
   },
 
   voz: {
@@ -223,7 +223,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#inb-body', place:'top', title:'Cotejo físico vs. teórico', text:'Con <b>Recepcionar</b> el equipo cuenta cada SKU. «Recibido ahora» <b>parte en 0</b>: ingresa lo que realmente cuentas. Si el producto controla <b>lote</b> y/o <b>vencimiento</b>, el cotejo pide ese dato y es <b>obligatorio</b>; si no los controla, no aparecen y solo registras la cantidad. El stock entra al inventario <b>solo al confirmar</b>, y puedes recibir en varias entregas.'},
       {el:'#inb-body tr', place:'bottom', title:'Manifiesto y auditoría', text:'Cada recepción se puede imprimir como <b>manifiesto PDF</b> con esperado, recibido y diferencia, y guarda una bitácora de quién contó qué y cuándo.'}
     ],
-    tips:['Lo recibido queda en zona de recepción: guárdalo en su ubicación desde «Almacenado».','¿Necesitas lote o vencimiento en un producto? Actívalo en Productos → Control de lote / Control de vencimiento.','En la app del operario, «Recepción» muestra las recepciones asignadas y las libres para tomar; desde ahí el operario marca «Llegó al andén» y hace el cotejo escaneando o tocando el producto. El contador parte en <b>cero</b>: el operario cuenta lo que realmente llegó, no se asume lo pedido.','Una recepción pendiente se puede editar; una con stock ya recibido se puede anular revirtiendo el stock si sigue íntegro.']
+    tips:['Lo recibido queda en zona de recepción: guárdalo en su ubicación desde «Almacenado».','¿Necesitas lote o vencimiento en un producto? Actívalo en Productos → Control de lote / Control de vencimiento.','En la app del operario, «Recepción» muestra las recepciones asignadas y las libres para tomar; desde ahí el operario marca «Llegó al andén» y hace el cotejo escaneando o tocando el producto. El contador parte en <b>cero</b>: el operario cuenta lo que realmente llegó, no se asume lo pedido.','Una recepción pendiente se puede editar; una con stock ya recibido se puede anular revirtiendo el stock si sigue íntegro.','Con Bins activos, en el cotejo puedes recibir dentro de un Bin (elegirlo o crearlo con «＋ Nuevo Bin»). En la app, el operario toca «Recibir dentro de un Bin», escanea el Bin y usa «Cerrar Bin y abrir otro» cuando se llena.']
   },
 
   returns: {
@@ -247,7 +247,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:['#pw-body td:last-child','#pw-body'], place:'left', title:'Guardar', text:'Pulsa Guardar, confirma la cantidad y la ubicación. El movimiento queda en el kardex como <b>Guardado</b> y el stock pasa a estar disponible para reservar.'},
       {el:['#pw-body [data-pwall]','#pw-body'], place:'left', title:'Guardar todo aquí', text:'Si aceptas la sugerencia, <b>Guardar todo aquí</b> mueve toda la cantidad de una vez. Si prefieres repartirla, elige otra ubicación y una cantidad parcial.', roles:['ADMIN','SUPERVISOR','OPERATOR','PLATFORM_ADMIN']},
     ],
-    tips:['Los operarios pueden hacer el putaway desde la app móvil escaneando la ubicación.','En la app, el guardado muestra «Por guardar N un» del SKU en esa ubicación: se guarda de a una (escaneando cada unidad o «Guardar 1»), todas de una vez («Guardar todas») u otra cantidad, y se puede cambiar el destino a mitad de camino. La tarea sigue en la bandeja del operario hasta que el origen queda vacío.',{t:'Las sugerencias aceptadas o rechazadas alimentan la Auditoría IA.',mod:'aiaudit'}]
+    tips:['Los operarios pueden hacer el putaway desde la app móvil escaneando la ubicación.','En la app, el guardado muestra «Por guardar N un» del SKU en esa ubicación: se guarda de a una (escaneando cada unidad o «Guardar 1»), todas de una vez («Guardar todas») u otra cantidad, y se puede cambiar el destino a mitad de camino. La tarea sigue en la bandeja del operario hasta que el origen queda vacío.',{t:'Las sugerencias aceptadas o rechazadas alimentan la Auditoría IA.',mod:'aiaudit'},'Lo que llega dentro de un <b>Bin</b> no aparece aquí unidad por unidad: se guarda con el Bin completo (tarea «Ubicar Bin» en la app o desde la sección Bins).']
   },
 
   assembly: {
@@ -269,7 +269,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#mv-table', place:'top', title:'Lectura del kardex', text:'Cada fila es un movimiento inmutable: fecha, tipo, SKU, ubicación, lote, estado del stock (disponible o reservado), quién lo hizo, referencia y cantidad con signo. Positivo entra, negativo sale.'},
       {el:'.mvactions', title:'Limpiar y exportar', text:'Con <b>Limpiar filtros</b> vuelves a la vista completa. <b>Exportar</b> descarga a Excel exactamente lo que estás viendo, ideal para conciliar con el cliente.'}
     ],
-    tips:['Para reconstruir la historia de un SKU, filtra por SKU y ordena por fecha.','La referencia enlaza el movimiento con su orden, recepción o devolución.']
+    tips:['Para reconstruir la historia de un SKU, filtra por SKU y ordena por fecha.','La referencia enlaza el movimiento con su orden, recepción o devolución.','La columna <b>Bin</b> muestra el contenedor del movimiento y, en un traslado, de qué Bin a qué Bin pasó (o «suelto»). Escribe un número de Bin en «Referencia o Bin» para ver toda su historia.']
   },
 
   counts: {
@@ -294,7 +294,7 @@ window.NINJA_TOUR_GUIDES = {
       {el:'#inv-body', place:'top', title:'Lo que ve el cliente', text:'Un usuario cliente ve solo su propio stock, agrupado por SKU y <b>lote o serie</b>, sin las ubicaciones internas de la bodega ni la opción de mover.', roles:['ADMIN','SUPERVISOR','PLATFORM_ADMIN']},
       {el:'#inv-export', place:'bottom', title:'Exportar', text:'Descarga el inventario actual a Excel para conciliaciones o reportes al cliente.'}
     ],
-    tips:['Si el disponible es menor de lo que esperas, revisa las reservas en Órdenes.','El detalle por ubicación es la vista que usa el operario para el picking.']
+    tips:['Si el disponible es menor de lo que esperas, revisa las reservas en Órdenes.','El detalle por ubicación es la vista que usa el operario para el picking.','En el detalle por ubicación, la columna <b>Bin</b> indica si el stock está dentro de un contenedor o «suelto». Toca el número para abrir el Bin.']
   },
 
   products: {
@@ -333,9 +333,26 @@ window.NINJA_TOUR_GUIDES = {
       {el:['#loc-selall','#loc-listwrap','#loc-grid'], place:'bottom', title:'Eliminar varias a la vez', text:'Marca la casilla de cada ubicación (o la del encabezado para todas las vacías) y usa <b>Eliminar seleccionadas</b>. Solo se pueden eliminar ubicaciones <b>vacías</b>: las que tienen stock aparecen bloqueadas. Al terminar ves cuáles se eliminaron y cuáles no, con el motivo.'},
       {el:['#loc-grid','#loc-listwrap'], place:'top', title:'Editar, desactivar o eliminar', text:'Una ubicación que nunca tuvo movimientos se puede <b>eliminar</b>. Si ya registró stock, el kardex la referencia: en ese caso se <b>desactiva</b> y deja de usarse para guardado y picking.'}
     ],
-    tips:['Imprime las etiquetas de ubicación para el escaneo desde la app móvil.']
+    tips:['Imprime las etiquetas de ubicación para el escaneo desde la app móvil.','El botón <b>Contenido</b> de cada ubicación muestra por separado los <b>Bins</b> que están ahí y el stock suelto. Un Bin es un contenedor, no una ubicación.']
   },
 
+
+  bins: {
+    icon:'📦', title:'Bins',
+    summary:'Contenedores con número propio (pallet, caja, tote, jaula). Un Bin NO es una ubicación: se ubica dentro de una, y con un solo escaneo mueves todo su contenido.',
+    summaryClient:'Los contenedores (Bins) donde la bodega guarda tu mercadería. Ves solo tus productos dentro de cada Bin.',
+    steps:[
+      {el:'#bn-new', place:'bottom', title:'Crear Bins', text:'Crea uno o muchos Bins de una vez. Cada uno recibe un número correlativo (por ejemplo <b>BIN-000123</b>) que <b>nunca se reutiliza</b>, y puedes imprimir sus etiquetas al crearlos.', roles:['PLATFORM_ADMIN','ADMIN','SUPERVISOR','OPERATOR']},
+      {el:'#bn-sum', place:'bottom', title:'Estados del Bin', text:'<b>En armado</b>: se está llenando. <b>Por ubicar</b>: cerrado, esperando su putaway. <b>Ubicado</b>: guardado en una ubicación. <b>En movimiento</b>: tiene un traslado o consolidación pendiente. <b>Vacío</b>, <b>Consolidado</b> y <b>Eliminado</b> son estados finales. Toca un estado para filtrar.'},
+      {el:['#bn-q','#bn-est'], place:'bottom', title:'Buscar y filtrar', text:'Escanea o escribe un número de Bin y presiona Enter para abrirlo. Filtra por cliente, estado, ubicación o SKU para encontrar dónde está un producto.'},
+      {el:'#bn-body', place:'top', title:'El listado', text:'Cada fila muestra el Bin, su estado, dónde está, tipo, cliente(s), cuántos SKUs y unidades tiene. Un Bin puede ser <b>multi-cliente</b>: cada línea conserva su dueño y cada cliente ve solo lo suyo.'},
+      {el:'#bn-body', place:'top', title:'El detalle y sus acciones', text:'Abre un Bin para ver su contenido por cliente, SKU y lote, y su historial (quién hizo cada cosa). Según su estado puedes <b>cerrarlo</b> (queda por ubicar y nace su tarea de putaway), <b>ubicarlo</b>, <b>moverlo</b> (ahora o como tarea), pasar o sacar stock, dividirlo, contarlo o desarmarlo. Nunca se pierde stock y no se puede eliminar un Bin con mercadería reservada.'},
+      {el:'#bn-cons', place:'bottom', title:'Consolidar', text:'Junta varios Bins en uno. El contenido se agrupa por cliente, SKU y lote, <b>sin mezclar nunca clientes</b> en una misma línea. Si los Bins están en ubicaciones distintas, se crea una tarea para el operario.', roles:['PLATFORM_ADMIN','ADMIN','SUPERVISOR','OPERATOR']},
+      {el:'#bn-print', place:'bottom', title:'Etiquetas', text:'Marca los Bins y pulsa <b>Etiquetas</b>: número grande, código de barras, fecha, cliente (o «Multi-cliente») y, si lo activas, su contenido.'},
+      {el:'#bn-settings', place:'bottom', title:'Ajustes', text:'Define el prefijo y los dígitos del número, los tipos de contenedor, las alertas (Bins por ubicar o en armado abandonados) y cómo se reparte el cobro de un Bin multi-cliente: por unidades, volumen, peso o partes iguales.', roles:['PLATFORM_ADMIN','ADMIN','SUPERVISOR']}
+    ],
+    tips:['Para recibir dentro de un Bin, en el cotejo de la recepción elige el Bin o crea uno con «＋ Nuevo Bin»; marca «Cerrar el Bin al confirmar» para dejarlo listo para ubicar.','En la app del operario, el botón <b>Bins</b> muestra las tareas de ubicar, mover y consolidar, y permite contar, consultar y crear Bins. El putaway es un solo escaneo: el Bin y la ubicación destino.','En el picking, si el producto está dentro de un Bin, el operario escanea la ubicación, luego el Bin y después el producto.','La tarifa por Bin-día se define por cliente en Facturación. Puedes decidir, cliente a cliente, si lo que está dentro de un Bin se cobra también por unidad.',{t:'El agente avisa cuando un Bin lleva demasiadas horas por ubicar o un Bin en armado quedó abandonado.',mod:'agalertas'}]
+  },
 
   billing: {
     icon:'$', title:'Facturación',
@@ -355,7 +372,7 @@ window.NINJA_TOUR_GUIDES = {
         before:function(h){ h.click('[data-billtab=dash]'); return function(){ h.click('[data-billtab=inv]'); }; }},
       {el:'#bill-cli-note', title:'Portal del cliente', text:'Como cliente, aquí revisas las facturas emitidas por tu operador, abres el detalle y las <b>apruebas</b> cuando corresponde.', roles:['CLIENT']}
     ],
-    tips:[{t:'Cruza la facturación con los costos en «Rentabilidad» para ver el margen real por cliente.',mod:'costos'}]
+    tips:[{t:'Cruza la facturación con los costos en «Rentabilidad» para ver el margen real por cliente.',mod:'costos'},'Tarifa <b>por Bin-día</b>: se cobra cada día que un Bin está ubicado. Si el Bin es multi-cliente, se reparte según los Ajustes de Bins y la factura muestra el detalle por Bin. Con la casilla «Cobrar también por unidad…» apagada no hay doble cobro.']
   },
 
   costos: {
